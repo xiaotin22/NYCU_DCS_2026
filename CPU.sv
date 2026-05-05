@@ -110,13 +110,32 @@ assign bad_reg = !bad_op & (
 assign ins_inv = bad_op | bad_reg;   // triggers bad_ins = 2'b01
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ALU  (placeholder — fill in next step)
+// ALU
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── MULT: signed 16×16 → 32-bit product, arithmetic right shift 15 ────────
+// Result[15:0] = product[30:15]  (equivalent to $signed(product) >>> 15)
+logic [31:0] mult_full;
+assign mult_full = $signed(rs_v) * $signed(rt_v);
+
+// ── ALU result mux ────────────────────────────────────────────────────────
 logic [15:0] alu_result;
 logic        div_zero;   // triggers bad_ins = 2'b10
 
-assign alu_result = 16'h0; // TODO
-assign div_zero   = 1'b0;  // TODO: (is_div & (rt_v == 16'h0))
+always_comb begin
+    alu_result = 16'h0;                              // default / DIV placeholder
+    if      (is_add)  alu_result = rs_v + rt_v;     // 16-bit wrap-around
+    else if (is_mult) alu_result = mult_full[30:15]; // (rs*rt) >>> 15, lower 16
+    else if (is_or)   alu_result = rs_v | rt_v;
+    else if (is_sla)  alu_result = rt_v << shamt;   // logical/arithmetic left shift
+    else if (is_sra)  alu_result = $signed(rt_v) >>> shamt; // arithmetic right shift
+    else if (is_addi) alu_result = rs_v + imm;      // 16-bit wrap-around
+    else if (is_ori)  alu_result = rs_v | imm;
+    // is_div: TODO
+end
+
+// div-by-zero: DIV instruction with rt = 0
+assign div_zero = is_div & (rt_v == 16'h0);
 
 // ─── Write Control ────────────────────────────────────────────────────────
 logic        do_write;
