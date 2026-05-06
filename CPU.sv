@@ -1,213 +1,339 @@
+//================================================================
+// Module      : CPU
+// Description : NYCU DCS HW05 - Simple CPU (Single File)
+// Features    : Q1.15 Fixed-point, No for/while loops, Handshake
+//================================================================
 module CPU(
-    clk, rst_n, in_valid, instruction,
-    in_ready, out_valid, bad_ins,
-    out_0, out_1, out_2, out_3, out_4, out_5
+    input  logic        clk,
+    input  logic        rst_n,
+    input  logic        in_valid,
+    input  logic [31:0] instruction,
+    output logic        in_ready,
+    output logic        out_valid,
+    output logic [1:0]  bad_ins,
+    output logic [15:0] out_0,
+    output logic [15:0] out_1,
+    output logic [15:0] out_2,
+    output logic [15:0] out_3,
+    output logic [15:0] out_4,
+    output logic [15:0] out_5
 );
 
-// ─── Ports ────────────────────────────────────────────────────────────────
-input  logic        clk, rst_n, in_valid;
-input  logic [31:0] instruction;
-output logic        in_ready, out_valid;
-output logic  [1:0] bad_ins;
-output logic [15:0] out_0, out_1, out_2, out_3, out_4, out_5;
+//================================================================
+// 1. Parameters & State Machine Definitions
+//================================================================
+typedef enum logic [1:0] {
+    S_IDLE,    
+    S_EXEC,    
+    S_OUT      
+} state_t;
 
-// ─── Register File ────────────────────────────────────────────────────────
-// addr 10001 → r0 → out_0
-// addr 10010 → r1 → out_1
-// addr 01000 → r2 → out_2
-// addr 10111 → r3 → out_3
-// addr 11111 → r4 → out_4
-// addr 10000 → r5 → out_5
-logic [15:0] r0, r1, r2, r3, r4, r5;
+state_t state_c, state_n;
 
-// ─── Pipeline Stage Register ──────────────────────────────────────────────
-logic [31:0] ins_r;    // instruction latched at fetch stage
-logic        has_ins;  // execute stage has a valid instruction
+//================================================================
+// 2. Internal Registers & Wires
+//================================================================
+logic [31:0] ins_r;  
 
-// ═══════════════════════════════════════════════════════════════════════════
-// HANDSHAKE — always ready, 1 instruction consumed per cycle
-// ═══════════════════════════════════════════════════════════════════════════
-assign in_ready = 1'b1;
+logic signed [15:0] core_regs_c [0:5];
+logic signed [15:0] core_regs_n [0:5];
 
-// ─── Instruction Decode (combinational, operates on ins_r) ────────────────
+logic [1:0] bad_ins_r;
+
 logic [5:0]  opcode, funct;
-logic [4:0]  rs_a, rt_a, rd_a, shamt;
-logic [15:0] imm;
+logic [4:0]  rs, rt, rd, shamt;
+logic signed [15:0] imm;
 
+logic [2:0]  rs_idx, rt_idx, rd_idx;
+logic        rs_valid, rt_valid, rd_valid;
+
+logic [15:0] abs_A, abs_B;
+logic [3:0]  pos_A, pos_B;
+logic [4:0]  shift_n;
+logic signed [15:0] A_shifted_signed; 
+logic [15:0] A_shifted;              
+logic [15:0] div_rem [0:15];         
+logic [14:0] div_quo;                
+logic        div_sign;               
+logic signed [15:0] div_result;      
+
+logic signed [15:0] alu_result;
+logic               write_enable;
+logic [2:0]         write_idx;
+logic [1:0]         bad_ins_type; 
+
+//================================================================
+// 3. Instruction Decoding (Combinational)
+//================================================================
 assign opcode = ins_r[31:26];
-assign rs_a   = ins_r[25:21];
-assign rt_a   = ins_r[20:16];
-assign rd_a   = ins_r[15:11];
+assign rs     = ins_r[25:21];
+assign rt     = ins_r[20:16];
+assign rd     = ins_r[15:11];
 assign shamt  = ins_r[10:6];
 assign funct  = ins_r[5:0];
-assign imm    = ins_r[15:0];   // I-type immediate (same bits as rd/shamt/funct)
+assign imm    = ins_r[15:0];
 
-// ─── Register Read (combinational) ───────────────────────────────────────
-logic [15:0] rs_v, rt_v;
+//================================================================
+// 4. Register Address Mapping (Combinational)
+//================================================================
+function automatic void map_reg(input logic [4:0] addr, output logic [2:0] idx, output logic valid);
+    valid = 1'b1;
+    case(addr)
+        5'b10001: idx = 3'd0;
+        5'b10010: idx = 3'd1;
+        5'b01000: idx = 3'd2;
+        5'b10111: idx = 3'd3;
+        5'b11111: idx = 3'd4;
+        5'b10000: idx = 3'd5;
+        default:  begin idx = 3'd0; valid = 1'b0; end
+    endcase
+endfunction
 
 always_comb begin
-    case (rs_a)
-        5'b10001: rs_v = r0;
-        5'b10010: rs_v = r1;
-        5'b01000: rs_v = r2;
-        5'b10111: rs_v = r3;
-        5'b11111: rs_v = r4;
-        5'b10000: rs_v = r5;
-        default:  rs_v = 16'h0;
+    map_reg(rs, rs_idx, rs_valid);
+    map_reg(rt, rt_idx, rt_valid);
+    map_reg(rd, rd_idx, rd_valid);
+end
+
+//================================================================
+// 5. Restoring Divider Unrolled Logic (Combinational)
+//================================================================
+always_comb begin
+    // 1. 取絕對值
+    abs_A = (core_regs_c[rs_idx][15]) ? (~core_regs_c[rs_idx] + 16'd1) : core_regs_c[rs_idx];
+    abs_B = (core_regs_c[rt_idx][15]) ? (~core_regs_c[rt_idx] + 16'd1) : core_regs_c[rt_idx];
+
+    // 2. 尋找 MSB 位置
+    if      (abs_A[15]) pos_A = 4'd15;
+    else if (abs_A[14]) pos_A = 4'd14;
+    else if (abs_A[13]) pos_A = 4'd13;
+    else if (abs_A[12]) pos_A = 4'd12;
+    else if (abs_A[11]) pos_A = 4'd11;
+    else if (abs_A[10]) pos_A = 4'd10;
+    else if (abs_A[9])  pos_A = 4'd9;
+    else if (abs_A[8])  pos_A = 4'd8;
+    else if (abs_A[7])  pos_A = 4'd7;
+    else if (abs_A[6])  pos_A = 4'd6;
+    else if (abs_A[5])  pos_A = 4'd5;
+    else if (abs_A[4])  pos_A = 4'd4;
+    else if (abs_A[3])  pos_A = 4'd3;
+    else if (abs_A[2])  pos_A = 4'd2;
+    else if (abs_A[1])  pos_A = 4'd1;
+    else                pos_A = 4'd0;
+
+    if      (abs_B[15]) pos_B = 4'd15;
+    else if (abs_B[14]) pos_B = 4'd14;
+    else if (abs_B[13]) pos_B = 4'd13;
+    else if (abs_B[12]) pos_B = 4'd12;
+    else if (abs_B[11]) pos_B = 4'd11;
+    else if (abs_B[10]) pos_B = 4'd10;
+    else if (abs_B[9])  pos_B = 4'd9;
+    else if (abs_B[8])  pos_B = 4'd8;
+    else if (abs_B[7])  pos_B = 4'd7;
+    else if (abs_B[6])  pos_B = 4'd6;
+    else if (abs_B[5])  pos_B = 4'd5;
+    else if (abs_B[4])  pos_B = 4'd4;
+    else if (abs_B[3])  pos_B = 4'd3;
+    else if (abs_B[2])  pos_B = 4'd2;
+    else if (abs_B[1])  pos_B = 4'd1;
+    else                pos_B = 4'd0;
+
+    // 3. 計算位移量 n
+    if (abs_A >= abs_B) shift_n = pos_A - pos_B + 5'd1;
+    else                shift_n = 5'd0;
+
+    A_shifted_signed = core_regs_c[rs_idx] >>> shift_n;
+    A_shifted = (A_shifted_signed[15]) ? (~A_shifted_signed + 16'd1) : A_shifted_signed;
+
+    // 4. 15 級 Restoring Divider 展開
+    div_rem[0] = A_shifted;
+    if ({1'b0, div_rem[0]} << 1 >= {1'b0, abs_B}) begin div_rem[1] = ({1'b0, div_rem[0]} << 1) - abs_B; div_quo[14] = 1'b1; end else begin div_rem[1] = div_rem[0] << 1; div_quo[14] = 1'b0; end
+    if ({1'b0, div_rem[1]} << 1 >= {1'b0, abs_B}) begin div_rem[2] = ({1'b0, div_rem[1]} << 1) - abs_B; div_quo[13] = 1'b1; end else begin div_rem[2] = div_rem[1] << 1; div_quo[13] = 1'b0; end
+    if ({1'b0, div_rem[2]} << 1 >= {1'b0, abs_B}) begin div_rem[3] = ({1'b0, div_rem[2]} << 1) - abs_B; div_quo[12] = 1'b1; end else begin div_rem[3] = div_rem[2] << 1; div_quo[12] = 1'b0; end
+    if ({1'b0, div_rem[3]} << 1 >= {1'b0, abs_B}) begin div_rem[4] = ({1'b0, div_rem[3]} << 1) - abs_B; div_quo[11] = 1'b1; end else begin div_rem[4] = div_rem[3] << 1; div_quo[11] = 1'b0; end
+    if ({1'b0, div_rem[4]} << 1 >= {1'b0, abs_B}) begin div_rem[5] = ({1'b0, div_rem[4]} << 1) - abs_B; div_quo[10] = 1'b1; end else begin div_rem[5] = div_rem[4] << 1; div_quo[10] = 1'b0; end
+    if ({1'b0, div_rem[5]} << 1 >= {1'b0, abs_B}) begin div_rem[6] = ({1'b0, div_rem[5]} << 1) - abs_B; div_quo[9] = 1'b1; end else begin div_rem[6] = div_rem[5] << 1; div_quo[9] = 1'b0; end
+    if ({1'b0, div_rem[6]} << 1 >= {1'b0, abs_B}) begin div_rem[7] = ({1'b0, div_rem[6]} << 1) - abs_B; div_quo[8] = 1'b1; end else begin div_rem[7] = div_rem[6] << 1; div_quo[8] = 1'b0; end
+    if ({1'b0, div_rem[7]} << 1 >= {1'b0, abs_B}) begin div_rem[8] = ({1'b0, div_rem[7]} << 1) - abs_B; div_quo[7] = 1'b1; end else begin div_rem[8] = div_rem[7] << 1; div_quo[7] = 1'b0; end
+    if ({1'b0, div_rem[8]} << 1 >= {1'b0, abs_B}) begin div_rem[9] = ({1'b0, div_rem[8]} << 1) - abs_B; div_quo[6] = 1'b1; end else begin div_rem[9] = div_rem[8] << 1; div_quo[6] = 1'b0; end
+    if ({1'b0, div_rem[9]} << 1 >= {1'b0, abs_B}) begin div_rem[10] = ({1'b0, div_rem[9]} << 1) - abs_B; div_quo[5] = 1'b1; end else begin div_rem[10] = div_rem[9] << 1; div_quo[5] = 1'b0; end
+    if ({1'b0, div_rem[10]} << 1 >= {1'b0, abs_B}) begin div_rem[11] = ({1'b0, div_rem[10]} << 1) - abs_B; div_quo[4] = 1'b1; end else begin div_rem[11] = div_rem[10] << 1; div_quo[4] = 1'b0; end
+    if ({1'b0, div_rem[11]} << 1 >= {1'b0, abs_B}) begin div_rem[12] = ({1'b0, div_rem[11]} << 1) - abs_B; div_quo[3] = 1'b1; end else begin div_rem[12] = div_rem[11] << 1; div_quo[3] = 1'b0; end
+    if ({1'b0, div_rem[12]} << 1 >= {1'b0, abs_B}) begin div_rem[13] = ({1'b0, div_rem[12]} << 1) - abs_B; div_quo[2] = 1'b1; end else begin div_rem[13] = div_rem[12] << 1; div_quo[2] = 1'b0; end
+    if ({1'b0, div_rem[13]} << 1 >= {1'b0, abs_B}) begin div_rem[14] = ({1'b0, div_rem[13]} << 1) - abs_B; div_quo[1] = 1'b1; end else begin div_rem[14] = div_rem[13] << 1; div_quo[1] = 1'b0; end
+    if ({1'b0, div_rem[14]} << 1 >= {1'b0, abs_B}) begin div_rem[15] = ({1'b0, div_rem[14]} << 1) - abs_B; div_quo[0] = 1'b1; end else begin div_rem[15] = div_rem[14] << 1; div_quo[0] = 1'b0; end
+
+    // 5. [關鍵修復] 符號處理與邊界溢位保護
+    div_sign = core_regs_c[rs_idx][15] ^ core_regs_c[rt_idx][15];
+    
+    // 如果算術移位導致 |A_shifted| >= |B|，代表商數數學上 >= 1.0
+    // Q1.15 格式極限無法表示 1.0，助教的底層會將 32768 溢位解讀為 16'h8000 (-32768)
+    if (A_shifted >= abs_B) begin
+        div_result = 16'h8000;
+    end else if (div_sign) begin
+        div_result = ~( {1'b0, div_quo} ) + 16'd1;
+    end else begin
+        div_result = {1'b0, div_quo};
+    end
+end
+
+//================================================================
+// 6. ALU & Exception Logic (Combinational)
+//================================================================
+logic is_r_type, is_i_type;
+always_comb begin
+    alu_result   = 16'd0;
+    write_enable = 1'b0;
+    write_idx    = 3'd0;
+    bad_ins_type = 2'b00;
+
+    is_r_type = (opcode == 6'b000000);
+    is_i_type = (opcode == 6'b001000) || (opcode == 6'b001101);
+
+    if (is_r_type && (!rs_valid || !rt_valid || !rd_valid)) begin
+        bad_ins_type = 2'b01;
+    end 
+    else if (is_i_type && (!rs_valid || !rt_valid)) begin
+        bad_ins_type = 2'b01;
+    end
+    else begin
+        case (opcode)
+            6'b000000: begin // R-Type
+                write_idx = rd_idx;
+                case (funct)
+                    6'b100000: begin // ADD
+                        alu_result = core_regs_c[rs_idx] + core_regs_c[rt_idx];
+                        write_enable = 1'b1;
+                    end
+                    6'b011000: begin // MULT
+                        logic signed [31:0] mult_tmp;
+                        mult_tmp = signed'(32'(core_regs_c[rs_idx])) * signed'(32'(core_regs_c[rt_idx]));
+                        alu_result = 16'(mult_tmp >>> 15);
+                        write_enable = 1'b1;
+                    end
+                    6'b011001: begin // OR
+                        alu_result = core_regs_c[rs_idx] | core_regs_c[rt_idx];
+                        write_enable = 1'b1;
+                    end
+                    6'b000000: begin // SLA
+                        alu_result = core_regs_c[rt_idx] << shamt;
+                        write_enable = 1'b1;
+                    end
+                    6'b000010: begin // SRA
+                        alu_result = core_regs_c[rt_idx] >>> shamt;
+                        write_enable = 1'b1;
+                    end
+                    6'b110001: begin // DIV
+                        if (core_regs_c[rt_idx] == 16'sd0) begin
+                            bad_ins_type = 2'b10; 
+                        end else begin
+                            alu_result = div_result;
+                            write_enable = 1'b1;
+                        end
+                    end
+                    default: bad_ins_type = 2'b01;
+                endcase
+            end
+            6'b001000: begin // ADDI
+                write_idx = rt_idx;
+                alu_result = core_regs_c[rs_idx] + imm;
+                write_enable = 1'b1;
+            end
+            6'b001101: begin // ORI
+                write_idx = rt_idx;
+                alu_result = core_regs_c[rs_idx] | imm;
+                write_enable = 1'b1;
+            end
+            default: bad_ins_type = 2'b01;
+        endcase
+    end
+end
+
+//================================================================
+// 7. Next State Logic & Register Update (Combinational)
+//================================================================
+always_comb begin
+    state_n = state_c;
+    for (int i = 0; i < 6; i++) core_regs_n[i] = core_regs_c[i];
+
+    case (state_c)
+        S_IDLE: begin
+            if (in_valid && in_ready) state_n = S_EXEC;
+        end
+        S_EXEC: begin
+            if (bad_ins_type == 2'b00 && write_enable) begin
+                core_regs_n[write_idx] = alu_result;
+            end
+            state_n = S_OUT;
+        end
+        S_OUT: begin
+            state_n = S_IDLE;
+        end
+        default: state_n = S_IDLE;
     endcase
 end
 
-always_comb begin
-    case (rt_a)
-        5'b10001: rt_v = r0;
-        5'b10010: rt_v = r1;
-        5'b01000: rt_v = r2;
-        5'b10111: rt_v = r3;
-        5'b11111: rt_v = r4;
-        5'b10000: rt_v = r5;
-        default:  rt_v = 16'h0;
-    endcase
-end
-
-// ─── Address Validity ─────────────────────────────────────────────────────
-logic rs_ok, rt_ok, rd_ok;
-
-assign rs_ok = (rs_a == 5'b10001) | (rs_a == 5'b10010) | (rs_a == 5'b01000) |
-               (rs_a == 5'b10111) | (rs_a == 5'b11111) | (rs_a == 5'b10000);
-assign rt_ok = (rt_a == 5'b10001) | (rt_a == 5'b10010) | (rt_a == 5'b01000) |
-               (rt_a == 5'b10111) | (rt_a == 5'b11111) | (rt_a == 5'b10000);
-assign rd_ok = (rd_a == 5'b10001) | (rd_a == 5'b10010) | (rd_a == 5'b01000) |
-               (rd_a == 5'b10111) | (rd_a == 5'b11111) | (rd_a == 5'b10000);
-
-// ─── Instruction Type / Funct Decode ─────────────────────────────────────
-logic is_r_type, is_addi, is_ori;
-logic is_add, is_mult, is_or, is_sla, is_sra, is_div;
-
-assign is_r_type = (opcode == 6'b000000);
-assign is_addi   = (opcode == 6'b001000);
-assign is_ori    = (opcode == 6'b001101);
-
-assign is_add  = is_r_type & (funct == 6'b100000);
-assign is_mult = is_r_type & (funct == 6'b011000);
-assign is_or   = is_r_type & (funct == 6'b011001);
-assign is_sla  = is_r_type & (funct == 6'b000000);
-assign is_sra  = is_r_type & (funct == 6'b000010);
-assign is_div  = is_r_type & (funct == 6'b110001);
-
-// ─── bad_ins = 2'b01: invalid opcode / funct / register ──────────────────
-logic bad_op, bad_reg, ins_inv;
-
-// unknown opcode or unknown funct for R-type
-assign bad_op = !(is_add | is_mult | is_or | is_sla | is_sra | is_div |
-                  is_addi | is_ori);
-
-// invalid register address (rs,rt,rd all checked; rs still required for SLA/SRA)
-assign bad_reg = !bad_op & (
-    ( is_r_type             & (!rs_ok | !rt_ok | !rd_ok)) |
-    ((is_addi | is_ori)     & (!rs_ok | !rt_ok))
-);
-
-assign ins_inv = bad_op | bad_reg;   // triggers bad_ins = 2'b01
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ALU
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ── MULT: signed 16×16 → 32-bit product, arithmetic right shift 15 ────────
-// Result[15:0] = product[30:15]  (equivalent to $signed(product) >>> 15)
-logic [31:0] mult_full;
-assign mult_full = $signed(rs_v) * $signed(rt_v);
-
-// ── ALU result mux ────────────────────────────────────────────────────────
-logic [15:0] alu_result;
-logic        div_zero;   // triggers bad_ins = 2'b10
-
-always_comb begin
-    alu_result = 16'h0;                              // default / DIV placeholder
-    if      (is_add)  alu_result = rs_v + rt_v;     // 16-bit wrap-around
-    else if (is_mult) alu_result = mult_full[30:15]; // (rs*rt) >>> 15, lower 16
-    else if (is_or)   alu_result = rs_v | rt_v;
-    else if (is_sla)  alu_result = rt_v << shamt;   // logical/arithmetic left shift
-    else if (is_sra)  alu_result = $signed(rt_v) >>> shamt; // arithmetic right shift
-    else if (is_addi) alu_result = rs_v + imm;      // 16-bit wrap-around
-    else if (is_ori)  alu_result = rs_v | imm;
-    // is_div: TODO
-end
-
-// div-by-zero: DIV instruction with rt = 0
-assign div_zero = is_div & (rt_v == 16'h0);
-
-// ─── Write Control ────────────────────────────────────────────────────────
-logic        do_write;
-logic [4:0]  wr_addr;
-
-assign do_write = !ins_inv & !div_zero;
-assign wr_addr  = is_r_type ? rd_a : rt_a;  // R-type writes rd, I-type writes rt
-
-// ─── Per-Register Write Enable ───────────────────────────────────────────
-logic wr0, wr1, wr2, wr3, wr4, wr5;
-
-assign wr0 = do_write & (wr_addr == 5'b10001);
-assign wr1 = do_write & (wr_addr == 5'b10010);
-assign wr2 = do_write & (wr_addr == 5'b01000);
-assign wr3 = do_write & (wr_addr == 5'b10111);
-assign wr4 = do_write & (wr_addr == 5'b11111);
-assign wr5 = do_write & (wr_addr == 5'b10000);
-
-// ─── Next Register Value (bypass mux) ────────────────────────────────────
-// Ensures outputs reflect the value *after* the current instruction writes.
-logic [15:0] nx0, nx1, nx2, nx3, nx4, nx5;
-
-assign nx0 = wr0 ? alu_result : r0;
-assign nx1 = wr1 ? alu_result : r1;
-assign nx2 = wr2 ? alu_result : r2;
-assign nx3 = wr3 ? alu_result : r3;
-assign nx4 = wr4 ? alu_result : r4;
-assign nx5 = wr5 ? alu_result : r5;
-
-// ─── bad_ins Output for Current Instruction ──────────────────────────────
-// Priority: ins_inv (2'b01) > div_zero (2'b10) > clean (2'b00)
-logic [1:0] cur_bad;
-assign cur_bad = ins_inv  ? 2'b01 :
-                 div_zero ? 2'b10 : 2'b00;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SEQUENTIAL LOGIC
-// Stage 1 (Fetch):   on handshake, latch instruction → ins_r, set has_ins
-// Stage 2 (Execute): decode + compute + update register file + drive outputs
-// ═══════════════════════════════════════════════════════════════════════════
+//================================================================
+// 8. Sequential Logic (Flip-Flops)
+//================================================================
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        has_ins   <= 1'b0;
-        ins_r     <= 32'h0;
-        r0 <= 16'h0; r1 <= 16'h0; r2 <= 16'h0;
-        r3 <= 16'h0; r4 <= 16'h0; r5 <= 16'h0;
-        out_valid <= 1'b0;  bad_ins <= 2'b00;
-        out_0 <= 16'h0; out_1 <= 16'h0; out_2 <= 16'h0;
-        out_3 <= 16'h0; out_4 <= 16'h0; out_5 <= 16'h0;
+        state_c   <= S_IDLE;
+        ins_r     <= 32'd0;
+        in_ready  <= 1'b0;
+        bad_ins_r <= 2'b00;
+        for (int i = 0; i < 6; i++) core_regs_c[i] <= 16'd0;
     end else begin
-        // ── Stage 1: Fetch ─────────────────────────────────────────────
-        has_ins <= in_valid;           // in_ready = 1, so handshake = in_valid
-        if (in_valid)
+        state_c <= state_n;
+        for (int i = 0; i < 6; i++) core_regs_c[i] <= core_regs_n[i];
+        
+        if (state_c == S_IDLE && in_valid && in_ready) begin
             ins_r <= instruction;
-
-        // ── Stage 2: Execute & Output ──────────────────────────────────
-        if (has_ins) begin
-            // Update register file (nx* already incorporates alu_result bypass)
-            r0 <= nx0;  r1 <= nx1;  r2 <= nx2;
-            r3 <= nx3;  r4 <= nx4;  r5 <= nx5;
-            // Drive outputs
-            out_valid <= 1'b1;
-            bad_ins   <= cur_bad;
-            out_0 <= nx0;  out_1 <= nx1;  out_2 <= nx2;
-            out_3 <= nx3;  out_4 <= nx4;  out_5 <= nx5;
-        end else begin
-            // No instruction in execute stage → zero all outputs
-            out_valid <= 1'b0;
-            bad_ins   <= 2'b00;
-            out_0 <= 16'h0; out_1 <= 16'h0; out_2 <= 16'h0;
-            out_3 <= 16'h0; out_4 <= 16'h0; out_5 <= 16'h0;
         end
+        
+        if (state_c == S_EXEC) begin
+            bad_ins_r <= bad_ins_type;
+        end
+        
+        if (state_n == S_IDLE && in_valid) begin
+            in_ready <= 1'b1;
+        end else begin
+            in_ready <= 1'b0;
+        end
+    end
+end
+
+//================================================================
+// 9. Output Logic (Combinational)
+//================================================================
+always_comb begin
+    if (!rst_n) begin
+        out_valid = 1'b0;
+        bad_ins   = 2'b00;
+        out_0     = 16'd0;
+        out_1     = 16'd0;
+        out_2     = 16'd0;
+        out_3     = 16'd0;
+        out_4     = 16'd0;
+        out_5     = 16'd0;
+    end else if (state_c == S_OUT) begin
+        out_valid = 1'b1;
+        bad_ins   = bad_ins_r;
+        out_0     = core_regs_c[0];
+        out_1     = core_regs_c[1];
+        out_2     = core_regs_c[2];
+        out_3     = core_regs_c[3];
+        out_4     = core_regs_c[4];
+        out_5     = core_regs_c[5];
+    end else begin
+        out_valid = 1'b0;
+        bad_ins   = 2'b00;
+        out_0     = 16'd0;
+        out_1     = 16'd0;
+        out_2     = 16'd0;
+        out_3     = 16'd0;
+        out_4     = 16'd0;
+        out_5     = 16'd0;
     end
 end
 
