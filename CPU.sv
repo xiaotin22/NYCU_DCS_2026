@@ -1,7 +1,7 @@
 //================================================================
 // Module      : CPU
-// Description : NYCU DCS HW05 - Simple CPU (Single File)
-// Features    : Q1.15 Fixed-point, No for/while loops, Handshake
+// Description : NYCU DCS HW05 - Variable-latency simple CPU
+// Features    : Q1.15 Fixed-point, Handshake, Staged MULT/DIV paths
 //================================================================
 module CPU(
     input  logic        clk,
@@ -22,48 +22,150 @@ module CPU(
 //================================================================
 // 1. Parameters & State Machine Definitions
 //================================================================
+localparam logic [5:0] OP_RTYPE = 6'b000000;
+localparam logic [5:0] OP_ADDI  = 6'b001000;
+localparam logic [5:0] OP_ORI   = 6'b001101;
+
+localparam logic [5:0] FUNC_ADD  = 6'b100000;
+localparam logic [5:0] FUNC_MULT = 6'b011000;
+localparam logic [5:0] FUNC_OR   = 6'b011001;
+localparam logic [5:0] FUNC_SLA  = 6'b000000;
+localparam logic [5:0] FUNC_SRA  = 6'b000010;
+localparam logic [5:0] FUNC_DIV  = 6'b110001;
+
 typedef enum logic [1:0] {
-    S_IDLE,    
-    S_EXEC,    
-    S_OUT      
+    S_IDLE,
+    S_EXEC,
+    S_OUT
 } state_t;
 
-state_t state_c, state_n;
+state_t state_cs, state_ns;
 
 //================================================================
 // 2. Internal Registers & Wires
 //================================================================
-logic [31:0] ins_r;  
+logic [31:0] ins_r;
+logic [3:0]  exec_cycles_r;
+logic [3:0]  exec_cycles_load;
 
-logic signed [15:0] core_regs_c [0:5];
-logic signed [15:0] core_regs_n [0:5];
+logic signed [15:0] core_regs_cs [0:5];
+logic signed [15:0] core_regs_ns [0:5];
 
 logic [1:0] bad_ins_r;
+logic [15:0] out_0_r;
+logic [15:0] out_1_r;
+logic [15:0] out_2_r;
+logic [15:0] out_3_r;
+logic [15:0] out_4_r;
+logic [15:0] out_5_r;
 
 logic [5:0]  opcode, funct;
 logic [4:0]  rs, rt, rd, shamt;
 logic signed [15:0] imm;
 
-logic [2:0]  rs_idx, rt_idx, rd_idx;
-logic        rs_valid, rt_valid, rd_valid;
+logic [5:0] opcode_in, funct_in;
+logic [4:0] rs_in, rt_in, rd_in;
 
-logic [15:0] abs_A, abs_B;
-logic [3:0]  pos_A, pos_B;
-logic [4:0]  shift_n;
-logic signed [15:0] A_shifted_signed; 
-logic [15:0] A_shifted;              
-logic [15:0] div_rem [0:15];         
-logic [14:0] div_quo;                
-logic        div_sign;               
-logic signed [15:0] div_result;      
+logic [2:0] rs_idx, rt_idx, rd_idx;
+logic       rs_valid, rt_valid, rd_valid;
+logic [2:0] rs_idx_in, rt_idx_in, rd_idx_in;
+logic       rs_valid_in, rt_valid_in, rd_valid_in;
 
+logic is_r_type, is_i_type, is_mult, is_div;
+logic is_r_type_in, is_mult_in, is_div_in;
+logic accept_ins;
+logic ins_active_r;
+logic finish_ins;
+logic out_pending_r;
+
+logic signed [15:0] fast_alu_result;
 logic signed [15:0] alu_result;
 logic               write_enable;
 logic [2:0]         write_idx;
-logic [1:0]         bad_ins_type; 
+logic [1:0]         bad_ins_type;
+
+logic signed [31:0] mult_product;
+logic signed [31:0] mult_shifted;
+logic signed [15:0] mult_result_r;
+
+logic [15:0] div_abs_a;
+logic [15:0] div_abs_b;
+logic [3:0]  div_pos_a;
+logic [3:0]  div_pos_b;
+logic [4:0]  div_shift_n;
+logic signed [15:0] div_a_shifted_signed;
+logic [15:0] div_a_shifted_abs;
+logic        div_sign_init;
+logic        div_overflow_init;
+
+logic [15:0] div_abs_b_r, div_abs_b_n;
+logic [15:0] div_rem_r, div_rem_n;
+logic [14:0] div_quo_r, div_quo_n;
+logic        div_sign_r, div_sign_n;
+logic        div_overflow_r, div_overflow_n;
+
+logic [14:0] div_quo_final;
+logic signed [15:0] div_result;
 
 //================================================================
-// 3. Instruction Decoding (Combinational)
+// 3. Helper Functions
+//================================================================
+function automatic void map_reg(input logic [4:0] addr, output logic [2:0] idx, output logic valid);
+    valid = 1'b1;
+    case (addr)
+        5'b10001: idx = 3'd0;
+        5'b10010: idx = 3'd1;
+        5'b01000: idx = 3'd2;
+        5'b10111: idx = 3'd3;
+        5'b11111: idx = 3'd4;
+        5'b10000: idx = 3'd5;
+        default: begin
+            idx   = 3'd0;
+            valid = 1'b0;
+        end
+    endcase
+endfunction
+
+function automatic logic [15:0] abs16(input logic signed [15:0] value);
+    if (value[15]) abs16 = ~value + 16'd1;
+    else           abs16 = value;
+endfunction
+
+function automatic logic [3:0] msb_pos(input logic [15:0] value);
+    if      (value[15]) msb_pos = 4'd15;
+    else if (value[14]) msb_pos = 4'd14;
+    else if (value[13]) msb_pos = 4'd13;
+    else if (value[12]) msb_pos = 4'd12;
+    else if (value[11]) msb_pos = 4'd11;
+    else if (value[10]) msb_pos = 4'd10;
+    else if (value[9])  msb_pos = 4'd9;
+    else if (value[8])  msb_pos = 4'd8;
+    else if (value[7])  msb_pos = 4'd7;
+    else if (value[6])  msb_pos = 4'd6;
+    else if (value[5])  msb_pos = 4'd5;
+    else if (value[4])  msb_pos = 4'd4;
+    else if (value[3])  msb_pos = 4'd3;
+    else if (value[2])  msb_pos = 4'd2;
+    else if (value[1])  msb_pos = 4'd1;
+    else                msb_pos = 4'd0;
+endfunction
+
+function automatic logic [16:0] div_step(input logic [15:0] rem_i, input logic [15:0] divisor_i);
+    logic [16:0] shifted;
+    logic [16:0] subtracted;
+    begin
+        shifted = {1'b0, rem_i} << 1;
+        if (shifted >= {1'b0, divisor_i}) begin
+            subtracted = shifted - {1'b0, divisor_i};
+            div_step   = {1'b1, subtracted[15:0]};
+        end else begin
+            div_step   = {1'b0, shifted[15:0]};
+        end
+    end
+endfunction
+
+//================================================================
+// 4. Instruction Decoding
 //================================================================
 assign opcode = ins_r[31:26];
 assign rs     = ins_r[25:21];
@@ -73,268 +175,329 @@ assign shamt  = ins_r[10:6];
 assign funct  = ins_r[5:0];
 assign imm    = ins_r[15:0];
 
-//================================================================
-// 4. Register Address Mapping (Combinational)
-//================================================================
-function automatic void map_reg(input logic [4:0] addr, output logic [2:0] idx, output logic valid);
-    valid = 1'b1;
-    case(addr)
-        5'b10001: idx = 3'd0;
-        5'b10010: idx = 3'd1;
-        5'b01000: idx = 3'd2;
-        5'b10111: idx = 3'd3;
-        5'b11111: idx = 3'd4;
-        5'b10000: idx = 3'd5;
-        default:  begin idx = 3'd0; valid = 1'b0; end
-    endcase
-endfunction
+assign opcode_in = instruction[31:26];
+assign rs_in     = instruction[25:21];
+assign rt_in     = instruction[20:16];
+assign rd_in     = instruction[15:11];
+assign funct_in  = instruction[5:0];
 
 always_comb begin
     map_reg(rs, rs_idx, rs_valid);
     map_reg(rt, rt_idx, rt_valid);
     map_reg(rd, rd_idx, rd_valid);
+
+    map_reg(rs_in, rs_idx_in, rs_valid_in);
+    map_reg(rt_in, rt_idx_in, rt_valid_in);
+    map_reg(rd_in, rd_idx_in, rd_valid_in);
 end
 
+assign is_r_type = (opcode == OP_RTYPE);
+assign is_i_type = (opcode == OP_ADDI) || (opcode == OP_ORI);
+assign is_mult   = is_r_type && (funct == FUNC_MULT);
+assign is_div    = is_r_type && (funct == FUNC_DIV);
+
+assign is_r_type_in = (opcode_in == OP_RTYPE);
+assign is_mult_in   = is_r_type_in && (funct_in == FUNC_MULT);
+assign is_div_in    = is_r_type_in && (funct_in == FUNC_DIV);
+
 //================================================================
-// 5. Restoring Divider Unrolled Logic (Combinational)
+// 5. Variable-Latency Control
 //================================================================
+assign accept_ins = in_valid && in_ready;
+assign finish_ins = (state_cs == S_EXEC && exec_cycles_r == 4'd0 && ins_active_r);
+
 always_comb begin
-    // 1. 取絕對值
-    abs_A = (core_regs_c[rs_idx][15]) ? (~core_regs_c[rs_idx] + 16'd1) : core_regs_c[rs_idx];
-    abs_B = (core_regs_c[rt_idx][15]) ? (~core_regs_c[rt_idx] + 16'd1) : core_regs_c[rt_idx];
+    exec_cycles_load = 4'd0;
 
-    // 2. 尋找 MSB 位置
-    if      (abs_A[15]) pos_A = 4'd15;
-    else if (abs_A[14]) pos_A = 4'd14;
-    else if (abs_A[13]) pos_A = 4'd13;
-    else if (abs_A[12]) pos_A = 4'd12;
-    else if (abs_A[11]) pos_A = 4'd11;
-    else if (abs_A[10]) pos_A = 4'd10;
-    else if (abs_A[9])  pos_A = 4'd9;
-    else if (abs_A[8])  pos_A = 4'd8;
-    else if (abs_A[7])  pos_A = 4'd7;
-    else if (abs_A[6])  pos_A = 4'd6;
-    else if (abs_A[5])  pos_A = 4'd5;
-    else if (abs_A[4])  pos_A = 4'd4;
-    else if (abs_A[3])  pos_A = 4'd3;
-    else if (abs_A[2])  pos_A = 4'd2;
-    else if (abs_A[1])  pos_A = 4'd1;
-    else                pos_A = 4'd0;
-
-    if      (abs_B[15]) pos_B = 4'd15;
-    else if (abs_B[14]) pos_B = 4'd14;
-    else if (abs_B[13]) pos_B = 4'd13;
-    else if (abs_B[12]) pos_B = 4'd12;
-    else if (abs_B[11]) pos_B = 4'd11;
-    else if (abs_B[10]) pos_B = 4'd10;
-    else if (abs_B[9])  pos_B = 4'd9;
-    else if (abs_B[8])  pos_B = 4'd8;
-    else if (abs_B[7])  pos_B = 4'd7;
-    else if (abs_B[6])  pos_B = 4'd6;
-    else if (abs_B[5])  pos_B = 4'd5;
-    else if (abs_B[4])  pos_B = 4'd4;
-    else if (abs_B[3])  pos_B = 4'd3;
-    else if (abs_B[2])  pos_B = 4'd2;
-    else if (abs_B[1])  pos_B = 4'd1;
-    else                pos_B = 4'd0;
-
-    // 3. 計算位移量 n
-    if (abs_A >= abs_B) shift_n = pos_A - pos_B + 5'd1;
-    else                shift_n = 5'd0;
-
-    A_shifted_signed = core_regs_c[rs_idx] >>> shift_n;
-    A_shifted = (A_shifted_signed[15]) ? (~A_shifted_signed + 16'd1) : A_shifted_signed;
-
-    // 4. 15 級 Restoring Divider 展開
-    div_rem[0] = A_shifted;
-    if ({1'b0, div_rem[0]} << 1 >= {1'b0, abs_B}) begin div_rem[1] = ({1'b0, div_rem[0]} << 1) - abs_B; div_quo[14] = 1'b1; end else begin div_rem[1] = div_rem[0] << 1; div_quo[14] = 1'b0; end
-    if ({1'b0, div_rem[1]} << 1 >= {1'b0, abs_B}) begin div_rem[2] = ({1'b0, div_rem[1]} << 1) - abs_B; div_quo[13] = 1'b1; end else begin div_rem[2] = div_rem[1] << 1; div_quo[13] = 1'b0; end
-    if ({1'b0, div_rem[2]} << 1 >= {1'b0, abs_B}) begin div_rem[3] = ({1'b0, div_rem[2]} << 1) - abs_B; div_quo[12] = 1'b1; end else begin div_rem[3] = div_rem[2] << 1; div_quo[12] = 1'b0; end
-    if ({1'b0, div_rem[3]} << 1 >= {1'b0, abs_B}) begin div_rem[4] = ({1'b0, div_rem[3]} << 1) - abs_B; div_quo[11] = 1'b1; end else begin div_rem[4] = div_rem[3] << 1; div_quo[11] = 1'b0; end
-    if ({1'b0, div_rem[4]} << 1 >= {1'b0, abs_B}) begin div_rem[5] = ({1'b0, div_rem[4]} << 1) - abs_B; div_quo[10] = 1'b1; end else begin div_rem[5] = div_rem[4] << 1; div_quo[10] = 1'b0; end
-    if ({1'b0, div_rem[5]} << 1 >= {1'b0, abs_B}) begin div_rem[6] = ({1'b0, div_rem[5]} << 1) - abs_B; div_quo[9] = 1'b1; end else begin div_rem[6] = div_rem[5] << 1; div_quo[9] = 1'b0; end
-    if ({1'b0, div_rem[6]} << 1 >= {1'b0, abs_B}) begin div_rem[7] = ({1'b0, div_rem[6]} << 1) - abs_B; div_quo[8] = 1'b1; end else begin div_rem[7] = div_rem[6] << 1; div_quo[8] = 1'b0; end
-    if ({1'b0, div_rem[7]} << 1 >= {1'b0, abs_B}) begin div_rem[8] = ({1'b0, div_rem[7]} << 1) - abs_B; div_quo[7] = 1'b1; end else begin div_rem[8] = div_rem[7] << 1; div_quo[7] = 1'b0; end
-    if ({1'b0, div_rem[8]} << 1 >= {1'b0, abs_B}) begin div_rem[9] = ({1'b0, div_rem[8]} << 1) - abs_B; div_quo[6] = 1'b1; end else begin div_rem[9] = div_rem[8] << 1; div_quo[6] = 1'b0; end
-    if ({1'b0, div_rem[9]} << 1 >= {1'b0, abs_B}) begin div_rem[10] = ({1'b0, div_rem[9]} << 1) - abs_B; div_quo[5] = 1'b1; end else begin div_rem[10] = div_rem[9] << 1; div_quo[5] = 1'b0; end
-    if ({1'b0, div_rem[10]} << 1 >= {1'b0, abs_B}) begin div_rem[11] = ({1'b0, div_rem[10]} << 1) - abs_B; div_quo[4] = 1'b1; end else begin div_rem[11] = div_rem[10] << 1; div_quo[4] = 1'b0; end
-    if ({1'b0, div_rem[11]} << 1 >= {1'b0, abs_B}) begin div_rem[12] = ({1'b0, div_rem[11]} << 1) - abs_B; div_quo[3] = 1'b1; end else begin div_rem[12] = div_rem[11] << 1; div_quo[3] = 1'b0; end
-    if ({1'b0, div_rem[12]} << 1 >= {1'b0, abs_B}) begin div_rem[13] = ({1'b0, div_rem[12]} << 1) - abs_B; div_quo[2] = 1'b1; end else begin div_rem[13] = div_rem[12] << 1; div_quo[2] = 1'b0; end
-    if ({1'b0, div_rem[13]} << 1 >= {1'b0, abs_B}) begin div_rem[14] = ({1'b0, div_rem[13]} << 1) - abs_B; div_quo[1] = 1'b1; end else begin div_rem[14] = div_rem[13] << 1; div_quo[1] = 1'b0; end
-    if ({1'b0, div_rem[14]} << 1 >= {1'b0, abs_B}) begin div_rem[15] = ({1'b0, div_rem[14]} << 1) - abs_B; div_quo[0] = 1'b1; end else begin div_rem[15] = div_rem[14] << 1; div_quo[0] = 1'b0; end
-
-    // 5. [關鍵修復] 符號處理與邊界溢位保護
-    div_sign = core_regs_c[rs_idx][15] ^ core_regs_c[rt_idx][15];
-    
-    // 如果算術移位導致 |A_shifted| >= |B|，代表商數數學上 >= 1.0
-    // Q1.15 格式極限無法表示 1.0，助教的底層會將 32768 溢位解讀為 16'h8000 (-32768)
-    if (A_shifted >= abs_B) begin
-        div_result = 16'h8000;
-    end else if (div_sign) begin
-        div_result = ~( {1'b0, div_quo} ) + 16'd1;
-    end else begin
-        div_result = {1'b0, div_quo};
+    if (is_mult_in && rs_valid_in && rt_valid_in && rd_valid_in) begin
+        exec_cycles_load = 4'd1;
+    end else if (is_div_in && rs_valid_in && rt_valid_in && rd_valid_in &&
+                 (core_regs_cs[rt_idx_in] != 16'sd0)) begin
+        exec_cycles_load = 4'd3;
     end
 end
 
-//================================================================
-// 6. ALU & Exception Logic (Combinational)
-//================================================================
-logic is_r_type, is_i_type;
 always_comb begin
-    alu_result   = 16'd0;
-    write_enable = 1'b0;
-    write_idx    = 3'd0;
-    bad_ins_type = 2'b00;
+    state_ns = state_cs;
 
-    is_r_type = (opcode == 6'b000000);
-    is_i_type = (opcode == 6'b001000) || (opcode == 6'b001101);
+    case (state_cs)
+        S_IDLE: begin
+            if (accept_ins) state_ns = S_EXEC;
+        end
+        S_EXEC: begin
+            if (exec_cycles_r == 4'd0) state_ns = S_OUT;
+            else                       state_ns = S_EXEC;
+        end
+        S_OUT: begin
+            if (accept_ins) state_ns = S_EXEC;
+            else            state_ns = S_IDLE;
+        end
+        default: state_ns = S_IDLE;
+    endcase
+end
+
+//================================================================
+// 6. Fast ALU, MULT Result, and Exception Logic
+//================================================================
+always_comb begin
+    fast_alu_result = 16'sd0;
+    alu_result      = 16'sd0;
+    write_enable    = 1'b0;
+    write_idx       = 3'd0;
+    bad_ins_type    = 2'b00;
+
+    mult_product = $signed({{16{core_regs_cs[rs_idx][15]}}, core_regs_cs[rs_idx]}) *
+                   $signed({{16{core_regs_cs[rt_idx][15]}}, core_regs_cs[rt_idx]});
+    mult_shifted = mult_product >>> 15;
 
     if (is_r_type && (!rs_valid || !rt_valid || !rd_valid)) begin
         bad_ins_type = 2'b01;
-    end 
-    else if (is_i_type && (!rs_valid || !rt_valid)) begin
+    end else if (is_i_type && (!rs_valid || !rt_valid)) begin
         bad_ins_type = 2'b01;
-    end
-    else begin
+    end else begin
         case (opcode)
-            6'b000000: begin // R-Type
+            OP_RTYPE: begin
                 write_idx = rd_idx;
                 case (funct)
-                    6'b100000: begin // ADD
-                        alu_result = core_regs_c[rs_idx] + core_regs_c[rt_idx];
+                    FUNC_ADD: begin
+                        fast_alu_result = core_regs_cs[rs_idx] + core_regs_cs[rt_idx];
+                        write_enable    = 1'b1;
+                    end
+                    FUNC_MULT: begin
                         write_enable = 1'b1;
                     end
-                    6'b011000: begin // MULT
-                        logic signed [31:0] mult_tmp;
-                        mult_tmp = signed'(32'(core_regs_c[rs_idx])) * signed'(32'(core_regs_c[rt_idx]));
-                        alu_result = 16'(mult_tmp >>> 15);
-                        write_enable = 1'b1;
+                    FUNC_OR: begin
+                        fast_alu_result = core_regs_cs[rs_idx] | core_regs_cs[rt_idx];
+                        write_enable    = 1'b1;
                     end
-                    6'b011001: begin // OR
-                        alu_result = core_regs_c[rs_idx] | core_regs_c[rt_idx];
-                        write_enable = 1'b1;
+                    FUNC_SLA: begin
+                        fast_alu_result = core_regs_cs[rt_idx] << shamt;
+                        write_enable    = 1'b1;
                     end
-                    6'b000000: begin // SLA
-                        alu_result = core_regs_c[rt_idx] << shamt;
-                        write_enable = 1'b1;
+                    FUNC_SRA: begin
+                        fast_alu_result = core_regs_cs[rt_idx] >>> shamt;
+                        write_enable    = 1'b1;
                     end
-                    6'b000010: begin // SRA
-                        alu_result = core_regs_c[rt_idx] >>> shamt;
-                        write_enable = 1'b1;
-                    end
-                    6'b110001: begin // DIV
-                        if (core_regs_c[rt_idx] == 16'sd0) begin
-                            bad_ins_type = 2'b10; 
+                    FUNC_DIV: begin
+                        if (core_regs_cs[rt_idx] == 16'sd0) begin
+                            bad_ins_type = 2'b10;
                         end else begin
-                            alu_result = div_result;
                             write_enable = 1'b1;
                         end
                     end
                     default: bad_ins_type = 2'b01;
                 endcase
             end
-            6'b001000: begin // ADDI
-                write_idx = rt_idx;
-                alu_result = core_regs_c[rs_idx] + imm;
-                write_enable = 1'b1;
+            OP_ADDI: begin
+                write_idx       = rt_idx;
+                fast_alu_result = core_regs_cs[rs_idx] + imm;
+                write_enable    = 1'b1;
             end
-            6'b001101: begin // ORI
-                write_idx = rt_idx;
-                alu_result = core_regs_c[rs_idx] | imm;
-                write_enable = 1'b1;
+            OP_ORI: begin
+                write_idx       = rt_idx;
+                fast_alu_result = core_regs_cs[rs_idx] | imm;
+                write_enable    = 1'b1;
             end
             default: bad_ins_type = 2'b01;
         endcase
     end
+
+    if (is_div) begin
+        alu_result = div_result;
+    end else if (is_mult) begin
+        alu_result = mult_result_r;
+    end else begin
+        alu_result = fast_alu_result;
+    end
 end
 
 //================================================================
-// 7. Next State Logic & Register Update (Combinational)
+// 7. Staged Divider Data Path
 //================================================================
 always_comb begin
-    state_n = state_c;
-    for (int i = 0; i < 6; i++) core_regs_n[i] = core_regs_c[i];
+    div_abs_a = abs16(core_regs_cs[rs_idx]);
+    div_abs_b = abs16(core_regs_cs[rt_idx]);
+    div_pos_a = msb_pos(div_abs_a);
+    div_pos_b = msb_pos(div_abs_b);
 
-    case (state_c)
-        S_IDLE: begin
-            if (in_valid && in_ready) state_n = S_EXEC;
-        end
-        S_EXEC: begin
-            if (bad_ins_type == 2'b00 && write_enable) begin
-                core_regs_n[write_idx] = alu_result;
+    if (div_abs_a >= div_abs_b) div_shift_n = div_pos_a - div_pos_b + 5'd1;
+    else                        div_shift_n = 5'd0;
+
+    div_a_shifted_signed = core_regs_cs[rs_idx] >>> div_shift_n;
+    div_a_shifted_abs    = abs16(div_a_shifted_signed);
+    div_sign_init        = div_a_shifted_signed[15] ^ core_regs_cs[rt_idx][15];
+    div_overflow_init    = (div_a_shifted_abs >= div_abs_b);
+end
+
+always_comb begin
+    logic [16:0] step0;
+    logic [16:0] step1;
+    logic [16:0] step2;
+    logic [16:0] step3;
+
+    div_abs_b_n    = div_abs_b_r;
+    div_rem_n      = div_rem_r;
+    div_quo_n      = div_quo_r;
+    div_sign_n     = div_sign_r;
+    div_overflow_n = div_overflow_r;
+
+    step0 = 17'd0;
+    step1 = 17'd0;
+    step2 = 17'd0;
+    step3 = 17'd0;
+
+    if (state_cs == S_EXEC && is_div && exec_cycles_r > 4'd0) begin
+        case (exec_cycles_r)
+            4'd3: begin
+                step0 = div_step(div_a_shifted_abs, div_abs_b);
+                step1 = div_step(step0[15:0], div_abs_b);
+                step2 = div_step(step1[15:0], div_abs_b);
+                step3 = div_step(step2[15:0], div_abs_b);
+
+                div_abs_b_n    = div_abs_b;
+                div_rem_n      = step3[15:0];
+                div_quo_n      = {step0[16], step1[16], step2[16], step3[16], 11'd0};
+                div_sign_n     = div_sign_init;
+                div_overflow_n = div_overflow_init;
             end
-            state_n = S_OUT;
-        end
-        S_OUT: begin
-            state_n = S_IDLE;
-        end
-        default: state_n = S_IDLE;
-    endcase
+            4'd2: begin
+                step0 = div_step(div_rem_r, div_abs_b_r);
+                step1 = div_step(step0[15:0], div_abs_b_r);
+                step2 = div_step(step1[15:0], div_abs_b_r);
+                step3 = div_step(step2[15:0], div_abs_b_r);
+
+                div_rem_n = step3[15:0];
+                div_quo_n = {div_quo_r[14:11], step0[16], step1[16], step2[16], step3[16], 7'd0};
+            end
+            4'd1: begin
+                step0 = div_step(div_rem_r, div_abs_b_r);
+                step1 = div_step(step0[15:0], div_abs_b_r);
+                step2 = div_step(step1[15:0], div_abs_b_r);
+                step3 = div_step(step2[15:0], div_abs_b_r);
+
+                div_rem_n = step3[15:0];
+                div_quo_n = {div_quo_r[14:7], step0[16], step1[16], step2[16], step3[16], 3'd0};
+            end
+            default: begin
+                div_abs_b_n    = div_abs_b_r;
+                div_rem_n      = div_rem_r;
+                div_quo_n      = div_quo_r;
+                div_sign_n     = div_sign_r;
+                div_overflow_n = div_overflow_r;
+            end
+        endcase
+    end
+end
+
+always_comb begin
+    logic [16:0] step0;
+    logic [16:0] step1;
+    logic [16:0] step2;
+
+    step0 = div_step(div_rem_r, div_abs_b_r);
+    step1 = div_step(step0[15:0], div_abs_b_r);
+    step2 = div_step(step1[15:0], div_abs_b_r);
+
+    div_quo_final = {div_quo_r[14:3], step0[16], step1[16], step2[16]};
+
+    if (div_overflow_r) begin
+        div_result = 16'sh8000;
+    end else if (div_sign_r) begin
+        div_result = $signed((~{1'b0, div_quo_final}) + 16'd1);
+    end else begin
+        div_result = $signed({1'b0, div_quo_final});
+    end
 end
 
 //================================================================
-// 8. Sequential Logic (Flip-Flops)
+// 8. Register File Next Value
+//================================================================
+always_comb begin
+    for (int i = 0; i < 6; i++) core_regs_ns[i] = core_regs_cs[i];
+
+    if (state_cs == S_EXEC && exec_cycles_r == 4'd0 &&
+        bad_ins_type == 2'b00 && write_enable) begin
+        core_regs_ns[write_idx] = alu_result;
+    end
+end
+
+//================================================================
+// 9. Sequential Logic
 //================================================================
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        state_c   <= S_IDLE;
-        ins_r     <= 32'd0;
-        in_ready  <= 1'b0;
-        bad_ins_r <= 2'b00;
-        for (int i = 0; i < 6; i++) core_regs_c[i] <= 16'd0;
+        state_cs       <= S_IDLE;
+        ins_r          <= 32'd0;
+        exec_cycles_r  <= 4'd0;
+        in_ready       <= 1'b0;
+        out_valid      <= 1'b0;
+        ins_active_r   <= 1'b0;
+        out_pending_r  <= 1'b0;
+        bad_ins_r      <= 2'b00;
+        out_0_r        <= 16'd0;
+        out_1_r        <= 16'd0;
+        out_2_r        <= 16'd0;
+        out_3_r        <= 16'd0;
+        out_4_r        <= 16'd0;
+        out_5_r        <= 16'd0;
+        mult_result_r  <= 16'sd0;
+        div_abs_b_r    <= 16'd0;
+        div_rem_r      <= 16'd0;
+        div_quo_r      <= 15'd0;
+        div_sign_r     <= 1'b0;
+        div_overflow_r <= 1'b0;
+        for (int i = 0; i < 6; i++) core_regs_cs[i] <= 16'sd0;
     end else begin
-        state_c <= state_n;
-        for (int i = 0; i < 6; i++) core_regs_c[i] <= core_regs_n[i];
-        
-        if (state_c == S_IDLE && in_valid && in_ready) begin
-            ins_r <= instruction;
+        state_cs <= state_ns;
+        in_ready <= (state_ns != S_EXEC) && in_valid;
+        out_valid <= out_pending_r;
+        out_pending_r <= finish_ins;
+        for (int i = 0; i < 6; i++) core_regs_cs[i] <= core_regs_ns[i];
+
+        if (accept_ins) begin
+            ins_r         <= instruction;
+            exec_cycles_r <= exec_cycles_load;
+            ins_active_r  <= 1'b1;
+        end else if (state_cs == S_EXEC && exec_cycles_r > 4'd0) begin
+            exec_cycles_r <= exec_cycles_r - 4'd1;
         end
-        
-        if (state_c == S_EXEC) begin
+
+        if (state_cs == S_EXEC && exec_cycles_r > 4'd0) begin
+            if (is_mult) begin
+                mult_result_r <= mult_shifted[15:0];
+            end
+
+            if (is_div) begin
+                div_abs_b_r    <= div_abs_b_n;
+                div_rem_r      <= div_rem_n;
+                div_quo_r      <= div_quo_n;
+                div_sign_r     <= div_sign_n;
+                div_overflow_r <= div_overflow_n;
+            end
+        end
+
+        if (finish_ins) begin
             bad_ins_r <= bad_ins_type;
-        end
-        
-        if (state_n == S_IDLE && in_valid) begin
-            in_ready <= 1'b1;
-        end else begin
-            in_ready <= 1'b0;
+            out_0_r   <= core_regs_ns[0];
+            out_1_r   <= core_regs_ns[1];
+            out_2_r   <= core_regs_ns[2];
+            out_3_r   <= core_regs_ns[3];
+            out_4_r   <= core_regs_ns[4];
+            out_5_r   <= core_regs_ns[5];
+            ins_active_r <= 1'b0;
         end
     end
 end
 
 //================================================================
-// 9. Output Logic (Combinational)
+// 10. Output Logic
 //================================================================
-always_comb begin
-    if (!rst_n) begin
-        out_valid = 1'b0;
-        bad_ins   = 2'b00;
-        out_0     = 16'd0;
-        out_1     = 16'd0;
-        out_2     = 16'd0;
-        out_3     = 16'd0;
-        out_4     = 16'd0;
-        out_5     = 16'd0;
-    end else if (state_c == S_OUT) begin
-        out_valid = 1'b1;
-        bad_ins   = bad_ins_r;
-        out_0     = core_regs_c[0];
-        out_1     = core_regs_c[1];
-        out_2     = core_regs_c[2];
-        out_3     = core_regs_c[3];
-        out_4     = core_regs_c[4];
-        out_5     = core_regs_c[5];
-    end else begin
-        out_valid = 1'b0;
-        bad_ins   = 2'b00;
-        out_0     = 16'd0;
-        out_1     = 16'd0;
-        out_2     = 16'd0;
-        out_3     = 16'd0;
-        out_4     = 16'd0;
-        out_5     = 16'd0;
-    end
-end
+assign bad_ins = out_valid ? bad_ins_r : 2'b00;
+assign out_0   = out_valid ? out_0_r   : 16'd0;
+assign out_1   = out_valid ? out_1_r   : 16'd0;
+assign out_2   = out_valid ? out_2_r   : 16'd0;
+assign out_3   = out_valid ? out_3_r   : 16'd0;
+assign out_4   = out_valid ? out_4_r   : 16'd0;
+assign out_5   = out_valid ? out_5_r   : 16'd0;
 
 endmodule
