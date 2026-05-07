@@ -76,7 +76,6 @@ logic is_r_type_in, is_mult_in, is_div_in;
 logic accept_ins;
 logic ins_active_r;
 logic finish_ins;
-logic out_pending_r;
 
 logic signed [15:0] fast_alu_result;
 logic signed [15:0] alu_result;
@@ -213,7 +212,7 @@ always_comb begin
         exec_cycles_load = 4'd1;
     end else if (is_div_in && rs_valid_in && rt_valid_in && rd_valid_in &&
                  (core_regs_cs[rt_idx_in] != 16'sd0)) begin
-        exec_cycles_load = 4'd3;
+        exec_cycles_load = 4'd4;
     end
 end
 
@@ -348,17 +347,21 @@ always_comb begin
 
     if (state_cs == S_EXEC && is_div && exec_cycles_r > 4'd0) begin
         case (exec_cycles_r)
-            4'd3: begin
-                step0 = div_step(div_a_shifted_abs, div_abs_b);
-                step1 = div_step(step0[15:0], div_abs_b);
-                step2 = div_step(step1[15:0], div_abs_b);
-                step3 = div_step(step2[15:0], div_abs_b);
-
+            4'd4: begin
                 div_abs_b_n    = div_abs_b;
-                div_rem_n      = step3[15:0];
-                div_quo_n      = {step0[16], step1[16], step2[16], step3[16], 11'd0};
+                div_rem_n      = div_a_shifted_abs;
+                div_quo_n      = 15'd0;
                 div_sign_n     = div_sign_init;
                 div_overflow_n = div_overflow_init;
+            end
+            4'd3: begin
+                step0 = div_step(div_rem_r, div_abs_b_r);
+                step1 = div_step(step0[15:0], div_abs_b_r);
+                step2 = div_step(step1[15:0], div_abs_b_r);
+                step3 = div_step(step2[15:0], div_abs_b_r);
+
+                div_rem_n      = step3[15:0];
+                div_quo_n      = {step0[16], step1[16], step2[16], step3[16], 11'd0};
             end
             4'd2: begin
                 step0 = div_step(div_rem_r, div_abs_b_r);
@@ -413,7 +416,7 @@ end
 // 8. Register File Next Value
 //================================================================
 always_comb begin
-    for (int i = 0; i < 6; i++) core_regs_ns[i] = core_regs_cs[i];
+    core_regs_ns = core_regs_cs;
 
     if (state_cs == S_EXEC && exec_cycles_r == 4'd0 &&
         bad_ins_type == 2'b00 && write_enable) begin
@@ -432,7 +435,6 @@ always_ff @(posedge clk or negedge rst_n) begin
         in_ready       <= 1'b0;
         out_valid      <= 1'b0;
         ins_active_r   <= 1'b0;
-        out_pending_r  <= 1'b0;
         bad_ins_r      <= 2'b00;
         out_0_r        <= 16'd0;
         out_1_r        <= 16'd0;
@@ -446,13 +448,13 @@ always_ff @(posedge clk or negedge rst_n) begin
         div_quo_r      <= 15'd0;
         div_sign_r     <= 1'b0;
         div_overflow_r <= 1'b0;
-        for (int i = 0; i < 6; i++) core_regs_cs[i] <= 16'sd0;
+        core_regs_cs <= 'default{16'sd0};
+
     end else begin
         state_cs <= state_ns;
         in_ready <= (state_ns != S_EXEC) && in_valid;
-        out_valid <= out_pending_r;
-        out_pending_r <= finish_ins;
-        for (int i = 0; i < 6; i++) core_regs_cs[i] <= core_regs_ns[i];
+        out_valid <= finish_ins;
+        core_regs_cs <= core_regs_ns;
 
         if (accept_ins) begin
             ins_r         <= instruction;
