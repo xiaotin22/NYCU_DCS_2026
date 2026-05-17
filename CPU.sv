@@ -1,7 +1,7 @@
 //================================================================
 // Module      : CPU
-// Description : NYCU DCS HW05 - Variable-latency simple CPU
-// Features    : Q1.15 Fixed-point, Handshake, Staged MULT/DIV paths
+// Description : NYCU DCS HW05 - fixed-latency in-order CPU
+// Features    : Q1.15 fixed-point, registered handshake, pipelined MULT/DIV
 //================================================================
 module CPU(
     input  logic        clk,
@@ -20,7 +20,7 @@ module CPU(
 );
 
 //================================================================
-// 1. Parameters & State Machine Definitions
+// 1. Parameters
 //================================================================
 localparam logic [5:0] OP_RTYPE = 6'b000000;
 localparam logic [5:0] OP_ADDI  = 6'b001000;
@@ -33,115 +33,105 @@ localparam logic [5:0] FUNC_SLA  = 6'b000000;
 localparam logic [5:0] FUNC_SRA  = 6'b000010;
 localparam logic [5:0] FUNC_DIV  = 6'b110001;
 
-typedef enum logic [1:0] {
-    S_IDLE,
-    S_EXEC,
-    S_OUT
-} state_t;
-
-state_t state_cs, state_ns;
+localparam int FIFO_DEPTH      = 4;
+localparam int FIFO_COUNT_W    = 3;
+localparam logic [FIFO_COUNT_W-1:0] FIFO_READY_LIMIT = 3'd1;
+localparam int PIPE_DEPTH      = 6;
+localparam int PIPE_LAST       = PIPE_DEPTH - 1;
+localparam int DIV_FINAL_STAGE = PIPE_DEPTH;
+localparam int TAG_W           = 8;
 
 //================================================================
 // 2. Internal Registers & Wires
 //================================================================
-logic [31:0] ins_r;
-logic [3:0]  exec_cycles_r;
-logic [3:0]  exec_cycles_load;
+logic [31:0] fifo_ins_r [0:FIFO_DEPTH-1];
+logic [FIFO_COUNT_W-1:0] fifo_count_r;
+logic [FIFO_COUNT_W-1:0] fifo_count_after_issue;
+logic [FIFO_COUNT_W-1:0] fifo_push_idx;
+logic                    fifo_has_ins;
 
 logic signed [15:0] core_regs_cs [0:5];
 logic signed [15:0] core_regs_ns [0:5];
+logic signed [15:0] issue_regs_r [0:5];
+logic               pending_r [0:5];
+logic [TAG_W-1:0]   reg_tag_r [0:5];
+logic [TAG_W-1:0]   tag_counter_r;
+logic [TAG_W-1:0]   issue_tag;
 
+logic out_valid_r;
 logic [1:0] bad_ins_r;
-logic [15:0] out_0_r;
-logic [15:0] out_1_r;
-logic [15:0] out_2_r;
-logic [15:0] out_3_r;
-logic [15:0] out_4_r;
-logic [15:0] out_5_r;
+logic [15:0] out_0_r, out_1_r, out_2_r, out_3_r, out_4_r, out_5_r;
 
-logic [5:0]  opcode, funct;
-logic [4:0]  rs, rt, rd, shamt;
-logic signed [15:0] imm;
+logic                    pipe_valid_r [0:PIPE_LAST];
+logic [1:0]              pipe_bad_r [0:PIPE_LAST];
+logic                    pipe_write_en_r [0:PIPE_LAST];
+logic [2:0]              pipe_write_idx_r [0:PIPE_LAST];
+logic [TAG_W-1:0]        pipe_tag_r [0:PIPE_LAST];
+logic                    pipe_is_mult_r [0:PIPE_LAST];
+logic                    pipe_is_div_r [0:PIPE_LAST];
+logic signed [15:0]      pipe_result_r [0:PIPE_LAST];
+logic signed [15:0]      pipe_mult_rs_r [0:PIPE_LAST];
+logic signed [15:0]      pipe_mult_rt_r [0:PIPE_LAST];
+logic [15:0]             pipe_div_b_r [0:PIPE_LAST];
+logic [15:0]             pipe_div_rem_r [0:PIPE_LAST];
+logic [14:0]             pipe_div_quo_r [0:PIPE_LAST];
+logic                    pipe_div_sign_r [0:PIPE_LAST];
+logic                    pipe_div_overflow_r [0:PIPE_LAST];
 
-logic [5:0] opcode_in, funct_in;
-logic [4:0] rs_in, rt_in, rd_in, shamt_in;
-logic signed [15:0] imm_in;
+logic [31:0] issue_ins;
+logic [5:0]  issue_opcode, issue_funct;
+logic [4:0]  issue_rs, issue_rt, issue_rd, issue_shamt;
+logic signed [15:0] issue_imm;
+logic [2:0] issue_rs_idx, issue_rt_idx, issue_rd_idx;
+logic       issue_rs_valid, issue_rt_valid, issue_rd_valid;
+logic       issue_is_r_type, issue_is_i_type;
+logic       issue_is_add, issue_is_mult, issue_is_or;
+logic       issue_is_sla, issue_is_sra, issue_is_div;
+logic       issue_supported, issue_addr_valid;
+logic       issue_read_rs, issue_read_rt;
+logic       issue_source_stall;
+logic       issue_fire;
+logic       issue_new_slow_pending;
+logic       accept_ins;
+logic       in_ready_n;
 
-logic [31:0] fast_ins_r;
-logic [5:0]  fast_opcode, fast_funct;
-logic [4:0]  fast_rs, fast_rt, fast_rd, fast_shamt;
-logic signed [15:0] fast_imm;
+logic [5:0]  input_opcode, input_funct;
+logic [4:0]  input_rs, input_rt, input_rd;
+logic [2:0]  input_rs_idx, input_rt_idx, input_rd_idx;
+logic        input_rs_valid, input_rt_valid, input_rd_valid;
+logic        input_is_r_type, input_is_i_type;
+logic        input_is_add, input_is_mult, input_is_or;
+logic        input_is_sla, input_is_sra, input_is_div;
+logic        input_supported, input_addr_valid;
+logic        input_read_rs, input_read_rt;
+logic        input_pending_hazard, input_new_slow_hazard, input_source_stall;
 
-logic [2:0] rs_idx, rt_idx, rd_idx;
-logic       rs_valid, rt_valid, rd_valid;
-logic [2:0] rs_idx_in, rt_idx_in, rd_idx_in;
-logic       rs_valid_in, rt_valid_in, rd_valid_in;
-logic [2:0] fast_rs_idx, fast_rt_idx, fast_rd_idx;
-logic       fast_rs_valid, fast_rt_valid, fast_rd_valid;
+logic signed [15:0] issue_rs_value, issue_rt_value;
+logic signed [15:0] issue_fast_result;
+logic               issue_write_en;
+logic [2:0]         issue_write_idx;
+logic [1:0]         issue_bad;
 
-logic is_r_type, is_i_type, is_mult, is_div;
-logic is_r_type_in, is_mult_in, is_div_in;
-logic accept_ins;
-logic accept_fast;
-logic accept_slow;
-logic fast_stage_valid_r;
-logic ins_active_r;
-logic finish_ins;
-logic complete_valid;
+logic [15:0] issue_div_abs_a;
+logic [15:0] issue_div_abs_b;
+logic [3:0]  issue_div_pos_a;
+logic [3:0]  issue_div_pos_b;
+logic [4:0]  issue_div_shift_n;
+logic signed [15:0] issue_div_shifted;
+logic [15:0] issue_div_rem_init;
+logic        issue_div_sign;
 
-logic signed [15:0] fast_alu_result;
-logic signed [15:0] alu_result;
-logic               write_enable;
-logic [2:0]         write_idx;
-logic [1:0]         bad_ins_type;
+logic commit_valid;
+logic [1:0] commit_bad;
+logic commit_write_en;
+logic [2:0] commit_write_idx;
+logic signed [15:0] commit_result;
 
-logic signed [15:0] input_alu_result;
-logic               input_write_enable;
-logic [2:0]         input_write_idx;
-logic [1:0]         input_bad_ins_type;
-logic               input_is_r_type;
-logic               input_is_i_type;
-logic               input_is_mult;
-logic               input_is_div;
-logic               input_is_slow;
-logic               fast_is_r_type;
-logic               fast_is_i_type;
-logic signed [15:0] accept_rs_value;
-logic signed [15:0] accept_rt_value;
-
-logic        pending_valid_r;
-logic [1:0]  pending_bad_ins_r;
-logic [15:0] pending_out_0_r;
-logic [15:0] pending_out_1_r;
-logic [15:0] pending_out_2_r;
-logic [15:0] pending_out_3_r;
-logic [15:0] pending_out_4_r;
-logic [15:0] pending_out_5_r;
-
-logic signed [31:0] mult_product;
-logic signed [31:0] mult_shifted;
-logic signed [15:0] mult_result_r;
-
-logic signed [15:0] slow_rs_value_r;
-logic signed [15:0] slow_rt_value_r;
-
-logic [15:0] div_abs_a;
-logic [15:0] div_abs_b;
-logic [3:0]  div_pos_a;
-logic [3:0]  div_pos_b;
-logic [4:0]  div_shift_n;
-logic signed [15:0] div_a_shifted_signed;
-logic [15:0] div_a_shifted_abs;
-logic        div_sign_init;
-
-logic [15:0] div_abs_b_r, div_abs_b_n;
-logic [15:0] div_rem_r, div_rem_n;
-logic [14:0] div_quo_r, div_quo_n;
-logic        div_sign_r, div_sign_n;
-logic        div_overflow_r, div_overflow_n;
-
-logic [14:0] div_quo_final;
-logic signed [15:0] div_result;
+logic                    div_tail_valid;
+logic [18:0]             div_tail_pair;
+logic [14:0]             div_tail_quo_next;
+logic                    div_tail_overflow_next;
+logic signed [15:0]      div_tail_result;
 
 //================================================================
 // 3. Helper Functions
@@ -168,22 +158,19 @@ function automatic logic [15:0] abs16(input logic signed [15:0] value);
 endfunction
 
 function automatic logic [3:0] msb_pos(input logic [15:0] value);
-    if      (value[15]) msb_pos = 4'd15;
-    else if (value[14]) msb_pos = 4'd14;
-    else if (value[13]) msb_pos = 4'd13;
-    else if (value[12]) msb_pos = 4'd12;
-    else if (value[11]) msb_pos = 4'd11;
-    else if (value[10]) msb_pos = 4'd10;
-    else if (value[9])  msb_pos = 4'd9;
-    else if (value[8])  msb_pos = 4'd8;
-    else if (value[7])  msb_pos = 4'd7;
-    else if (value[6])  msb_pos = 4'd6;
-    else if (value[5])  msb_pos = 4'd5;
-    else if (value[4])  msb_pos = 4'd4;
-    else if (value[3])  msb_pos = 4'd3;
-    else if (value[2])  msb_pos = 4'd2;
-    else if (value[1])  msb_pos = 4'd1;
-    else                msb_pos = 4'd0;
+    // Binary-tree priority encoder: O(log2 16) = 4 MUX levels
+    logic b3, b2, b1, b0;
+    begin
+        b3 = |value[15:8];
+        b2 = b3 ? |value[15:12] : |value[7:4];
+        b1 = b3 ? (b2 ? |value[15:14] : |value[11:10])
+                : (b2 ? |value[7:6]   : |value[3:2]);
+        b0 = b3 ? (b2 ? (b1 ? value[15] : value[13])
+                       : (b1 ? value[11] : value[9]))
+               : (b2 ? (b1 ? value[7]  : value[5])
+                      : (b1 ? value[3]  : value[1]));
+        msb_pos = {b3, b2, b1, b0};
+    end
 endfunction
 
 function automatic logic [16:0] div_step(input logic [15:0] rem_i, input logic [15:0] divisor_i);
@@ -200,486 +187,462 @@ function automatic logic [16:0] div_step(input logic [15:0] rem_i, input logic [
     end
 endfunction
 
-//================================================================
-// 4. Instruction Decoding
-//================================================================
-assign opcode = ins_r[31:26];
-assign rs     = ins_r[25:21];
-assign rt     = ins_r[20:16];
-assign rd     = ins_r[15:11];
-assign shamt  = ins_r[10:6];
-assign funct  = ins_r[5:0];
-assign imm    = ins_r[15:0];
-
-assign opcode_in = instruction[31:26];
-assign rs_in     = instruction[25:21];
-assign rt_in     = instruction[20:16];
-assign rd_in     = instruction[15:11];
-assign shamt_in  = instruction[10:6];
-assign funct_in  = instruction[5:0];
-assign imm_in    = instruction[15:0];
-
-assign fast_opcode = fast_ins_r[31:26];
-assign fast_rs     = fast_ins_r[25:21];
-assign fast_rt     = fast_ins_r[20:16];
-assign fast_rd     = fast_ins_r[15:11];
-assign fast_shamt  = fast_ins_r[10:6];
-assign fast_funct  = fast_ins_r[5:0];
-assign fast_imm    = fast_ins_r[15:0];
-
-always_comb begin
-    map_reg(rs, rs_idx, rs_valid);
-    map_reg(rt, rt_idx, rt_valid);
-    map_reg(rd, rd_idx, rd_valid);
-
-    map_reg(rs_in, rs_idx_in, rs_valid_in);
-    map_reg(rt_in, rt_idx_in, rt_valid_in);
-    map_reg(rd_in, rd_idx_in, rd_valid_in);
-
-    map_reg(fast_rs, fast_rs_idx, fast_rs_valid);
-    map_reg(fast_rt, fast_rt_idx, fast_rt_valid);
-    map_reg(fast_rd, fast_rd_idx, fast_rd_valid);
-end
-
-assign is_r_type = (opcode == OP_RTYPE);
-assign is_i_type = (opcode == OP_ADDI) || (opcode == OP_ORI);
-assign is_mult   = is_r_type && (funct == FUNC_MULT);
-assign is_div    = is_r_type && (funct == FUNC_DIV);
-
-assign is_r_type_in = (opcode_in == OP_RTYPE);
-assign is_mult_in   = is_r_type_in && (funct_in == FUNC_MULT);
-assign is_div_in    = is_r_type_in && (funct_in == FUNC_DIV);
-assign input_is_r_type = (opcode_in == OP_RTYPE);
-assign input_is_i_type = (opcode_in == OP_ADDI) || (opcode_in == OP_ORI);
-assign input_is_mult   = input_is_r_type && (funct_in == FUNC_MULT);
-assign input_is_div    = input_is_r_type && (funct_in == FUNC_DIV);
-assign accept_rs_value = (fast_stage_valid_r && input_bad_ins_type == 2'b00 &&
-                          input_write_enable && input_write_idx == rs_idx_in) ?
-                         input_alu_result : core_regs_cs[rs_idx_in];
-assign accept_rt_value = (fast_stage_valid_r && input_bad_ins_type == 2'b00 &&
-                          input_write_enable && input_write_idx == rt_idx_in) ?
-                         input_alu_result : core_regs_cs[rt_idx_in];
-assign input_is_slow   = (input_is_mult && rs_valid_in && rt_valid_in && rd_valid_in) ||
-                         (input_is_div && rs_valid_in && rt_valid_in && rd_valid_in &&
-                          (accept_rt_value != 16'sd0));
-assign fast_is_r_type  = (fast_opcode == OP_RTYPE);
-assign fast_is_i_type  = (fast_opcode == OP_ADDI) || (fast_opcode == OP_ORI);
-
-//================================================================
-// 5. Variable-Latency Control
-//================================================================
-assign accept_ins = in_valid && in_ready;
-assign accept_slow = accept_ins && input_is_slow;
-assign accept_fast = accept_ins && !input_is_slow;
-assign finish_ins = (state_cs == S_EXEC && exec_cycles_r == 4'd0 && ins_active_r);
-assign complete_valid = fast_stage_valid_r || finish_ins;
-
-always_comb begin
-    exec_cycles_load = 4'd0;
-
-    if (is_mult_in && rs_valid_in && rt_valid_in && rd_valid_in) begin
-        exec_cycles_load = 4'd1;
-    end else if (is_div_in && rs_valid_in && rt_valid_in && rd_valid_in &&
-                 (core_regs_cs[rt_idx_in] != 16'sd0)) begin
-        exec_cycles_load = 4'd8;
-    end
-end
-
-always_comb begin
-    state_ns = state_cs;
-
-    case (state_cs)
-        S_IDLE: begin
-            if (accept_slow)      state_ns = S_EXEC;
-            else if (in_valid)    state_ns = S_OUT;
-        end
-        S_EXEC: begin
-            if (exec_cycles_r == 4'd0) state_ns = S_OUT;
-            else                       state_ns = S_EXEC;
-        end
-        S_OUT: begin
-            if (accept_slow)                 state_ns = S_EXEC;
-            else if (!in_valid && !out_valid && !pending_valid_r) state_ns = S_IDLE;
-            else                             state_ns = S_OUT;
-        end
-        default: state_ns = S_IDLE;
-    endcase
-end
-
-//================================================================
-// 6. Fast ALU, MULT Result, and Exception Logic
-//================================================================
-always_comb begin
-    fast_alu_result = 16'sd0;
-    alu_result      = 16'sd0;
-    write_enable    = 1'b0;
-    write_idx       = 3'd0;
-    bad_ins_type    = 2'b00;
-
-    mult_product = $signed({{16{slow_rs_value_r[15]}}, slow_rs_value_r}) *
-                   $signed({{16{slow_rt_value_r[15]}}, slow_rt_value_r});
-    mult_shifted = mult_product >>> 15;
-
-    if (is_r_type && (!rs_valid || !rt_valid || !rd_valid)) begin
-        bad_ins_type = 2'b01;
-    end else if (is_i_type && (!rs_valid || !rt_valid)) begin
-        bad_ins_type = 2'b01;
-    end else begin
-        case (opcode)
-            OP_RTYPE: begin
-                write_idx = rd_idx;
-                case (funct)
-                    FUNC_ADD: begin
-                        fast_alu_result = core_regs_cs[rs_idx] + core_regs_cs[rt_idx];
-                        write_enable    = 1'b1;
-                    end
-                    FUNC_MULT: begin
-                        write_enable = 1'b1;
-                    end
-                    FUNC_OR: begin
-                        fast_alu_result = core_regs_cs[rs_idx] | core_regs_cs[rt_idx];
-                        write_enable    = 1'b1;
-                    end
-                    FUNC_SLA: begin
-                        fast_alu_result = core_regs_cs[rt_idx] << shamt;
-                        write_enable    = 1'b1;
-                    end
-                    FUNC_SRA: begin
-                        fast_alu_result = core_regs_cs[rt_idx] >>> shamt;
-                        write_enable    = 1'b1;
-                    end
-                    FUNC_DIV: begin
-                        if (core_regs_cs[rt_idx] == 16'sd0) begin
-                            bad_ins_type = 2'b10;
-                        end else begin
-                            write_enable = 1'b1;
-                        end
-                    end
-                    default: bad_ins_type = 2'b01;
-                endcase
-            end
-            OP_ADDI: begin
-                write_idx       = rt_idx;
-                fast_alu_result = core_regs_cs[rs_idx] + imm;
-                write_enable    = 1'b1;
-            end
-            OP_ORI: begin
-                write_idx       = rt_idx;
-                fast_alu_result = core_regs_cs[rs_idx] | imm;
-                write_enable    = 1'b1;
-            end
-            default: bad_ins_type = 2'b01;
-        endcase
-    end
-
-    if (is_div) begin
-        alu_result = div_result;
-    end else if (is_mult) begin
-        alu_result = mult_result_r;
-    end else begin
-        alu_result = fast_alu_result;
-    end
-end
-
-//================================================================
-// 6.1 Streaming Fast-Path Decode
-//================================================================
-always_comb begin
-    input_alu_result    = 16'sd0;
-    input_write_enable  = 1'b0;
-    input_write_idx     = 3'd0;
-    input_bad_ins_type  = 2'b00;
-
-    if (fast_is_r_type && (!fast_rs_valid || !fast_rt_valid || !fast_rd_valid)) begin
-        input_bad_ins_type = 2'b01;
-    end else if (fast_is_i_type && (!fast_rs_valid || !fast_rt_valid)) begin
-        input_bad_ins_type = 2'b01;
-    end else begin
-        case (fast_opcode)
-            OP_RTYPE: begin
-                input_write_idx = fast_rd_idx;
-                case (fast_funct)
-                    FUNC_ADD: begin
-                        input_alu_result   = core_regs_cs[fast_rs_idx] + core_regs_cs[fast_rt_idx];
-                        input_write_enable = 1'b1;
-                    end
-                    FUNC_MULT: begin
-                        input_write_enable = 1'b0;
-                    end
-                    FUNC_OR: begin
-                        input_alu_result   = core_regs_cs[fast_rs_idx] | core_regs_cs[fast_rt_idx];
-                        input_write_enable = 1'b1;
-                    end
-                    FUNC_SLA: begin
-                        input_alu_result   = core_regs_cs[fast_rt_idx] << fast_shamt;
-                        input_write_enable = 1'b1;
-                    end
-                    FUNC_SRA: begin
-                        input_alu_result   = core_regs_cs[fast_rt_idx] >>> fast_shamt;
-                        input_write_enable = 1'b1;
-                    end
-                    FUNC_DIV: begin
-                        if (core_regs_cs[fast_rt_idx] == 16'sd0) begin
-                            input_bad_ins_type = 2'b10;
-                        end
-                    end
-                    default: input_bad_ins_type = 2'b01;
-                endcase
-            end
-            OP_ADDI: begin
-                input_write_idx    = fast_rt_idx;
-                input_alu_result   = core_regs_cs[fast_rs_idx] + fast_imm;
-                input_write_enable = 1'b1;
-            end
-            OP_ORI: begin
-                input_write_idx    = fast_rt_idx;
-                input_alu_result   = core_regs_cs[fast_rs_idx] | fast_imm;
-                input_write_enable = 1'b1;
-            end
-            default: input_bad_ins_type = 2'b01;
-        endcase
-    end
-end
-
-//================================================================
-// 7. Staged Divider Data Path
-//================================================================
-always_comb begin
-    div_abs_a = abs16(slow_rs_value_r);
-    div_abs_b = abs16(slow_rt_value_r);
-    div_pos_a = msb_pos(div_abs_a);
-    div_pos_b = msb_pos(div_abs_b);
-
-    if (div_abs_a >= div_abs_b) div_shift_n = div_pos_a - div_pos_b + 5'd1;
-    else                        div_shift_n = 5'd0;
-
-    div_a_shifted_signed = slow_rs_value_r >>> div_shift_n;
-    div_a_shifted_abs    = abs16(div_a_shifted_signed);
-    div_sign_init        = div_a_shifted_signed[15] ^ slow_rt_value_r[15];
-end
-
-always_comb begin
+function automatic logic [18:0] div_three_steps(input logic [15:0] rem_i, input logic [15:0] divisor_i);
     logic [16:0] step0;
     logic [16:0] step1;
+    logic [16:0] step2;
+    begin
+        step0 = div_step(rem_i, divisor_i);
+        step1 = div_step(step0[15:0], divisor_i);
+        step2 = div_step(step1[15:0], divisor_i);
+        div_three_steps = {step0[16], step1[16], step2[16], step2[15:0]};
+    end
+endfunction
 
-    div_abs_b_n    = div_abs_b_r;
-    div_rem_n      = div_rem_r;
-    div_quo_n      = div_quo_r;
-    div_sign_n     = div_sign_r;
-    div_overflow_n = div_overflow_r;
+function automatic logic signed [15:0] mult_q15(input logic signed [15:0] a, input logic signed [15:0] b);
+    logic signed [31:0] product;
+    begin
+        product  = $signed({{16{a[15]}}, a}) * $signed({{16{b[15]}}, b});
+        mult_q15 = product[30:15];
+    end
+endfunction
 
-    step0 = 17'd0;
-    step1 = 17'd0;
+function automatic logic signed [15:0] div_apply_sign(
+    input logic        overflow_i,
+    input logic        sign_i,
+    input logic [14:0] quo_i
+);
+    begin
+        if (overflow_i) begin
+            div_apply_sign = 16'sh8000;
+        end else if (sign_i) begin
+            div_apply_sign = $signed((~{1'b0, quo_i}) + 16'd1);
+        end else begin
+            div_apply_sign = $signed({1'b0, quo_i});
+        end
+    end
+endfunction
 
-    if (state_cs == S_EXEC && is_div && exec_cycles_r > 4'd0) begin
-        case (exec_cycles_r)
-            4'd8: begin
-                div_abs_b_n    = div_abs_b;
-                div_rem_n      = div_a_shifted_abs;
-                div_quo_n      = 15'd0;
-                div_sign_n     = div_sign_init;
-                div_overflow_n = 1'b0;
+//================================================================
+// 4. Issue Decode
+//================================================================
+assign fifo_has_ins = (fifo_count_r != {FIFO_COUNT_W{1'b0}});
+assign issue_ins    = fifo_ins_r[0];
+
+assign issue_opcode = issue_ins[31:26];
+assign issue_rs     = issue_ins[25:21];
+assign issue_rt     = issue_ins[20:16];
+assign issue_rd     = issue_ins[15:11];
+assign issue_shamt  = issue_ins[10:6];
+assign issue_funct  = issue_ins[5:0];
+assign issue_imm    = issue_ins[15:0];
+
+always_comb begin
+    map_reg(issue_rs, issue_rs_idx, issue_rs_valid);
+    map_reg(issue_rt, issue_rt_idx, issue_rt_valid);
+    map_reg(issue_rd, issue_rd_idx, issue_rd_valid);
+end
+
+assign issue_is_r_type = (issue_opcode == OP_RTYPE);
+assign issue_is_i_type = (issue_opcode == OP_ADDI) || (issue_opcode == OP_ORI);
+assign issue_is_add    = issue_is_r_type && (issue_funct == FUNC_ADD);
+assign issue_is_mult   = issue_is_r_type && (issue_funct == FUNC_MULT);
+assign issue_is_or     = issue_is_r_type && (issue_funct == FUNC_OR);
+assign issue_is_sla    = issue_is_r_type && (issue_funct == FUNC_SLA);
+assign issue_is_sra    = issue_is_r_type && (issue_funct == FUNC_SRA);
+assign issue_is_div    = issue_is_r_type && (issue_funct == FUNC_DIV);
+assign issue_supported = issue_is_i_type || issue_is_add || issue_is_mult ||
+                         issue_is_or || issue_is_sla || issue_is_sra || issue_is_div;
+assign issue_addr_valid = (issue_is_r_type && issue_rs_valid && issue_rt_valid && issue_rd_valid) ||
+                          (issue_is_i_type && issue_rs_valid && issue_rt_valid);
+
+always_comb begin
+    issue_read_rs = 1'b0;
+    issue_read_rt = 1'b0;
+
+    if (issue_is_add || issue_is_mult || issue_is_or || issue_is_div) begin
+        issue_read_rs = 1'b1;
+        issue_read_rt = 1'b1;
+    end else if (issue_is_sla || issue_is_sra) begin
+        issue_read_rt = 1'b1;
+    end else if (issue_opcode == OP_ADDI || issue_opcode == OP_ORI) begin
+        issue_read_rs = 1'b1;
+    end
+end
+
+assign issue_source_stall = fifo_has_ins && issue_supported && issue_addr_valid &&
+                            ((issue_read_rs && issue_rs_valid && pending_r[issue_rs_idx]) ||
+                             (issue_read_rt && issue_rt_valid && pending_r[issue_rt_idx]));
+assign issue_fire = fifo_has_ins && !issue_source_stall;
+assign issue_new_slow_pending = issue_fire && issue_bad == 2'b00 && issue_write_en &&
+                                (issue_is_mult || issue_is_div);
+assign accept_ins = in_valid && in_ready;
+
+assign issue_rs_value = issue_rs_valid ? issue_regs_r[issue_rs_idx] : 16'sd0;
+assign issue_rt_value = issue_rt_valid ? issue_regs_r[issue_rt_idx] : 16'sd0;
+
+always_comb begin
+    issue_write_en     = 1'b0;
+    issue_write_idx    = 3'd0;
+    issue_bad          = 2'b00;
+    issue_fast_result  = 16'sd0;
+
+    if (issue_is_r_type && (!issue_rs_valid || !issue_rt_valid || !issue_rd_valid)) begin
+        issue_bad = 2'b01;
+    end else if (issue_is_i_type && (!issue_rs_valid || !issue_rt_valid)) begin
+        issue_bad = 2'b01;
+    end else begin
+        case (issue_opcode)
+            OP_RTYPE: begin
+                issue_write_idx = issue_rd_idx;
+                case (issue_funct)
+                    FUNC_ADD: begin
+                        issue_fast_result = issue_rs_value + issue_rt_value;
+                        issue_write_en    = 1'b1;
+                    end
+                    FUNC_MULT: begin
+                        issue_write_en = 1'b1;
+                    end
+                    FUNC_OR: begin
+                        issue_fast_result = issue_rs_value | issue_rt_value;
+                        issue_write_en    = 1'b1;
+                    end
+                    FUNC_SLA: begin
+                        issue_fast_result = issue_rt_value << issue_shamt;
+                        issue_write_en    = 1'b1;
+                    end
+                    FUNC_SRA: begin
+                        issue_fast_result = issue_rt_value >>> issue_shamt;
+                        issue_write_en    = 1'b1;
+                    end
+                    FUNC_DIV: begin
+                        if (issue_rt_value == 16'sd0) begin
+                            issue_bad = 2'b10;
+                        end else begin
+                            issue_write_en = 1'b1;
+                        end
+                    end
+                    default: issue_bad = 2'b01;
+                endcase
             end
-            4'd7: begin
-                step0 = div_step(div_rem_r, div_abs_b_r);
-                step1 = div_step(step0[15:0], div_abs_b_r);
-
-                div_rem_n      = step1[15:0];
-                div_quo_n      = {step0[16], step1[16], 13'd0};
-                div_overflow_n = (div_rem_r >= div_abs_b_r);
+            OP_ADDI: begin
+                issue_write_idx   = issue_rt_idx;
+                issue_fast_result = issue_rs_value + issue_imm;
+                issue_write_en    = 1'b1;
             end
-            4'd6: begin
-                step0 = div_step(div_rem_r, div_abs_b_r);
-                step1 = div_step(step0[15:0], div_abs_b_r);
-
-                div_rem_n = step1[15:0];
-                div_quo_n = {div_quo_r[14:13], step0[16], step1[16], 11'd0};
+            OP_ORI: begin
+                issue_write_idx   = issue_rt_idx;
+                issue_fast_result = issue_rs_value | issue_imm;
+                issue_write_en    = 1'b1;
             end
-            4'd5: begin
-                step0 = div_step(div_rem_r, div_abs_b_r);
-                step1 = div_step(step0[15:0], div_abs_b_r);
-
-                div_rem_n = step1[15:0];
-                div_quo_n = {div_quo_r[14:11], step0[16], step1[16], 9'd0};
-            end
-            4'd4: begin
-                step0 = div_step(div_rem_r, div_abs_b_r);
-                step1 = div_step(step0[15:0], div_abs_b_r);
-
-                div_rem_n = step1[15:0];
-                div_quo_n = {div_quo_r[14:9], step0[16], step1[16], 7'd0};
-            end
-            4'd3: begin
-                step0 = div_step(div_rem_r, div_abs_b_r);
-                step1 = div_step(step0[15:0], div_abs_b_r);
-
-                div_rem_n = step1[15:0];
-                div_quo_n = {div_quo_r[14:7], step0[16], step1[16], 5'd0};
-            end
-            4'd2: begin
-                step0 = div_step(div_rem_r, div_abs_b_r);
-                step1 = div_step(step0[15:0], div_abs_b_r);
-
-                div_rem_n = step1[15:0];
-                div_quo_n = {div_quo_r[14:5], step0[16], step1[16], 3'd0};
-            end
-            4'd1: begin
-                step0 = div_step(div_rem_r, div_abs_b_r);
-                step1 = div_step(step0[15:0], div_abs_b_r);
-
-                div_rem_n = step1[15:0];
-                div_quo_n = {div_quo_r[14:3], step0[16], step1[16], 1'b0};
-            end
-            default: begin
-                div_abs_b_n    = div_abs_b_r;
-                div_rem_n      = div_rem_r;
-                div_quo_n      = div_quo_r;
-                div_sign_n     = div_sign_r;
-                div_overflow_n = div_overflow_r;
-            end
+            default: issue_bad = 2'b01;
         endcase
     end
 end
 
+assign issue_div_abs_a = abs16(issue_rs_value);
+assign issue_div_abs_b = abs16(issue_rt_value);
+assign issue_div_pos_a = msb_pos(issue_div_abs_a);
+assign issue_div_pos_b = msb_pos(issue_div_abs_b);
+assign issue_div_shift_n = (issue_div_abs_a >= issue_div_abs_b) ?
+                           (issue_div_pos_a - issue_div_pos_b + 5'd1) : 5'd0;
+assign issue_div_shifted  = issue_rs_value >>> issue_div_shift_n;
+assign issue_div_rem_init = abs16(issue_div_shifted);
+// Arithmetic right-shift preserves sign: shifted[15] == rs_value[15] always
+assign issue_div_sign     = issue_rs_value[15] ^ issue_rt_value[15];
+
+assign issue_tag = tag_counter_r + {{(TAG_W-1){1'b0}}, 1'b1};
+
+//================================================================
+// 4.1 Incoming Instruction Readiness
+//================================================================
+assign input_opcode = instruction[31:26];
+assign input_rs     = instruction[25:21];
+assign input_rt     = instruction[20:16];
+assign input_rd     = instruction[15:11];
+assign input_funct  = instruction[5:0];
+
 always_comb begin
-    logic [16:0] step0;
+    map_reg(input_rs, input_rs_idx, input_rs_valid);
+    map_reg(input_rt, input_rt_idx, input_rt_valid);
+    map_reg(input_rd, input_rd_idx, input_rd_valid);
+end
 
-    step0 = div_step(div_rem_r, div_abs_b_r);
+assign input_is_r_type = (input_opcode == OP_RTYPE);
+assign input_is_i_type = (input_opcode == OP_ADDI) || (input_opcode == OP_ORI);
+assign input_is_add    = input_is_r_type && (input_funct == FUNC_ADD);
+assign input_is_mult   = input_is_r_type && (input_funct == FUNC_MULT);
+assign input_is_or     = input_is_r_type && (input_funct == FUNC_OR);
+assign input_is_sla    = input_is_r_type && (input_funct == FUNC_SLA);
+assign input_is_sra    = input_is_r_type && (input_funct == FUNC_SRA);
+assign input_is_div    = input_is_r_type && (input_funct == FUNC_DIV);
+assign input_supported = input_is_i_type || input_is_add || input_is_mult ||
+                         input_is_or || input_is_sla || input_is_sra || input_is_div;
+assign input_addr_valid = (input_is_r_type && input_rs_valid && input_rt_valid && input_rd_valid) ||
+                          (input_is_i_type && input_rs_valid && input_rt_valid);
 
-    div_quo_final = {div_quo_r[14:1], step0[16]};
+always_comb begin
+    input_read_rs = 1'b0;
+    input_read_rt = 1'b0;
 
-    if (div_overflow_r) begin
-        div_result = 16'sh8000;
-    end else if (div_sign_r) begin
-        div_result = $signed((~{1'b0, div_quo_final}) + 16'd1);
-    end else begin
-        div_result = $signed({1'b0, div_quo_final});
+    if (input_is_add || input_is_mult || input_is_or || input_is_div) begin
+        input_read_rs = 1'b1;
+        input_read_rt = 1'b1;
+    end else if (input_is_sla || input_is_sra) begin
+        input_read_rt = 1'b1;
+    end else if (input_opcode == OP_ADDI || input_opcode == OP_ORI) begin
+        input_read_rs = 1'b1;
     end
 end
 
+assign input_pending_hazard = input_supported && input_addr_valid &&
+                              ((input_read_rs && input_rs_valid && pending_r[input_rs_idx]) ||
+                               (input_read_rt && input_rt_valid && pending_r[input_rt_idx]));
+assign input_new_slow_hazard = input_supported && input_addr_valid && issue_new_slow_pending &&
+                               ((input_read_rs && input_rs_valid && input_rs_idx == issue_write_idx) ||
+                                (input_read_rt && input_rt_valid && input_rt_idx == issue_write_idx));
+assign input_source_stall = input_pending_hazard || input_new_slow_hazard;
+
 //================================================================
-// 8. Register File Next Value
+// 5. Handshake, FIFO, and Commit Control
 //================================================================
+assign fifo_count_after_issue = fifo_count_r - {{(FIFO_COUNT_W-1){1'b0}}, issue_fire};
+assign fifo_push_idx = fifo_count_after_issue;
+assign in_ready_n = in_valid && !input_source_stall &&
+                    (fifo_count_after_issue < FIFO_READY_LIMIT);
+
+assign commit_valid     = pipe_valid_r[PIPE_LAST];
+assign commit_bad       = pipe_bad_r[PIPE_LAST];
+assign commit_write_en  = pipe_write_en_r[PIPE_LAST];
+assign commit_write_idx = pipe_write_idx_r[PIPE_LAST];
+assign commit_result    = pipe_result_r[PIPE_LAST];
+
+always_comb begin
+    div_tail_pair = div_three_steps(pipe_div_rem_r[PIPE_LAST-1], pipe_div_b_r[PIPE_LAST-1]);
+    div_tail_quo_next = (pipe_div_quo_r[PIPE_LAST-1] << 3) |
+                        {12'd0, div_tail_pair[18], div_tail_pair[17], div_tail_pair[16]};
+    div_tail_overflow_next = pipe_div_overflow_r[PIPE_LAST-1];
+    div_tail_result = div_apply_sign(
+        div_tail_overflow_next,
+        pipe_div_sign_r[PIPE_LAST-1],
+        div_tail_quo_next
+    );
+end
+
+assign div_tail_valid = pipe_valid_r[PIPE_LAST-1] &&
+                        pipe_bad_r[PIPE_LAST-1] == 2'b00 &&
+                        pipe_write_en_r[PIPE_LAST-1] &&
+                        pipe_is_div_r[PIPE_LAST-1];
+
 always_comb begin
     for (int i = 0; i < 6; i++) core_regs_ns[i] = core_regs_cs[i];
 
-    if (finish_ins &&
-        bad_ins_type == 2'b00 && write_enable) begin
-        core_regs_ns[write_idx] = alu_result;
-    end else if (fast_stage_valid_r &&
-                 input_bad_ins_type == 2'b00 && input_write_enable) begin
-        core_regs_ns[input_write_idx] = input_alu_result;
+    if (commit_valid && commit_bad == 2'b00 && commit_write_en) begin
+        core_regs_ns[commit_write_idx] = commit_result;
     end
 end
 
 //================================================================
-// 9. Sequential Logic
+// 6. Sequential Logic
 //================================================================
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        state_cs       <= S_IDLE;
-        ins_r          <= 32'd0;
-        fast_ins_r     <= 32'd0;
-        exec_cycles_r  <= 4'd0;
-        in_ready       <= 1'b0;
-        out_valid      <= 1'b0;
-        fast_stage_valid_r <= 1'b0;
-        ins_active_r   <= 1'b0;
-        bad_ins_r      <= 2'b00;
-        out_0_r        <= 16'd0;
-        out_1_r        <= 16'd0;
-        out_2_r        <= 16'd0;
-        out_3_r        <= 16'd0;
-        out_4_r        <= 16'd0;
-        out_5_r        <= 16'd0;
-        pending_valid_r   <= 1'b0;
-        pending_bad_ins_r <= 2'b00;
-        pending_out_0_r   <= 16'd0;
-        pending_out_1_r   <= 16'd0;
-        pending_out_2_r   <= 16'd0;
-        pending_out_3_r   <= 16'd0;
-        pending_out_4_r   <= 16'd0;
-        pending_out_5_r   <= 16'd0;
-        slow_rs_value_r   <= 16'sd0;
-        slow_rt_value_r   <= 16'sd0;
-        mult_result_r  <= 16'sd0;
-        div_abs_b_r    <= 16'd0;
-        div_rem_r      <= 16'd0;
-        div_quo_r      <= 15'd0;
-        div_sign_r     <= 1'b0;
-        div_overflow_r <= 1'b0;
-        for (int i = 0; i < 6; i++) core_regs_cs[i] <= 16'sd0;
+    logic [18:0] div_pair;
+    logic [14:0] div_quo_next;
+    logic        div_overflow_next;
+    logic signed [15:0] mult_ready_result;
+    logic signed [15:0] div_ready_result;
+    logic [2:0] mult_ready_idx;
+    logic [2:0] div_ready_idx;
 
+    if (!rst_n) begin
+        fifo_count_r <= {FIFO_COUNT_W{1'b0}};
+        tag_counter_r <= {TAG_W{1'b0}};
+        in_ready <= 1'b0;
+        out_valid_r <= 1'b0;
+        bad_ins_r <= 2'b00;
+        out_0_r <= 16'd0;
+        out_1_r <= 16'd0;
+        out_2_r <= 16'd0;
+        out_3_r <= 16'd0;
+        out_4_r <= 16'd0;
+        out_5_r <= 16'd0;
+
+        for (int i = 0; i < FIFO_DEPTH; i++) begin
+            fifo_ins_r[i] <= 32'd0;
+        end
+
+        for (int i = 0; i < 6; i++) begin
+            core_regs_cs[i] <= 16'sd0;
+            issue_regs_r[i] <= 16'sd0;
+            pending_r[i] <= 1'b0;
+            reg_tag_r[i] <= {TAG_W{1'b0}};
+        end
+
+        for (int i = 0; i < PIPE_DEPTH; i++) begin
+            pipe_valid_r[i] <= 1'b0;
+            pipe_bad_r[i] <= 2'b00;
+            pipe_write_en_r[i] <= 1'b0;
+            pipe_write_idx_r[i] <= 3'd0;
+            pipe_tag_r[i] <= {TAG_W{1'b0}};
+            pipe_is_mult_r[i] <= 1'b0;
+            pipe_is_div_r[i] <= 1'b0;
+            pipe_result_r[i] <= 16'sd0;
+            pipe_mult_rs_r[i] <= 16'sd0;
+            pipe_mult_rt_r[i] <= 16'sd0;
+            pipe_div_b_r[i] <= 16'd0;
+            pipe_div_rem_r[i] <= 16'd0;
+            pipe_div_quo_r[i] <= 15'd0;
+            pipe_div_sign_r[i] <= 1'b0;
+            pipe_div_overflow_r[i] <= 1'b0;
+        end
     end else begin
-        state_cs <= state_ns;
-        in_ready <= (state_ns != S_EXEC) && in_valid;
-        out_valid <= pending_valid_r;
-        bad_ins_r <= pending_bad_ins_r;
-        out_0_r   <= pending_out_0_r;
-        out_1_r   <= pending_out_1_r;
-        out_2_r   <= pending_out_2_r;
-        out_3_r   <= pending_out_3_r;
-        out_4_r   <= pending_out_4_r;
-        out_5_r   <= pending_out_5_r;
+        in_ready <= in_ready_n;
+        out_valid_r <= commit_valid;
+        bad_ins_r <= commit_valid ? commit_bad : 2'b00;
         for (int i = 0; i < 6; i++) core_regs_cs[i] <= core_regs_ns[i];
 
-        fast_stage_valid_r <= accept_fast;
-        if (accept_fast) begin
-            fast_ins_r <= instruction;
+        if (commit_valid) begin
+            out_0_r <= core_regs_ns[0];
+            out_1_r <= core_regs_ns[1];
+            out_2_r <= core_regs_ns[2];
+            out_3_r <= core_regs_ns[3];
+            out_4_r <= core_regs_ns[4];
+            out_5_r <= core_regs_ns[5];
         end
 
-        pending_valid_r <= complete_valid;
-        if (complete_valid) begin
-            pending_bad_ins_r <= fast_stage_valid_r ? input_bad_ins_type : bad_ins_type;
-            pending_out_0_r   <= core_regs_ns[0];
-            pending_out_1_r   <= core_regs_ns[1];
-            pending_out_2_r   <= core_regs_ns[2];
-            pending_out_3_r   <= core_regs_ns[3];
-            pending_out_4_r   <= core_regs_ns[4];
-            pending_out_5_r   <= core_regs_ns[5];
-        end
-
-        if (accept_slow) begin
-            ins_r         <= instruction;
-            exec_cycles_r <= exec_cycles_load;
-            ins_active_r  <= 1'b1;
-            slow_rs_value_r <= accept_rs_value;
-            slow_rt_value_r <= accept_rt_value;
-        end else if (accept_fast) begin
-            exec_cycles_r <= 4'd0;
-        end else if (state_cs == S_EXEC && exec_cycles_r > 4'd0) begin
-            exec_cycles_r <= exec_cycles_r - 4'd1;
-        end
-
-        if (state_cs == S_EXEC && exec_cycles_r > 4'd0) begin
-            if (is_mult) begin
-                mult_result_r <= mult_shifted[15:0];
-            end
-
-            if (is_div) begin
-                div_abs_b_r    <= div_abs_b_n;
-                div_rem_r      <= div_rem_n;
-                div_quo_r      <= div_quo_n;
-                div_sign_r     <= div_sign_n;
-                div_overflow_r <= div_overflow_n;
+        if (pipe_valid_r[0] && pipe_bad_r[0] == 2'b00 &&
+            pipe_write_en_r[0] && pipe_is_mult_r[0]) begin
+            mult_ready_idx = pipe_write_idx_r[0];
+            mult_ready_result = mult_q15(pipe_mult_rs_r[0], pipe_mult_rt_r[0]);
+            if (pending_r[mult_ready_idx] &&
+                reg_tag_r[mult_ready_idx] == pipe_tag_r[0]) begin
+                issue_regs_r[mult_ready_idx] <= mult_ready_result;
+                pending_r[mult_ready_idx] <= 1'b0;
             end
         end
 
-        if (finish_ins) begin
-            ins_active_r <= 1'b0;
+        if (pipe_valid_r[DIV_FINAL_STAGE-1] &&
+            pipe_bad_r[DIV_FINAL_STAGE-1] == 2'b00 &&
+            pipe_write_en_r[DIV_FINAL_STAGE-1] &&
+            pipe_is_div_r[DIV_FINAL_STAGE-1]) begin
+            div_ready_idx = pipe_write_idx_r[DIV_FINAL_STAGE-1];
+            div_ready_result = pipe_result_r[DIV_FINAL_STAGE-1];
+            if (pending_r[div_ready_idx] &&
+                reg_tag_r[div_ready_idx] == pipe_tag_r[DIV_FINAL_STAGE-1]) begin
+                issue_regs_r[div_ready_idx] <= div_ready_result;
+                pending_r[div_ready_idx] <= 1'b0;
+            end
         end
+
+        if (div_tail_valid) begin
+            div_ready_idx = pipe_write_idx_r[PIPE_LAST-1];
+            div_ready_result = div_tail_result;
+            if (pending_r[div_ready_idx] &&
+                reg_tag_r[div_ready_idx] == pipe_tag_r[PIPE_LAST-1]) begin
+                issue_regs_r[div_ready_idx] <= div_ready_result;
+                pending_r[div_ready_idx] <= 1'b0;
+            end
+        end
+
+        if (issue_fire && issue_bad == 2'b00 && issue_write_en) begin
+            reg_tag_r[issue_write_idx] <= issue_tag;
+            if (issue_is_mult || issue_is_div) begin
+                pending_r[issue_write_idx] <= 1'b1;
+            end else begin
+                issue_regs_r[issue_write_idx] <= issue_fast_result;
+                pending_r[issue_write_idx] <= 1'b0;
+            end
+        end
+
+        if (issue_fire) begin
+            tag_counter_r <= issue_tag;
+        end
+
+        for (int i = PIPE_LAST; i > 0; i--) begin
+            pipe_valid_r[i] <= pipe_valid_r[i-1];
+            pipe_bad_r[i] <= pipe_bad_r[i-1];
+            pipe_write_en_r[i] <= pipe_write_en_r[i-1];
+            pipe_write_idx_r[i] <= pipe_write_idx_r[i-1];
+            pipe_tag_r[i] <= pipe_tag_r[i-1];
+            pipe_is_mult_r[i] <= pipe_is_mult_r[i-1];
+            pipe_is_div_r[i] <= pipe_is_div_r[i-1];
+            pipe_result_r[i] <= pipe_result_r[i-1];
+            pipe_mult_rs_r[i] <= pipe_mult_rs_r[i-1];
+            pipe_mult_rt_r[i] <= pipe_mult_rt_r[i-1];
+            pipe_div_b_r[i] <= pipe_div_b_r[i-1];
+            pipe_div_rem_r[i] <= pipe_div_rem_r[i-1];
+            pipe_div_quo_r[i] <= pipe_div_quo_r[i-1];
+            pipe_div_sign_r[i] <= pipe_div_sign_r[i-1];
+            pipe_div_overflow_r[i] <= pipe_div_overflow_r[i-1];
+
+            if (pipe_valid_r[i-1] && pipe_bad_r[i-1] == 2'b00) begin
+                if (pipe_is_mult_r[i-1] && i == 1) begin
+                    pipe_result_r[i] <= mult_q15(pipe_mult_rs_r[i-1], pipe_mult_rt_r[i-1]);
+                end
+
+                if (pipe_is_div_r[i-1]) begin
+                    if (i >= 1 && i <= PIPE_LAST) begin
+                        div_pair = div_three_steps(pipe_div_rem_r[i-1], pipe_div_b_r[i-1]);
+                        div_quo_next = (pipe_div_quo_r[i-1] << 3) |
+                                       {12'd0, div_pair[18], div_pair[17], div_pair[16]};
+                        div_overflow_next = (i == 1) ?
+                                            (pipe_div_rem_r[i-1] >= pipe_div_b_r[i-1]) :
+                                            pipe_div_overflow_r[i-1];
+                        pipe_div_rem_r[i] <= div_pair[15:0];
+                        pipe_div_quo_r[i] <= div_quo_next;
+                        pipe_div_overflow_r[i] <= div_overflow_next;
+
+                        if (i == PIPE_LAST) begin
+                            pipe_result_r[i] <= div_tail_result;
+                        end
+                    end
+                end
+            end
+        end
+
+        pipe_valid_r[0] <= issue_fire;
+        pipe_bad_r[0] <= issue_fire ? issue_bad : 2'b00;
+        pipe_write_en_r[0] <= issue_fire && issue_bad == 2'b00 && issue_write_en;
+        pipe_write_idx_r[0] <= issue_write_idx;
+        pipe_tag_r[0] <= issue_tag;
+        pipe_is_mult_r[0] <= issue_fire && issue_bad == 2'b00 && issue_is_mult;
+        pipe_is_div_r[0] <= issue_fire && issue_bad == 2'b00 && issue_is_div;
+        pipe_result_r[0] <= (issue_fire && issue_bad == 2'b00 &&
+                             issue_write_en && !issue_is_mult && !issue_is_div) ?
+                            issue_fast_result : 16'sd0;
+        pipe_mult_rs_r[0] <= issue_rs_value;
+        pipe_mult_rt_r[0] <= issue_rt_value;
+        pipe_div_b_r[0] <= issue_div_abs_b;
+        pipe_div_rem_r[0] <= issue_div_rem_init;
+        pipe_div_quo_r[0] <= 15'd0;
+        pipe_div_sign_r[0] <= issue_div_sign;
+        pipe_div_overflow_r[0] <= 1'b0;
+
+        if (issue_fire) begin
+            for (int i = 0; i < FIFO_DEPTH-1; i++) begin
+                fifo_ins_r[i] <= fifo_ins_r[i+1];
+            end
+        end
+
+        if (accept_ins) begin
+            fifo_ins_r[fifo_push_idx] <= instruction;
+        end
+
+        fifo_count_r <= fifo_count_r + {{(FIFO_COUNT_W-1){1'b0}}, accept_ins} -
+                        {{(FIFO_COUNT_W-1){1'b0}}, issue_fire};
     end
 end
 
 //================================================================
-// 10. Output Logic
+// 7. Output Logic
 //================================================================
-assign bad_ins = out_valid ? bad_ins_r : 2'b00;
-assign out_0   = out_valid ? out_0_r   : 16'd0;
-assign out_1   = out_valid ? out_1_r   : 16'd0;
-assign out_2   = out_valid ? out_2_r   : 16'd0;
-assign out_3   = out_valid ? out_3_r   : 16'd0;
-assign out_4   = out_valid ? out_4_r   : 16'd0;
-assign out_5   = out_valid ? out_5_r   : 16'd0;
+assign out_valid = out_valid_r;
+assign bad_ins   = (out_valid_r) ? bad_ins_r : 2'b00;
+assign out_0     = (out_valid_r) ? out_0_r   : 16'd0;
+assign out_1     = (out_valid_r) ? out_1_r   : 16'd0;
+assign out_2     = (out_valid_r) ? out_2_r   : 16'd0;
+assign out_3     = (out_valid_r) ? out_3_r   : 16'd0;
+assign out_4     = (out_valid_r) ? out_4_r   : 16'd0;
+assign out_5     = (out_valid_r) ? out_5_r   : 16'd0;
 
 endmodule
