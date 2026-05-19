@@ -36,7 +36,7 @@ localparam logic [5:0] FUNC_DIV  = 6'b110001;
 localparam int FIFO_DEPTH      = 4;
 localparam int FIFO_COUNT_W    = 3;
 localparam logic [FIFO_COUNT_W-1:0] FIFO_READY_LIMIT = 3'd1;
-localparam int PIPE_DEPTH      = 6;
+localparam int PIPE_DEPTH      = 7;
 localparam int PIPE_LAST       = PIPE_DEPTH - 1;
 localparam int DIV_FINAL_STAGE = PIPE_DEPTH;
 localparam int TAG_W           = 8;
@@ -72,6 +72,8 @@ logic                    pipe_is_div_r [0:PIPE_LAST];
 logic signed [15:0]      pipe_result_r [0:PIPE_LAST];
 logic signed [15:0]      pipe_mult_rs_r;
 logic signed [15:0]      pipe_mult_rt_r;
+logic signed [15:0]      pipe_div_a_raw_r;
+logic signed [15:0]      pipe_div_b_raw_r;
 logic [15:0]             pipe_div_b_r [0:PIPE_LAST];
 logic [15:0]             pipe_div_rem_r [0:PIPE_LAST];
 logic [14:0]             pipe_div_quo_r [0:PIPE_LAST];
@@ -95,30 +97,11 @@ logic       issue_new_slow_pending;
 logic       accept_ins;
 logic       in_ready_n;
 
-logic [5:0]  input_opcode, input_funct;
-logic [4:0]  input_rs, input_rt, input_rd;
-logic [2:0]  input_rs_idx, input_rt_idx, input_rd_idx;
-logic        input_rs_valid, input_rt_valid, input_rd_valid;
-logic        input_supported, input_addr_valid;
-logic        input_read_rs, input_read_rt;
-logic        input_pending_hazard, input_new_slow_hazard, input_source_stall;
-
 logic signed [15:0] issue_rs_value, issue_rt_value;
 logic signed [15:0] issue_fast_result;
 logic               issue_write_en;
 logic [2:0]         issue_write_idx;
 logic [1:0]         issue_bad;
-
-logic [15:0] issue_div_abs_a;
-logic [15:0] issue_div_abs_b;
-logic [3:0]  issue_div_pos_a;
-logic [3:0]  issue_div_pos_b;
-logic [4:0]  issue_div_shift_n;
-logic [15:0] issue_div_low_mask;
-logic [15:0] issue_div_rem_floor;
-logic [15:0] issue_div_rem_init;
-logic        issue_div_round_up;
-logic        issue_div_sign;
 
 logic commit_valid;
 logic [1:0] commit_bad;
@@ -382,86 +365,14 @@ always_comb begin
     end
 end
 
-assign issue_div_abs_a    = abs16(issue_rs_value);
-assign issue_div_abs_b    = abs16(issue_rt_value);
-assign issue_div_pos_a    = msb_pos(issue_div_abs_a);
-assign issue_div_pos_b    = msb_pos(issue_div_abs_b);
-assign issue_div_shift_n  = (issue_div_abs_a >= issue_div_abs_b) ?
-                            (issue_div_pos_a - issue_div_pos_b + 5'd1) : 5'd0;
-assign issue_div_low_mask  = ~(16'hFFFF << issue_div_shift_n);
-assign issue_div_rem_floor = issue_div_abs_a >> issue_div_shift_n;
-assign issue_div_round_up  = issue_is_div && issue_rs_value[15] &&
-                             ((issue_div_abs_a & issue_div_low_mask) != 16'd0);
-assign issue_div_rem_init  = issue_div_rem_floor + {15'd0, issue_div_round_up};
-assign issue_div_sign     = issue_rs_value[15] ^ issue_rt_value[15];
-
 assign issue_tag = tag_counter_r + {{(TAG_W-1){1'b0}}, 1'b1};
-
-//================================================================
-// 4.1 Incoming Instruction Readiness
-//================================================================
-assign input_opcode = instruction[31:26];
-assign input_rs     = instruction[25:21];
-assign input_rt     = instruction[20:16];
-assign input_rd     = instruction[15:11];
-assign input_funct  = instruction[5:0];
-
-always_comb begin
-    map_reg(input_rs, input_rs_idx, input_rs_valid);
-    map_reg(input_rt, input_rt_idx, input_rt_valid);
-    map_reg(input_rd, input_rd_idx, input_rd_valid);
-end
-
-always_comb begin
-    input_supported  = 1'b0;
-    input_addr_valid = 1'b0;
-    input_read_rs    = 1'b0;
-    input_read_rt    = 1'b0;
-
-    case (input_opcode)
-        OP_RTYPE: begin
-            input_addr_valid = input_rs_valid && input_rt_valid && input_rd_valid;
-            case (input_funct)
-                FUNC_ADD, FUNC_MULT, FUNC_OR, FUNC_DIV: begin
-                    input_supported = 1'b1;
-                    input_read_rs   = 1'b1;
-                    input_read_rt   = 1'b1;
-                end
-                FUNC_SLA, FUNC_SRA: begin
-                    input_supported = 1'b1;
-                    input_read_rt   = 1'b1;
-                end
-                default: begin
-                    input_supported = 1'b0;
-                end
-            endcase
-        end
-        OP_ADDI, OP_ORI: begin
-            input_supported  = 1'b1;
-            input_addr_valid = input_rs_valid && input_rt_valid;
-            input_read_rs    = 1'b1;
-        end
-        default: begin
-            input_supported = 1'b0;
-        end
-    endcase
-end
-
-assign input_pending_hazard = input_supported && input_addr_valid &&
-                              ((input_read_rs && input_rs_valid && pending_r[input_rs_idx]) ||
-                               (input_read_rt && input_rt_valid && pending_r[input_rt_idx]));
-assign input_new_slow_hazard = input_supported && input_addr_valid && issue_new_slow_pending &&
-                               ((input_read_rs && input_rs_valid && input_rs_idx == issue_write_idx) ||
-                                (input_read_rt && input_rt_valid && input_rt_idx == issue_write_idx));
-assign input_source_stall = input_pending_hazard || input_new_slow_hazard;
 
 //================================================================
 // 5. Handshake, FIFO, and Commit Control
 //================================================================
 assign fifo_count_after_issue = fifo_count_r - {{(FIFO_COUNT_W-1){1'b0}}, issue_fire};
 assign fifo_push_idx = fifo_count_after_issue;
-assign in_ready_n = in_valid && !input_source_stall &&
-                    (fifo_count_after_issue < FIFO_READY_LIMIT);
+assign in_ready_n = (fifo_count_after_issue < FIFO_READY_LIMIT);
 
 assign commit_valid     = pipe_valid_r[PIPE_LAST];
 assign commit_bad       = pipe_bad_r[PIPE_LAST];
@@ -583,9 +494,12 @@ always_ff @(posedge clk or negedge rst_n) begin
             tag_counter_r <= issue_tag;
         end
 
-        for (int i = PIPE_LAST; i > 0; i--) begin
-            pipe_valid_r[i] <= pipe_valid_r[i-1];
-        end
+        pipe_valid_r[6] <= pipe_valid_r[5];
+        pipe_valid_r[5] <= pipe_valid_r[4];
+        pipe_valid_r[4] <= pipe_valid_r[3];
+        pipe_valid_r[3] <= pipe_valid_r[2];
+        pipe_valid_r[2] <= pipe_valid_r[1];
+        pipe_valid_r[1] <= pipe_valid_r[0];
 
         pipe_valid_r[0] <= issue_fire;
 
@@ -598,47 +512,198 @@ always_ff @(posedge clk) begin
     logic [18:0] div_pair;
     logic [14:0] div_quo_next;
     logic        div_overflow_next;
+    logic [15:0] div_init_abs_a;
+    logic [15:0] div_init_abs_b;
+    logic [3:0]  div_init_pos_a;
+    logic [3:0]  div_init_pos_b;
+    logic [4:0]  div_init_shift_n;
+    logic signed [15:0] div_init_shifted;
 
     if (issue_fire && issue_bad == 2'b00 && issue_write_en) begin
         reg_tag_r[issue_write_idx] <= issue_tag;
     end
 
-    for (int i = PIPE_LAST; i > 0; i--) begin
-        pipe_bad_r[i] <= pipe_bad_r[i-1];
-        pipe_write_en_r[i] <= pipe_write_en_r[i-1];
-        pipe_write_idx_r[i] <= pipe_write_idx_r[i-1];
-        pipe_tag_r[i] <= pipe_tag_r[i-1];
-        pipe_is_mult_r[i] <= pipe_is_mult_r[i-1];
-        pipe_is_div_r[i] <= pipe_is_div_r[i-1];
-        pipe_result_r[i] <= pipe_result_r[i-1];
-        pipe_div_b_r[i] <= pipe_div_b_r[i-1];
-        pipe_div_rem_r[i] <= pipe_div_rem_r[i-1];
-        pipe_div_quo_r[i] <= pipe_div_quo_r[i-1];
-        pipe_div_sign_r[i] <= pipe_div_sign_r[i-1];
-        pipe_div_overflow_r[i] <= pipe_div_overflow_r[i-1];
+    pipe_bad_r[6] <= pipe_bad_r[5];
+    pipe_bad_r[5] <= pipe_bad_r[4];
+    pipe_bad_r[4] <= pipe_bad_r[3];
+    pipe_bad_r[3] <= pipe_bad_r[2];
+    pipe_bad_r[2] <= pipe_bad_r[1];
+    pipe_bad_r[1] <= pipe_bad_r[0];
 
-        if (pipe_valid_r[i-1] && pipe_bad_r[i-1] == 2'b00) begin
-            if (pipe_is_mult_r[i-1] && i == 1) begin
-                pipe_result_r[i] <= mult_q15(pipe_mult_rs_r, pipe_mult_rt_r);
-            end
+    pipe_write_en_r[6] <= pipe_write_en_r[5];
+    pipe_write_en_r[5] <= pipe_write_en_r[4];
+    pipe_write_en_r[4] <= pipe_write_en_r[3];
+    pipe_write_en_r[3] <= pipe_write_en_r[2];
+    pipe_write_en_r[2] <= pipe_write_en_r[1];
+    pipe_write_en_r[1] <= pipe_write_en_r[0];
 
-            if (pipe_is_div_r[i-1]) begin
-                if (i >= 1 && i <= PIPE_LAST) begin
-                    div_pair = div_three_steps(pipe_div_rem_r[i-1], pipe_div_b_r[i-1]);
-                    div_quo_next = (pipe_div_quo_r[i-1] << 3) |
-                                   {12'd0, div_pair[18], div_pair[17], div_pair[16]};
-                    div_overflow_next = (i == 1) ?
-                                        (pipe_div_rem_r[i-1] >= pipe_div_b_r[i-1]) :
-                                        pipe_div_overflow_r[i-1];
-                    pipe_div_rem_r[i] <= div_pair[15:0];
-                    pipe_div_quo_r[i] <= div_quo_next;
-                    pipe_div_overflow_r[i] <= div_overflow_next;
+    pipe_write_idx_r[6] <= pipe_write_idx_r[5];
+    pipe_write_idx_r[5] <= pipe_write_idx_r[4];
+    pipe_write_idx_r[4] <= pipe_write_idx_r[3];
+    pipe_write_idx_r[3] <= pipe_write_idx_r[2];
+    pipe_write_idx_r[2] <= pipe_write_idx_r[1];
+    pipe_write_idx_r[1] <= pipe_write_idx_r[0];
 
-                    if (i == PIPE_LAST) begin
-                        pipe_result_r[i] <= div_tail_result;
-                    end
-                end
-            end
+    pipe_tag_r[6] <= pipe_tag_r[5];
+    pipe_tag_r[5] <= pipe_tag_r[4];
+    pipe_tag_r[4] <= pipe_tag_r[3];
+    pipe_tag_r[3] <= pipe_tag_r[2];
+    pipe_tag_r[2] <= pipe_tag_r[1];
+    pipe_tag_r[1] <= pipe_tag_r[0];
+
+    pipe_is_mult_r[6] <= pipe_is_mult_r[5];
+    pipe_is_mult_r[5] <= pipe_is_mult_r[4];
+    pipe_is_mult_r[4] <= pipe_is_mult_r[3];
+    pipe_is_mult_r[3] <= pipe_is_mult_r[2];
+    pipe_is_mult_r[2] <= pipe_is_mult_r[1];
+    pipe_is_mult_r[1] <= pipe_is_mult_r[0];
+
+    pipe_is_div_r[6] <= pipe_is_div_r[5];
+    pipe_is_div_r[5] <= pipe_is_div_r[4];
+    pipe_is_div_r[4] <= pipe_is_div_r[3];
+    pipe_is_div_r[3] <= pipe_is_div_r[2];
+    pipe_is_div_r[2] <= pipe_is_div_r[1];
+    pipe_is_div_r[1] <= pipe_is_div_r[0];
+
+    pipe_result_r[6] <= pipe_result_r[5];
+    pipe_result_r[5] <= pipe_result_r[4];
+    pipe_result_r[4] <= pipe_result_r[3];
+    pipe_result_r[3] <= pipe_result_r[2];
+    pipe_result_r[2] <= pipe_result_r[1];
+    pipe_result_r[1] <= pipe_result_r[0];
+
+    pipe_div_b_r[6] <= pipe_div_b_r[5];
+    pipe_div_b_r[5] <= pipe_div_b_r[4];
+    pipe_div_b_r[4] <= pipe_div_b_r[3];
+    pipe_div_b_r[3] <= pipe_div_b_r[2];
+    pipe_div_b_r[2] <= pipe_div_b_r[1];
+    pipe_div_b_r[1] <= pipe_div_b_r[0];
+
+    pipe_div_rem_r[6] <= pipe_div_rem_r[5];
+    pipe_div_rem_r[5] <= pipe_div_rem_r[4];
+    pipe_div_rem_r[4] <= pipe_div_rem_r[3];
+    pipe_div_rem_r[3] <= pipe_div_rem_r[2];
+    pipe_div_rem_r[2] <= pipe_div_rem_r[1];
+    pipe_div_rem_r[1] <= pipe_div_rem_r[0];
+
+    pipe_div_quo_r[6] <= pipe_div_quo_r[5];
+    pipe_div_quo_r[5] <= pipe_div_quo_r[4];
+    pipe_div_quo_r[4] <= pipe_div_quo_r[3];
+    pipe_div_quo_r[3] <= pipe_div_quo_r[2];
+    pipe_div_quo_r[2] <= pipe_div_quo_r[1];
+    pipe_div_quo_r[1] <= pipe_div_quo_r[0];
+
+    pipe_div_sign_r[6] <= pipe_div_sign_r[5];
+    pipe_div_sign_r[5] <= pipe_div_sign_r[4];
+    pipe_div_sign_r[4] <= pipe_div_sign_r[3];
+    pipe_div_sign_r[3] <= pipe_div_sign_r[2];
+    pipe_div_sign_r[2] <= pipe_div_sign_r[1];
+    pipe_div_sign_r[1] <= pipe_div_sign_r[0];
+
+    pipe_div_overflow_r[6] <= pipe_div_overflow_r[5];
+    pipe_div_overflow_r[5] <= pipe_div_overflow_r[4];
+    pipe_div_overflow_r[4] <= pipe_div_overflow_r[3];
+    pipe_div_overflow_r[3] <= pipe_div_overflow_r[2];
+    pipe_div_overflow_r[2] <= pipe_div_overflow_r[1];
+    pipe_div_overflow_r[1] <= pipe_div_overflow_r[0];
+
+    if (pipe_valid_r[0] && pipe_bad_r[0] == 2'b00) begin
+        if (pipe_is_mult_r[0] && 1 == 1) begin
+            pipe_result_r[1] <= mult_q15(pipe_mult_rs_r, pipe_mult_rt_r);
+        end
+
+        if (pipe_is_div_r[0]) begin
+            div_init_abs_a = abs16(pipe_div_a_raw_r);
+            div_init_abs_b = abs16(pipe_div_b_raw_r);
+            div_init_pos_a = msb_pos(div_init_abs_a);
+            div_init_pos_b = msb_pos(div_init_abs_b);
+            div_init_shift_n = (div_init_abs_a >= div_init_abs_b) ?
+                               (div_init_pos_a - div_init_pos_b + 5'd1) : 5'd0;
+            div_init_shifted = pipe_div_a_raw_r >>> div_init_shift_n;
+
+            pipe_div_b_r[1] <= div_init_abs_b;
+            pipe_div_rem_r[1] <= abs16(div_init_shifted);
+            pipe_div_quo_r[1] <= 15'd0;
+            pipe_div_sign_r[1] <= pipe_div_a_raw_r[15] ^ pipe_div_b_raw_r[15];
+            pipe_div_overflow_r[1] <= 1'b0;
+        end
+    end
+
+    if (pipe_valid_r[1] && pipe_bad_r[1] == 2'b00) begin
+        if (pipe_is_mult_r[1] && 2 == 1) begin
+            pipe_result_r[2] <= mult_q15(pipe_mult_rs_r, pipe_mult_rt_r);
+        end
+
+        if (pipe_is_div_r[1]) begin
+            div_pair = div_three_steps(pipe_div_rem_r[1], pipe_div_b_r[1]);
+            div_quo_next = (pipe_div_quo_r[1] << 3) |
+                           {12'd0, div_pair[18], div_pair[17], div_pair[16]};
+            div_overflow_next = (pipe_div_rem_r[1] >= pipe_div_b_r[1]);
+            pipe_div_rem_r[2] <= div_pair[15:0];
+            pipe_div_quo_r[2] <= div_quo_next;
+            pipe_div_overflow_r[2] <= div_overflow_next;
+        end
+    end
+
+    if (pipe_valid_r[2] && pipe_bad_r[2] == 2'b00) begin
+        if (pipe_is_mult_r[2] && 3 == 1) begin
+            pipe_result_r[3] <= mult_q15(pipe_mult_rs_r, pipe_mult_rt_r);
+        end
+
+        if (pipe_is_div_r[2]) begin
+            div_pair = div_three_steps(pipe_div_rem_r[2], pipe_div_b_r[2]);
+            div_quo_next = (pipe_div_quo_r[2] << 3) |
+                           {12'd0, div_pair[18], div_pair[17], div_pair[16]};
+            div_overflow_next = pipe_div_overflow_r[2];
+            pipe_div_rem_r[3] <= div_pair[15:0];
+            pipe_div_quo_r[3] <= div_quo_next;
+            pipe_div_overflow_r[3] <= div_overflow_next;
+        end
+    end
+
+    if (pipe_valid_r[3] && pipe_bad_r[3] == 2'b00) begin
+        if (pipe_is_mult_r[3] && 4 == 1) begin
+            pipe_result_r[4] <= mult_q15(pipe_mult_rs_r, pipe_mult_rt_r);
+        end
+
+        if (pipe_is_div_r[3]) begin
+            div_pair = div_three_steps(pipe_div_rem_r[3], pipe_div_b_r[3]);
+            div_quo_next = (pipe_div_quo_r[3] << 3) |
+                           {12'd0, div_pair[18], div_pair[17], div_pair[16]};
+            div_overflow_next = pipe_div_overflow_r[3];
+            pipe_div_rem_r[4] <= div_pair[15:0];
+            pipe_div_quo_r[4] <= div_quo_next;
+            pipe_div_overflow_r[4] <= div_overflow_next;
+        end
+    end
+
+    if (pipe_valid_r[4] && pipe_bad_r[4] == 2'b00) begin
+        if (pipe_is_mult_r[4] && 5 == 1) begin
+            pipe_result_r[5] <= mult_q15(pipe_mult_rs_r, pipe_mult_rt_r);
+        end
+
+        if (pipe_is_div_r[4]) begin
+            div_pair = div_three_steps(pipe_div_rem_r[4], pipe_div_b_r[4]);
+            div_quo_next = (pipe_div_quo_r[4] << 3) |
+                           {12'd0, div_pair[18], div_pair[17], div_pair[16]};
+            div_overflow_next = pipe_div_overflow_r[4];
+            pipe_div_rem_r[5] <= div_pair[15:0];
+            pipe_div_quo_r[5] <= div_quo_next;
+            pipe_div_overflow_r[5] <= div_overflow_next;
+        end
+    end
+
+    if (pipe_valid_r[5] && pipe_bad_r[5] == 2'b00) begin
+        if (pipe_is_div_r[5]) begin
+            div_pair = div_three_steps(pipe_div_rem_r[5], pipe_div_b_r[5]);
+            div_quo_next = (pipe_div_quo_r[5] << 3) |
+                           {12'd0, div_pair[18], div_pair[17], div_pair[16]};
+            div_overflow_next = pipe_div_overflow_r[5];
+            pipe_div_rem_r[6] <= div_pair[15:0];
+            pipe_div_quo_r[6] <= div_quo_next;
+            pipe_div_overflow_r[6] <= div_overflow_next;
+
+            pipe_result_r[6] <= div_tail_result;
         end
     end
 
@@ -653,16 +718,18 @@ always_ff @(posedge clk) begin
                         issue_fast_result : 16'sd0;
     pipe_mult_rs_r <= issue_rs_value;
     pipe_mult_rt_r <= issue_rt_value;
-    pipe_div_b_r[0] <= issue_div_abs_b;
-    pipe_div_rem_r[0] <= issue_div_rem_init;
+    pipe_div_a_raw_r <= issue_rs_value;
+    pipe_div_b_raw_r <= issue_rt_value;
+    pipe_div_b_r[0] <= 16'd0;
+    pipe_div_rem_r[0] <= 16'd0;
     pipe_div_quo_r[0] <= 15'd0;
-    pipe_div_sign_r[0] <= issue_div_sign;
+    pipe_div_sign_r[0] <= 1'b0;
     pipe_div_overflow_r[0] <= 1'b0;
 
     if (issue_fire) begin
-        for (int i = 0; i < FIFO_DEPTH-1; i++) begin
-            fifo_ins_r[i] <= fifo_ins_r[i+1];
-        end
+        fifo_ins_r[0] <= fifo_ins_r[1];
+        fifo_ins_r[1] <= fifo_ins_r[2];
+        fifo_ins_r[2] <= fifo_ins_r[3];
     end
 
     if (accept_ins) begin
