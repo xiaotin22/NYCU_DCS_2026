@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python C:\\\\Users\\\\terry\\\\.claude\\\\skills\\\\pptx\\\\scripts\\\\office\\\\soffice.py --headless --convert-to pdf DCS_HW05_CPU_Design.pptx)"
+    ]
+  }
+}
