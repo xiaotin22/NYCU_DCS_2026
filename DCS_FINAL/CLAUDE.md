@@ -21,27 +21,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 執行說明
 
-```bash
-因為在本機跑Verilog Code會錯誤，做完code review或是完成一段代碼後不用測試看看檔案
-不要在本機跑一下verilog套件會錯誤
-只需要做語法檢查就好了
-```
-
-
-## 架構概覽
-
-```
-DCS_FINAL/
-├── CA.sv                  ← 你的設計（唯一需要實作的檔案）
-├── 00_TESTBED/
-│   ├── TESTBED.sv         ← top-level wrapper（CA + PATTERN + RAM）
-│   ├── PATTERN.sv         ← 測試向量產生器（受保護，不可修改）
-│   ├── RAM.sv             ← Pseudo dual-port RAM（受保護，不可修改）
-│   └── filelist.f         ← 只包含 TESTBED.sv
-├── 02_SYN/syn.tcl         ← DC 合成腳本
-├── 03_GATE/               ← Gate-level sim 用
-└── perf_final.sh          ← 從 vcs.log + syn.log 計算效能分數
-```
+因為在本機跑Verilog Code會錯誤，做完code review或是完成一段代碼後不用測試執行看看檔案。
+不要在本機跑verilog套件會錯誤。
+只需要做語法跟邏輯檢查就好了。
 
 ---
 
@@ -135,7 +117,7 @@ result[i][j] = clamp(x >> shift, OUT_MIN, OUT_MAX)       # arithmetic right shif
 
 ## 硬體設計原則（效能優化）
 
-- **Burst read 優先**：盡量用大 burst（`rd_burst=7` = 128 words）分批讀，比一次一個 word 省大量 cycles
+
 - **Pipeline 讀寫**：RAM read latency=50 cycles，write=5 cycles，可在等待 read 時做前一筆的 computation
 - **面積考量**：乘法器共用（FFN/Conv/Attention 都是 MAC），避免重複例化
 - **不可修改** `RAM.sv`、`PATTERN.sv`
