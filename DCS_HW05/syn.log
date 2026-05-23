@@ -1,0 +1,744 @@
+Initializing gui preferences from file  /RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/.synopsys_dc_gui/preferences.tcl
+#======================================================
+#
+# Synopsys Synthesis Scripts (Design Vision dctcl mode)
+#
+#======================================================
+#======================================================
+# (A) Global Parameters
+#======================================================
+set DESIGN "CPU"
+CPU
+set CYCLE 4.5
+4.5
+set INPUT_DLY  [expr 0.5*$CYCLE]
+2.25
+set OUTPUT_DLY [expr 0.5*$CYCLE]
+2.25
+#======================================================
+# (B) Read RTL Code
+#======================================================
+# (B-1) analyze + elaborate
+set hdlin_auto_save_templates TRUE
+TRUE
+analyze -f sverilog "../01_RTL/${DESIGN}.sv"
+Running PRESTO HDLC
+Compiling source file ../01_RTL/CPU.sv
+Presto compilation completed successfully.
+Loading db file '/usr/cad/umc018/Synthesis/slow.db'
+Loading db file '/usr/cad/synopsys/synthesis/2022.03/libraries/syn/dw_foundation.sldb'
+Loading db file '/usr/cad/synopsys/synthesis/2022.03/libraries/syn/standard.sldb'
+1
+elaborate $DESIGN
+Loading db file '/usr/cad/synopsys/synthesis/2022.03/libraries/syn/gtech.db'
+  Loading link library 'slow'
+  Loading link library 'gtech'
+Running PRESTO HDLC
+Warning:  ../01_RTL/CPU.sv:138: signed to unsigned conversion occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:139: signed to unsigned assignment occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:214: signed to unsigned part selection occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:246: unsigned to signed assignment occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:442: signed to unsigned assignment occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:443: signed to unsigned assignment occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:444: signed to unsigned assignment occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:445: signed to unsigned assignment occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:446: signed to unsigned assignment occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:447: signed to unsigned assignment occurs. (VER-318)
+Warning:  ../01_RTL/CPU.sv:633: Statement unreachable (Branch condition impossible to meet).  (VER-61)
+Warning:  ../01_RTL/CPU.sv:649: Statement unreachable (Branch condition impossible to meet).  (VER-61)
+Warning:  ../01_RTL/CPU.sv:665: Statement unreachable (Branch condition impossible to meet).  (VER-61)
+Warning:  ../01_RTL/CPU.sv:681: Statement unreachable (Branch condition impossible to meet).  (VER-61)
+
+Statistics for case statements in always block at line 248 in file
+        '../01_RTL/CPU.sv'
+===============================================
+|           Line           |  full/ parallel  |
+===============================================
+|           123            |    auto/auto     |
+===============================================
+
+Statistics for case statements in always block at line 263 in file
+        '../01_RTL/CPU.sv'
+===============================================
+|           Line           |  full/ parallel  |
+===============================================
+|           269            |    auto/auto     |
+|           272            |    auto/auto     |
+===============================================
+
+Statistics for case statements in always block at line 309 in file
+        '../01_RTL/CPU.sv'
+===============================================
+|           Line           |  full/ parallel  |
+===============================================
+|           320            |    auto/auto     |
+|           323            |    auto/auto     |
+===============================================
+
+Statistics for case statements in always block at line 511 in file
+        '../01_RTL/CPU.sv'
+===============================================
+|           Line           |  full/ parallel  |
+===============================================
+|           144            |    user/user     |
+===============================================
+
+Inferred memory devices in process
+        in routine CPU line 411 in file
+                '../01_RTL/CPU.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+|  pipe_valid_r_reg   | Flip-flop |   7   |  Y  | N  | Y  | N  | N  | N  | N  |
+|  fifo_count_r_reg   | Flip-flop |   3   |  Y  | N  | Y  | N  | N  | N  | N  |
+|  tag_counter_r_reg  | Flip-flop |   8   |  Y  | N  | Y  | N  | N  | N  | N  |
+|    in_ready_reg     | Flip-flop |   1   |  N  | N  | Y  | N  | N  | N  | N  |
+|   out_valid_r_reg   | Flip-flop |   1   |  N  | N  | Y  | N  | N  | N  | N  |
+|    bad_ins_r_reg    | Flip-flop |   2   |  Y  | N  | Y  | N  | N  | N  | N  |
+|     out_0_r_reg     | Flip-flop |  16   |  Y  | N  | Y  | N  | N  | N  | N  |
+|     out_1_r_reg     | Flip-flop |  16   |  Y  | N  | Y  | N  | N  | N  | N  |
+|     out_2_r_reg     | Flip-flop |  16   |  Y  | N  | Y  | N  | N  | N  | N  |
+|     out_3_r_reg     | Flip-flop |  16   |  Y  | N  | Y  | N  | N  | N  | N  |
+|     out_4_r_reg     | Flip-flop |  16   |  Y  | N  | Y  | N  | N  | N  | N  |
+|     out_5_r_reg     | Flip-flop |  16   |  Y  | N  | Y  | N  | N  | N  | N  |
+|  core_regs_cs_reg   | Flip-flop |  96   |  Y  | N  | Y  | N  | N  | N  | N  |
+|  issue_regs_r_reg   | Flip-flop |  96   |  Y  | N  | Y  | N  | N  | N  | N  |
+|    pending_r_reg    | Flip-flop |   6   |  Y  | N  | Y  | N  | N  | N  | N  |
+===============================================================================
+
+Inferred memory devices in process
+        in routine CPU line 511 in file
+                '../01_RTL/CPU.sv'.
+===================================================================================
+|      Register Name      |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===================================================================================
+|      reg_tag_r_reg      | Flip-flop |  48   |  Y  | N  | N  | N  | N  | N  | N  |
+|     pipe_bad_r_reg      | Flip-flop |  14   |  Y  | N  | N  | N  | N  | N  | N  |
+|   pipe_write_en_r_reg   | Flip-flop |   7   |  Y  | N  | N  | N  | N  | N  | N  |
+|  pipe_write_idx_r_reg   | Flip-flop |  21   |  Y  | N  | N  | N  | N  | N  | N  |
+|     pipe_tag_r_reg      | Flip-flop |  56   |  Y  | N  | N  | N  | N  | N  | N  |
+|   pipe_is_mult_r_reg    | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    pipe_is_div_r_reg    | Flip-flop |   7   |  Y  | N  | N  | N  | N  | N  | N  |
+|    pipe_result_r_reg    | Flip-flop |  112  |  Y  | N  | N  | N  | N  | N  | N  |
+|    pipe_div_b_r_reg     | Flip-flop |  96   |  Y  | N  | N  | N  | N  | N  | N  |
+|   pipe_div_rem_r_reg    | Flip-flop |  96   |  Y  | N  | N  | N  | N  | N  | N  |
+|   pipe_div_quo_r_reg    | Flip-flop |  72   |  Y  | N  | N  | N  | N  | N  | N  |
+|   pipe_div_sign_r_reg   | Flip-flop |   6   |  Y  | N  | N  | N  | N  | N  | N  |
+| pipe_div_overflow_r_reg | Flip-flop |   6   |  Y  | N  | N  | N  | N  | N  | N  |
+|   pipe_mult_rs_r_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|   pipe_mult_rt_r_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|  pipe_div_a_raw_r_reg   | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|  pipe_div_b_raw_r_reg   | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|     fifo_ins_r_reg      | Flip-flop |  128  |  Y  | N  | N  | N  | N  | N  | N  |
+===================================================================================
+Presto compilation completed successfully. (CPU)
+Elaborated 1 design.
+Current design is now 'CPU'.
+1
+# (B-2) read_sverilog
+# read_sverilog $DESIGN\.v
+# (B-3) set current design
+current_design $DESIGN
+Current design is 'CPU'.
+{CPU}
+link
+
+  Linking design 'CPU'
+  Using the following designs and libraries:
+  --------------------------------------------------------------------------
+  CPU                         /RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/HW05/02_SYN/CPU.db
+  slow (library)              /usr/cad/umc018/Synthesis/slow.db
+  dw_foundation.sldb (library) /usr/cad/synopsys/synthesis/2022.03/libraries/syn/dw_foundation.sldb
+
+1
+#======================================================
+#  (C) Global Setting1
+#======================================================
+set_wire_load_mode top
+1
+# set_operating_conditions -max WCCOM -min BCCOM
+# set_wire_load_model -name umc18_wl10 -library slow
+#======================================================
+#  (D) Set Design Constraints
+#======================================================
+# (D-1) Setting Clock Constraints
+create_clock -name clk -period $CYCLE [get_ports clk]
+1
+set_dont_touch_network      [get_clocks clk]
+1
+set_fix_hold                [get_clocks clk]
+1
+set_clock_uncertainty   0.1 [get_clocks clk]
+1
+# set_clock_latency -source 0 [get_clocks clk]
+# set_clock_latency         1 [get_clocks clk]
+set_input_transition 0.5 [all_inputs]
+1
+set_clock_transition 0.1 [all_clocks]
+1
+# (D-2) Setting in/out Constraints
+set_input_delay   -max  $INPUT_DLY  -clock clk   [all_inputs] ;  # setup time check
+1
+set_input_delay   -min  0           -clock clk   [all_inputs] ;  # hold  time check
+1
+set_output_delay  -max  $OUTPUT_DLY -clock clk   [all_outputs] ; # setup time check
+1
+set_output_delay  -min  0           -clock clk   [all_outputs] ; # hold  time check
+1
+set_input_delay 0 -clock clk clk
+1
+set_input_delay 0 -clock clk rst_n
+1
+# set_max_delay $CYCLE -from [all_inputs] -to [all_outputs]
+# (D-3) Setting Design Environment
+# set_driving_cell -library umc18io3v5v_slow -lib_cell P2C -pin {Y} [get_ports clk]
+# set_driving_cell -library umc18io3v5v_slow -lib_cell P2C -pin {Y} [remove_from_collection [all_inputs] [get_ports clk]]
+# set_load [load_of "umc18io3v5v_slow/P8C/A"] [all_outputs] ; # ~= 0.038
+set_load 0.05 [all_outputs]
+1
+# (D-4) Setting DRC Constraint
+# set_max_delay       0 ; # Optimize delay max effort
+# set_max_area        0 ; # Optimize area max effort
+set_max_transition  3    [all_inputs] ; # U18 LUT Max Transition Value
+1
+set_max_capacitance 0.15 [all_inputs] ; # U18 LUT Max Capacitance Value
+1
+set_max_fanout      10   [all_inputs]
+1
+# set_dont_use slow/JKFF*
+# set_dont_touch [get_cells core_reg_macro]
+# set hdlin_ff_always_sync_set_reset true
+# (D-5) Report Clock skew
+report_clock -skew clk
+Information: Checking out the license 'DesignWare'. (SEC-104)
+Information: Updating design information... (UID-85)
+Warning: Design 'CPU' contains 3 high-fanout nets. A fanout number of 1000 will be used for delay calculations involving these nets. (TIM-134)
+ 
+****************************************
+Report : clock_skew
+Design : CPU
+Version: T-2022.03
+Date   : Tue May 19 10:31:54 2026
+****************************************
+
+                 Rise      Fall  Min Rise  Min fall        Uncertainty
+Object          Delay     Delay     Delay     Delay     Plus      Minus
+--------------------------------------------------------------------------------
+clk                 -         -         -         -      0.10      0.10
+
+                 Max Transition      Min Transition
+Object           Rise      Fall      Rise      Fall
+-------------------------------------------------------
+clk              0.10      0.10      0.10      0.10
+1
+check_timing
+
+Information: Checking generated_clocks...
+
+Information: Checking loops...
+
+Information: Checking no_input_delay...
+
+Information: Checking unconstrained_endpoints...
+
+Information: Checking pulse_clock_cell_type...
+
+Information: Checking no_driving_cell...
+
+Information: Checking partial_input_delay...
+1
+#======================================================
+#  (E) Optimization
+#======================================================
+check_design > Report/$DESIGN\.check
+set_fix_multiple_port_nets -all -buffer_constants [get_designs *]
+1
+set_fix_hold [all_clocks]
+1
+compile_ultra
+Information: Performing power optimization. (PWR-850)
+Alib files are up-to-date.
+Information: Running optimization using a maximum of 4 cores. (OPT-1500)
+Information: Evaluating DesignWare library utilization. (UISN-27)
+
+============================================================================
+| DesignWare Building Block Library  |         Version         | Available |
+============================================================================
+| Basic DW Building Blocks           | S-2021.06-DWBB_202106.0 |     *     |
+| Licensed DW Building Blocks        | S-2021.06-DWBB_202106.0 |     *     |
+============================================================================
+
+====================================================================================================
+| Flow Information                                                                                 |
+----------------------------------------------------------------------------------------------------
+| Flow         | Design Compiler NXT WLM                                                           |
+| Comand line  | compile_ultra                                                                     |
+====================================================================================================
+| Design Information                                      | Value                                  |
+====================================================================================================
+| Number of Scenarios                                     | 0                                      |
+| Leaf Cell Count                                         | 2920                                   |
+| Number of User Hierarchies                              | 0                                      |
+| Sequential Cell Count                                   | 1050                                   |
+| Macro Count                                             | 0                                      |
+| Number of Power Domains                                 | 0                                      |
+| Number of Path Groups                                   | 2                                      |
+| Number of VT class                                      | 0                                      |
+| Number of Clocks                                        | 1                                      |
+| Number of Dont Touch cells                              | 526                                    |
+| Number of Dont Touch nets                               | 1                                      |
+| Number of size only cells                               | 0                                      |
+| Design with UPF Data                                    | false                                  |
+----------------------------------------------------------------------------------------------------
+| Variables                                               | Value                                  |
+----------------------------------------------------------------------------------------------------
+| set_fix_multiple_port_nets                              | -all -buffer_constants                 |
+====================================================================================================
+Information: Sequential output inversion is enabled.  SVF file must be used for formal verification. (OPT-1208)
+
+Information: There are 57 potential problems in your design. Please run 'check_design' for more information. (LINT-99)
+
+  Simplifying Design 'CPU'
+
+Loaded alib file './alib-52/slow.db.alib'
+  Building model 'DW01_NAND2'
+Information: Ungrouping 0 of 1 hierarchies before Pass 1 (OPT-775)
+Information: State dependent leakage is now switched from on to off.
+
+  Beginning Pass 1 Mapping
+  ------------------------
+  Processing 'CPU'
+Information: Added key list 'DesignWare' to design 'CPU'. (DDB-72)
+Information: The register 'pipe_div_overflow_r_reg[0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_sign_r_reg[0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][1]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][2]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][3]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][4]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][5]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][6]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][7]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][8]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][9]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][10]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[0][11]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][1]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][2]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][3]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][4]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][5]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][6]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][7]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][8]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][9]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][10]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][11]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][12]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][13]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][14]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_rem_r_reg[0][15]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][1]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][2]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][3]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][4]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][5]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][6]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][7]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][8]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][9]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][10]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][11]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][12]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][13]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][14]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_b_r_reg[0][15]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][11]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][10]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][9]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][8]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][7]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][6]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][5]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][4]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][3]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][2]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][1]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[1][0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_overflow_r_reg[1]' is a constant and will be removed. (OPT-1206)
+Information: In design 'CPU', the register 'pipe_div_quo_r_reg[2][10]' is removed because it is merged to 'pipe_div_quo_r_reg[2][11]'. (OPT-1215)
+Information: In design 'CPU', the register 'pipe_div_quo_r_reg[2][9]' is removed because it is merged to 'pipe_div_quo_r_reg[2][11]'. (OPT-1215)
+Information: In design 'CPU', the register 'pipe_div_quo_r_reg[2][8]' is removed because it is merged to 'pipe_div_quo_r_reg[2][11]'. (OPT-1215)
+Information: In design 'CPU', the register 'pipe_div_quo_r_reg[2][7]' is removed because it is merged to 'pipe_div_quo_r_reg[2][11]'. (OPT-1215)
+Information: In design 'CPU', the register 'pipe_div_quo_r_reg[2][6]' is removed because it is merged to 'pipe_div_quo_r_reg[2][11]'. (OPT-1215)
+Information: In design 'CPU', the register 'pipe_div_quo_r_reg[2][5]' is removed because it is merged to 'pipe_div_quo_r_reg[2][11]'. (OPT-1215)
+Information: In design 'CPU', the register 'pipe_div_quo_r_reg[2][4]' is removed because it is merged to 'pipe_div_quo_r_reg[2][11]'. (OPT-1215)
+Information: In design 'CPU', the register 'pipe_div_quo_r_reg[2][3]' is removed because it is merged to 'pipe_div_quo_r_reg[2][11]'. (OPT-1215)
+ Implement Synthetic for 'CPU'.
+Information: The register 'pipe_div_quo_r_reg[2][11]' is a constant and will be removed. (OPT-1206)
+
+  Updating timing information
+Information: Updating design information... (UID-85)
+Information: The library cell 'HOLDX1' in the library 'slow' is not characterized for internal power. (PWR-536)
+Information: The target library(s) contains cell(s), other than black boxes, that are not characterized for internal power. (PWR-24)
+Information: The register 'pipe_div_quo_r_reg[3][6]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[3][7]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[3][8]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[3][9]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[3][10]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[3][11]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[4][11]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[4][10]' is a constant and will be removed. (OPT-1206)
+Information: The register 'pipe_div_quo_r_reg[4][9]' is a constant and will be removed. (OPT-1206)
+
+  Beginning Mapping Optimizations  (Ultra High effort)
+  -------------------------------
+  Mapping Optimization (Phase 1)
+  Mapping Optimization (Phase 2)
+  Mapping Optimization (Phase 3)
+  Mapping Optimization (Phase 4)
+  Mapping Optimization (Phase 5)
+  Mapping Optimization (Phase 6)
+  Mapping Optimization (Phase 7)
+  Mapping Optimization (Phase 8)
+  Mapping Optimization (Phase 9)
+  Mapping Optimization (Phase 10)
+  Mapping Optimization (Phase 11)
+  Mapping Optimization (Phase 12)
+Information: The register 'pipe_div_rem_r_reg[1][15]' is a constant and will be removed. (OPT-1206)
+
+                                  TOTAL                                                            
+   ELAPSED            WORST NEG   SETUP    DESIGN                              LEAKAGE   MIN DELAY 
+    TIME      AREA      SLACK     COST    RULE COST         ENDPOINT            POWER      COST    
+  --------- --------- --------- --------- --------- ------------------------- --------- -----------
+    0:00:42  315818.4      0.53     100.6       0.0                           42745144.0000      0.00  
+    0:00:42  314657.5      1.19     147.0       0.0                           42594864.0000      0.00  
+
+  Beginning Constant Register Removal
+  -----------------------------------
+    0:00:42  315249.6      1.19     147.0       0.0                           42736252.0000      0.00  
+    0:00:43  314374.7      1.50     226.3       0.0                           42623940.0000      0.00  
+
+  Beginning Global Optimizations
+  ------------------------------
+  Numerical Synthesis (Phase 1)
+  Numerical Synthesis (Phase 2)
+  Global Optimization (Phase 1)
+  Global Optimization (Phase 2)
+  Global Optimization (Phase 3)
+  Global Optimization (Phase 4)
+  Global Optimization (Phase 5)
+  Global Optimization (Phase 6)
+  Global Optimization (Phase 7)
+  Global Optimization (Phase 8)
+  Global Optimization (Phase 9)
+  Global Optimization (Phase 10)
+  Global Optimization (Phase 11)
+  Global Optimization (Phase 12)
+  Global Optimization (Phase 13)
+  Global Optimization (Phase 14)
+  Global Optimization (Phase 15)
+  Global Optimization (Phase 16)
+  Global Optimization (Phase 17)
+  Global Optimization (Phase 18)
+  Global Optimization (Phase 19)
+  Global Optimization (Phase 20)
+  Global Optimization (Phase 21)
+  Global Optimization (Phase 22)
+  Global Optimization (Phase 23)
+  Global Optimization (Phase 24)
+  Global Optimization (Phase 25)
+  Global Optimization (Phase 26)
+  Global Optimization (Phase 27)
+  Global Optimization (Phase 28)
+  Global Optimization (Phase 29)
+  Global Optimization (Phase 30)
+  Global Optimization (Phase 31)
+
+  Beginning Isolate Ports
+  -----------------------
+
+  Beginning Delay Optimization
+  ----------------------------
+    0:00:44  181804.4      1.25     205.7       0.0                           16163544.0000      0.00  
+    0:00:48  189927.5      0.37      68.0       0.0                           17884340.0000      0.00  
+    0:00:48  189927.5      0.37      68.0       0.0                           17884340.0000      0.00  
+    0:00:48  189960.7      0.37      68.7       0.0                           17887762.0000      0.00  
+    0:00:50  189784.4      0.42      70.7       0.0                           17861718.0000      0.00  
+    0:00:50  189747.8      0.49      74.1       0.0                           17860854.0000      0.00  
+
+  Beginning WLM Backend Optimization
+  --------------------------------------
+    0:00:52  188357.4      0.47      81.9       0.0                           17605418.0000      0.00  
+    0:00:52  188370.7      0.40      70.5       0.0                           17604328.0000      0.00  
+    0:00:52  188370.7      0.40      70.5       0.0                           17604328.0000      0.00  
+    0:00:53  188127.9      0.40      69.7       0.0                           17157232.0000      0.00  
+    0:00:53  188127.9      0.40      69.7       0.0                           17157232.0000      0.00  
+    0:00:54  190393.2      0.38      70.1       0.0                           17552814.0000      0.00  
+    0:00:54  190393.2      0.38      70.1       0.0                           17552814.0000      0.00  
+    0:00:54  190393.2      0.38      70.1       0.0                           17552814.0000      0.00  
+    0:00:54  190393.2      0.38      70.1       0.0                           17552814.0000      0.00  
+    0:00:54  190393.2      0.38      70.1       0.0                           17552814.0000      0.00  
+    0:00:54  190393.2      0.38      70.1       0.0                           17552814.0000      0.00  
+    0:00:59  200335.8      0.17      28.3       0.0                           19410248.0000      0.00  
+    0:00:59  200335.8      0.17      28.3       0.0                           19410248.0000      0.00  
+    0:00:59  200365.7      0.17      28.0       0.0                           19415830.0000      0.00  
+    0:00:59  200365.7      0.17      28.0       0.0                           19415830.0000      0.00  
+    0:01:01  203169.9      0.13      22.0       0.0                           19873906.0000      0.00  
+    0:01:01  203169.9      0.13      22.0       0.0                           19873906.0000      0.00  
+    0:01:03  204297.5      0.14      20.4       0.0                           20070364.0000      0.00  
+    0:01:03  204297.5      0.14      20.4       0.0                           20070364.0000      0.00  
+    0:01:06  207311.2      0.07       9.7       0.0                           20638360.0000      0.00  
+    0:01:06  207311.2      0.07       9.7       0.0                           20638360.0000      0.00  
+    0:01:07  207311.2      0.07       9.7       0.0                           20638360.0000      0.00  
+    0:01:07  207544.1      0.05       6.8       0.0 pipe_result_r_reg[6][2]/D 20682596.0000      0.00  
+    0:01:07  207610.6      0.04       6.1       0.0                           20692634.0000      0.00  
+    0:01:10  208718.3      0.04       5.8       0.0                           20914002.0000      0.00  
+
+
+  Beginning Leakage Power Optimization  (max_leakage_power 0)
+  ------------------------------------
+
+                                  TOTAL                                                            
+   ELAPSED            WORST NEG   SETUP    DESIGN                              LEAKAGE   MIN DELAY 
+    TIME      AREA      SLACK     COST    RULE COST         ENDPOINT            POWER      COST    
+  --------- --------- --------- --------- --------- ------------------------- --------- -----------
+    0:01:10  208718.3      0.04       5.8       0.0                           20914002.0000      0.00  
+  Global Optimization (Phase 32)
+  Global Optimization (Phase 33)
+  Global Optimization (Phase 34)
+  Global Optimization (Phase 35)
+  Global Optimization (Phase 36)
+  Global Optimization (Phase 37)
+  Global Optimization (Phase 38)
+  Global Optimization (Phase 39)
+  Global Optimization (Phase 40)
+  Global Optimization (Phase 41)
+  Global Optimization (Phase 42)
+  Global Optimization (Phase 43)
+  Global Optimization (Phase 44)
+  Global Optimization (Phase 45)
+  Global Optimization (Phase 46)
+    0:01:13  203256.3      0.07       8.6       0.0 pipe_result_r_reg[6][9]/D 19297102.0000      0.00  
+    0:01:13  203605.6      0.05       5.9       0.0                           19341182.0000      0.00  
+    0:01:15  204154.5      0.05       5.7       0.0                           19453018.0000      0.00  
+    0:01:15  204154.5      0.05       5.7       0.0                           19453018.0000      0.00  
+    0:01:16  201090.9      0.05       5.4       0.0                           18864564.0000      0.00  
+    0:01:16  201090.9      0.05       5.4       0.0                           18864564.0000      0.00  
+    0:01:17  202574.4      0.06       5.3       0.0                           19135928.0000      0.00  
+    0:01:18  202574.4      0.06       5.3       0.0                           19135928.0000      0.00  
+    0:01:18  202677.6      0.07       7.2       0.0                           19154768.0000      0.00  
+    0:01:18  202677.6      0.07       7.2       0.0                           19154768.0000      0.00  
+    0:01:18  202697.5      0.07       7.1       0.0                           19156872.0000      0.00  
+    0:01:18  202697.5      0.07       7.1       0.0                           19156872.0000      0.00  
+    0:01:21  206216.8      0.02       0.5       1.6                           19818504.0000      0.00  
+    0:01:21  206216.8      0.02       0.5       1.6                           19818504.0000      0.00  
+    0:01:21  206479.6      0.01       0.4       1.6                           19849364.0000      0.00  
+    0:01:21  206479.6      0.01       0.4       1.6                           19849364.0000      0.00  
+    0:01:23  207454.3      0.01       0.0       7.3                           20044430.0000      0.00  
+    0:01:23  207454.3      0.01       0.0       7.3                           20044430.0000      0.00  
+    0:01:24  207806.9      0.00       0.0       7.3                           20100624.0000      0.00  
+    0:01:24  207806.9      0.00       0.0       7.3                           20100624.0000      0.00  
+    0:01:24  207820.2      0.00       0.0       7.3                           20103142.0000      0.00  
+    0:01:24  207820.2      0.00       0.0       7.3                           20103142.0000      0.00  
+    0:01:24  207820.2      0.00       0.0       7.3                           20103142.0000      0.00  
+
+                                  TOTAL                                                            
+   ELAPSED            WORST NEG   SETUP    DESIGN                              LEAKAGE   MIN DELAY 
+    TIME      AREA      SLACK     COST    RULE COST         ENDPOINT            POWER      COST    
+  --------- --------- --------- --------- --------- ------------------------- --------- -----------
+    0:01:25  207820.2      0.00       0.0       7.3                           20103142.0000      0.00  
+    0:01:25  204530.4      0.00       0.0       0.0                           19673796.0000      0.00  
+    0:01:25  204530.4      0.00       0.0       0.0                           19673796.0000      0.00  
+    0:01:25  204530.4      0.00       0.0       0.0                           19673796.0000      0.00  
+    0:01:26  201982.3      0.00       0.0       0.0                           19198060.0000      0.00  
+    0:01:27  200858.0      0.00       0.0       0.0                           18994608.0000      0.00  
+    0:01:27  200858.0      0.00       0.0       0.0                           18994608.0000      0.00  
+    0:01:27  200858.0      0.00       0.0       0.0                           18994608.0000      0.00  
+    0:01:27  200858.0      0.00       0.0       0.0                           18994608.0000      0.00  
+    0:01:27  200858.0      0.00       0.0       0.0                           18994608.0000      0.00  
+    0:01:27  200858.0      0.00       0.0       0.0                           18994608.0000      0.00  
+    0:01:27  198496.3      0.00       0.0       0.0                           18597174.0000      0.00  
+Loading db file '/usr/cad/umc018/Synthesis/slow.db'
+
+
+Note: Symbol # after min delay cost means estimated hold TNS across all active scenarios 
+
+
+  Optimization Complete
+  ---------------------
+Information: State dependent leakage is now switched from off to on.
+Information: Propagating switching activity (low effort zero delay simulation). (PWR-6)
+1
+# uniquify
+# compile
+#======================================================
+#  (F) Output Reports
+#======================================================
+report_design              > Report/$DESIGN\.design
+report_resource            > Report/$DESIGN\.resource
+report_timing -max_paths 3 > Report/$DESIGN\.timing
+report_area                > Report/$DESIGN\.area
+report_power               > Report/$DESIGN\.power
+report_clock               > Report/$DESIGN\.clock
+report_port                > Report/$DESIGN\.port
+report_power               > Report/$DESIGN\.power
+# report_reference           > Report/$DESIGN\.reference
+#======================================================
+#  (G) Change Naming Rule
+#======================================================
+set bus_inference_style "%s\[%d\]"
+%s[%d]
+set bus_naming_style    "%s\[%d\]"
+%s[%d]
+set hdlout_internal_busses true
+true
+change_names -hierarchy -rule verilog
+1
+define_name_rules name_rule -allowed "a-z A-Z 0-9 _"   -max_length 255 -type cell
+1
+define_name_rules name_rule -allowed "a-z A-Z 0-9 _[]" -max_length 255 -type net
+1
+define_name_rules name_rule -map {{"\\*cell\\*" "cell"}}
+1
+define_name_rules name_rule -case_insensitive
+1
+change_names -hierarchy -rules name_rule
+1
+#======================================================
+#  (H) Output Results
+#======================================================
+set verilogout_higher_designs_first true
+true
+write -format verilog -hierarchy -output Netlist/$DESIGN\_SYN.v 
+Writing verilog file '/RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/HW05/02_SYN/Netlist/CPU_SYN.v'.
+1
+write -format ddc     -hierarchy -output $DESIGN\_SYN.ddc
+Writing ddc file 'CPU_SYN.ddc'.
+1
+write_sdf -version 3.0 -context verilog -load_delay cell Netlist/$DESIGN\_SYN.sdf -significant_digits 6
+Information: Writing timing information to file '/RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/HW05/02_SYN/Netlist/CPU_SYN.sdf'. (WT-3)
+1
+write_sdc Netlist/$DESIGN\_SYN.sdc
+1
+#======================================================
+#  (I) Finish and Quit
+#======================================================
+report_area
+ 
+****************************************
+Report : area
+Design : CPU
+Version: T-2022.03
+Date   : Tue May 19 10:33:25 2026
+****************************************
+
+Library(s) Used:
+
+    slow (File: /usr/cad/umc018/Synthesis/slow.db)
+
+Number of ports:                          135
+Number of nets:                          9186
+Number of cells:                         9050
+Number of combinational cells:           8078
+Number of sequential cells:               972
+Number of macros/black boxes:               0
+Number of buf/inv:                       1644
+Number of references:                     133
+
+Combinational area:             135920.032051
+Buf/Inv area:                    18604.555725
+Noncombinational area:           62576.237652
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                198496.269703
+Total area:                 undefined
+1
+report_timing
+ 
+****************************************
+Report : timing
+        -path full
+        -delay max
+        -max_paths 1
+Design : CPU
+Version: T-2022.03
+Date   : Tue May 19 10:33:25 2026
+****************************************
+
+Operating Conditions: slow   Library: slow
+Wire Load Model Mode: top
+
+  Startpoint: pipe_div_rem_r_reg_5__8_
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: pipe_result_r_reg_6__6_
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: max
+
+  Point                                                   Incr       Path
+  --------------------------------------------------------------------------
+  clock clk (rise edge)                                   0.00       0.00
+  clock network delay (ideal)                             0.00       0.00
+  pipe_div_rem_r_reg_5__8_/CK (DFFHQX4)                   0.00       0.00 r
+  pipe_div_rem_r_reg_5__8_/Q (DFFHQX4)                    0.29       0.29 r
+  U3924/Y (INVX2)                                         0.07       0.35 f
+  U8218/Y (NAND2X4)                                       0.08       0.44 r
+  U3915/Y (NAND2X2)                                       0.11       0.55 f
+  U8125/Y (NOR2X4)                                        0.15       0.71 r
+  U5735/Y (NAND4X2)                                       0.12       0.82 f
+  U9466/Y (NAND4X2)                                       0.24       1.06 r
+  U5434/Y (INVX4)                                         0.14       1.20 f
+  U8017/Y (INVX4)                                         0.11       1.31 r
+  U7773/Y (CLKINVX8)                                      0.09       1.40 f
+  U7968/Y (MXI2X4)                                        0.17       1.57 f
+  U3874/Y (BUFX4)                                         0.18       1.74 f
+  U7370/Y (NAND3X2)                                       0.12       1.86 r
+  U5933/Y (NAND3X2)                                       0.09       1.95 f
+  U5462/Y (NAND3X2)                                       0.12       2.08 r
+  U5060/Y (NAND4X2)                                       0.17       2.25 f
+  U5059/Y (INVX4)                                         0.11       2.36 r
+  U8169/Y (INVX8)                                         0.08       2.44 f
+  U5395/Y (INVX4)                                         0.14       2.58 r
+  U4952/Y (AOI21X1)                                       0.11       2.70 f
+  U9589/Y (OAI211X1)                                      0.16       2.85 r
+  U5099/Y (NAND3X2)                                       0.12       2.97 f
+  U4323/Y (INVX3)                                         0.09       3.06 r
+  U5114/Y (NOR2X4)                                        0.08       3.14 f
+  U7803/Y (OAI21X4)                                       0.18       3.32 r
+  U7802/Y (INVX8)                                         0.12       3.44 f
+  U5276/Y (NOR2X4)                                        0.12       3.57 r
+  U3708/Y (NOR2X1)                                        0.09       3.66 f
+  U4049/Y (INVX3)                                         0.08       3.74 r
+  U3682/Y (NAND3X1)                                       0.11       3.85 f
+  U8072/Y (NAND2X1)                                       0.10       3.95 r
+  U4279/Y (NAND2XL)                                       0.07       4.01 f
+  pipe_result_r_reg_6__6_/D (DFFHQX1)                     0.00       4.01 f
+  data arrival time                                                  4.01
+
+  clock clk (rise edge)                                   4.50       4.50
+  clock network delay (ideal)                             0.00       4.50
+  clock uncertainty                                      -0.10       4.40
+  pipe_result_r_reg_6__6_/CK (DFFHQX1)                    0.00       4.40 r
+  library setup time                                     -0.39       4.01
+  data required time                                                 4.01
+  --------------------------------------------------------------------------
+  data required time                                                 4.01
+  data arrival time                                                 -4.01
+  --------------------------------------------------------------------------
+  slack (MET)                                                        0.00
+
+
+1
+exit
+
+Memory usage for this session 333 Mbytes.
+Memory usage for this session including child processes 537 Mbytes.
+CPU usage for this session 234 seconds ( 0.07 hours ).
+Elapsed time for this session 96 seconds ( 0.03 hours ).
+
+Thank you...
+
