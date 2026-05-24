@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 因為在本機跑Verilog Code會錯誤，做完code review或是完成一段代碼後不用測試執行看看檔案。
 不要在本機跑verilog套件會錯誤。
 只需要做語法跟邏輯檢查就好了。
-
+PATTERN.sv, RAM.sv 現在被保護，不用去查看裡面寫什麼
 ---
 
 ## CA.sv 介面
