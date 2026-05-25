@@ -32,13 +32,22 @@ module CA #(
     logic [1:0]    exec_op;
     logic [1:0]    exec_act;
     logic [255:0]  exec_param;
-    logic          datapath_in_valid;
+    logic [255:0]  exec_weight_k;
+    logic [255:0]  exec_weight_v;
+    logic          datapath_input_ready;
+    logic          datapath_result_pre_valid;
     logic          datapath_result_valid;
     logic          datapath_result_commit;
 
+    // FIFO control bridging Control (timing decision) and DataPath (storage).
+    logic          fifo_flush;
+    logic          fifo_push_en;
+    logic          fifo_pop_en;
+    logic          fifo_empty;
+
     // CA only wires the two halves together:
-    // - CA_Control owns the FSM and RAM commands.
-    // - CA_DataPath owns the matrix pipeline and committed output data.
+    // - CA_Control owns the FSM, RAM commands, and FIFO push/pop scheduling.
+    // - CA_DataPath owns the matrix pipeline (FIFO -> Mult -> ACT -> PoT).
     CA_Control #(
         .RAM_DEPTH (RAM_DEPTH),
         .BURST_BIT (BURST_BIT)
@@ -52,11 +61,18 @@ module CA #(
         .param                 (param),
         .rd_ready              (rd_ready),
         .rd_valid              (rd_valid),
+        .fifo_empty            (fifo_empty),
         .datapath_result_valid (datapath_result_valid),
+        .datapath_input_ready  (datapath_input_ready),
+        .datapath_result_pre_valid(datapath_result_pre_valid),
         .exec_op               (exec_op),
         .exec_act              (exec_act),
         .exec_param            (exec_param),
-        .datapath_in_valid     (datapath_in_valid),
+        .exec_weight_k         (exec_weight_k),
+        .exec_weight_v         (exec_weight_v),
+        .fifo_flush            (fifo_flush),
+        .fifo_push_en          (fifo_push_en),
+        .fifo_pop_en           (fifo_pop_en),
         .datapath_result_commit(datapath_result_commit),
         .rd_en                 (rd_en),
         .rd_addr               (rd_addr),
@@ -71,11 +87,17 @@ module CA #(
     ) u_datapath (
         .clk                   (clk),
         .rst_n                 (rst_n),
-        .in_valid              (datapath_in_valid),
         .op                    (exec_op),
         .act                   (exec_act),
         .param                 (exec_param),
+        .weight_k              (exec_weight_k),
+        .weight_v              (exec_weight_v),
         .rd_data               (rd_data),
+        .fifo_flush            (fifo_flush),
+        .fifo_push_en          (fifo_push_en),
+        .fifo_pop_en           (fifo_pop_en),
+        .fifo_pop_ready        (datapath_input_ready),
+        .fifo_empty            (fifo_empty),
         .result_commit         (datapath_result_commit),
         .result_valid          (datapath_result_valid),
         .wr_data               (wr_data),
@@ -98,12 +120,15 @@ module CA_Control #(
     input  logic [255:0]                    param,
     input  logic                            rd_ready,
     input  logic                            rd_valid,
+    input  logic                            fifo_empty,
     input  logic                            datapath_result_valid,
 
     output logic [1:0]                      exec_op,
     output logic [1:0]                      exec_act,
     output logic [255:0]                    exec_param,
-    output logic                            datapath_in_valid,
+    output logic                            fifo_flush,
+    output logic                            fifo_push_en,
+    output logic                            fifo_pop_en,
     output logic                            datapath_result_commit,
 
     output logic                            rd_en,
@@ -120,37 +145,56 @@ module CA_Control #(
 
     typedef enum logic [1:0] {
         S_IDLE,
+        S_PARAM,   // SHA/MHA only: collecting W_K then W_V after job_start latched W_Q
         S_RUN
     } state_t;
 
-    state_t      state_q;
-    logic [1:0]  rd_req_cnt_q;
-    logic [8:0]  rd_word_cnt_q;
-    logic [8:0]  wr_cmd_cnt_q;
-    logic [8:0]  out_cnt_q;
-    logic [9:0]  wr_pre_pipe_q;
+    state_t        state_q;
+    logic [1:0]    rd_req_cnt_q;
+    logic [8:0]    push_word_cnt_q;
+    logic [8:0]    pop_word_cnt_q;
+    logic [8:0]    wr_cmd_cnt_q;
+    logic [8:0]    out_cnt_q;
+    logic [9:0]    wr_pre_pipe_q;
 
-    logic        job_start;
-    logic        rd_cmd_fire;
-    logic        wr_pre_fire;
-    logic        wr_cmd_fire;
-    logic        result_last;
+    // Attention weight latches. W_Q reuses exec_param (latched at job_start).
+    logic [1:0]    weight_idx_q;     // 0 = K turn, 1 = V turn, 2 = done
+    logic [255:0]  weight_k_q;
+    logic [255:0]  weight_v_q;
 
+    logic          job_start;
+    logic          is_attention_in;  // op (live) is SHA/MHA
+    logic          weights_done;     // last W_V latch this cycle
+    logic          rd_cmd_fire;
+    logic          wr_pre_fire;
+    logic          wr_cmd_fire;
+    logic          result_last;
+
+    // Phase 1 only accepts FFN (00) and Conv (01); SHA (10) / MHA (11) added in Phase 2.
     function automatic logic op_supported(input logic [1:0] op_sel);
         op_supported = (op_sel == 2'b00) || (op_sel == 2'b01);
     endfunction
 
     // PATTERN only raises the next in_valid after the previous 256-word output
     // stream is complete, so the controller accepts jobs only from IDLE.
-    assign job_start = (state_q == S_IDLE) && mem_set && in_valid && op_supported(op);
+    assign job_start       = (state_q == S_IDLE) && mem_set && in_valid && op_supported(op);
+    assign is_attention_in = (op == 2'b10) || (op == 2'b11);
+    assign weights_done    = (state_q == S_PARAM) && in_valid && (weight_idx_q == 2'd1);
 
-    // Feed exactly 256 RAM words into the compute pipe while the job is running.
-    assign datapath_in_valid      = rd_valid && (rd_word_cnt_q < 9'd256);
+    // Flush input FIFO at job_start as a safety reset for any residual entries.
+    assign fifo_flush = job_start;
+
+    // Push every RAM word into the FIFO until we've captured the full 256-word set.
+    assign fifo_push_en = (state_q == S_RUN) && rd_valid && (push_word_cnt_q < 9'd256);
+
+    // FFN/Conv consume 1 word/cycle whenever data is available and we still owe results.
+    assign fifo_pop_en  = (state_q == S_RUN) && !fifo_empty && (pop_word_cnt_q < 9'd256);
+
     assign datapath_result_commit = datapath_result_valid;
     assign result_last            = datapath_result_commit && (out_cnt_q == 9'd255);
 
-    // The write command is issued at each 128-word boundary.  Pipelining the
-    // PoT max reduction adds two cycles beyond the previous PoT stage count.
+    // The write command is paced ten cycles after the corresponding FIFO pop so
+    // the RAM wr_valid handshake aligns with PoT output. Burst boundary every 128.
     assign wr_pre_fire = wr_pre_pipe_q[9];
     assign wr_cmd_fire = (state_q == S_RUN) && wr_pre_fire;
     assign rd_cmd_fire = (state_q == S_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
@@ -163,6 +207,12 @@ module CA_Control #(
             case (state_q)
                 S_IDLE: begin
                     if (job_start) begin
+                        state_q <= is_attention_in ? S_PARAM : S_RUN;
+                    end
+                end
+
+                S_PARAM: begin
+                    if (weights_done) begin
                         state_q <= S_RUN;
                     end
                 end
@@ -193,6 +243,35 @@ module CA_Control #(
         end
     end
 
+    // SHA/MHA weight collection: after job_start latched W_Q into exec_param,
+    // S_PARAM collects W_K (idx 0), then W_V (idx 1). FFN/Conv never enters S_PARAM.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            weight_idx_q <= 2'd0;
+        end
+        else if (job_start) begin
+            weight_idx_q <= 2'd0;
+        end
+        else if ((state_q == S_PARAM) && in_valid && (weight_idx_q < 2'd2)) begin
+            weight_idx_q <= weight_idx_q + 1'b1;
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            weight_k_q <= 256'd0;
+            weight_v_q <= 256'd0;
+        end
+        else if ((state_q == S_PARAM) && in_valid) begin
+            if (weight_idx_q == 2'd0) begin
+                weight_k_q <= param;
+            end
+            if (weight_idx_q == 2'd1) begin
+                weight_v_q <= param;
+            end
+        end
+    end
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rd_req_cnt_q <= 2'd0;
@@ -207,13 +286,25 @@ module CA_Control #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            rd_word_cnt_q <= 9'd0;
+            push_word_cnt_q <= 9'd0;
         end
         else if (job_start) begin
-            rd_word_cnt_q <= 9'd0;
+            push_word_cnt_q <= 9'd0;
         end
-        else if (datapath_in_valid) begin
-            rd_word_cnt_q <= rd_word_cnt_q + 1'b1;
+        else if (fifo_push_en) begin
+            push_word_cnt_q <= push_word_cnt_q + 1'b1;
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            pop_word_cnt_q <= 9'd0;
+        end
+        else if (job_start) begin
+            pop_word_cnt_q <= 9'd0;
+        end
+        else if (fifo_pop_en) begin
+            pop_word_cnt_q <= pop_word_cnt_q + 1'b1;
         end
     end
 
@@ -249,7 +340,7 @@ module CA_Control #(
             wr_pre_pipe_q <= 10'd0;
         end
         else if (state_q == S_RUN) begin
-            wr_pre_pipe_q <= {wr_pre_pipe_q[8:0], datapath_in_valid};
+            wr_pre_pipe_q <= {wr_pre_pipe_q[8:0], fifo_pop_en};
         end
     end
 
@@ -300,11 +391,14 @@ module CA_DataPath #(
 )(
     input  logic                 clk,
     input  logic                 rst_n,
-    input  logic                 in_valid,
     input  logic [1:0]           op,
     input  logic [1:0]           act,
     input  logic [255:0]         param,
     input  logic [RAM_WIDTH-1:0] rd_data,
+    input  logic                 fifo_flush,
+    input  logic                 fifo_push_en,
+    input  logic                 fifo_pop_en,
+    output logic                 fifo_empty,
     input  logic                 result_commit,
 
     output logic                 result_valid,
@@ -313,20 +407,39 @@ module CA_DataPath #(
     output logic [31:0]          out_data
 );
 
-    logic          mult_valid;
-    logic [2047:0] mult_data;
-    logic          act_valid;
-    logic [2047:0] act_data;
-    logic          pot_valid;
-    logic [255:0]  pot_data;
+    logic [RAM_WIDTH-1:0] mult_in_data_A;
+    logic                 mult_valid;
+    logic [2047:0]        mult_data;
+    logic                 act_valid;
+    logic [2047:0]        act_data;
+    logic                 pot_valid;
+    logic [255:0]         pot_data;
 
-    // Matrix pipeline: RAM word -> 32-bit accumulation -> activation -> PoT.
+    // Input FIFO decouples burst-RAM read rate from compute consumer rate.
+    // FFN/Conv pop 1 word/cycle (steady-state occupancy stays at 1).
+    // SHA/MHA (Phase 2) pop slower; burst-16 keeps peak occupancy ~13.
+    CA_InputFIFO #(
+        .DEPTH (16),
+        .WIDTH (RAM_WIDTH)
+    ) u_in_fifo (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .flush     (fifo_flush),
+        .push_en   (fifo_push_en),
+        .push_data (rd_data),
+        .pop_en    (fifo_pop_en),
+        .pop_data  (mult_in_data_A),
+        .empty     (fifo_empty),
+        .full      ()
+    );
+
+    // Matrix pipeline: FIFO word -> 32-bit accumulation -> activation -> PoT.
     Mult_8Stage_Parallel u_mult (
         .clk       (clk),
         .rst_n     (rst_n),
         .op        (op),
-        .in_valid  (in_valid),
-        .in_data_A (rd_data),
+        .in_valid  (fifo_pop_en),
+        .in_data_A (mult_in_data_A),
         .in_data_B (param),
         .out_valid (mult_valid),
         .out_data  (mult_data)
@@ -370,6 +483,76 @@ module CA_DataPath #(
         else if (result_commit) begin
             wr_data  <= pot_data;
             out_data <= pot_data[31:0];
+        end
+    end
+
+endmodule
+
+module CA_InputFIFO #(
+    parameter int DEPTH = 16,    // must be a power of 2 for natural pointer wrap
+    parameter int WIDTH = 256
+)(
+    input  logic              clk,
+    input  logic              rst_n,
+    input  logic              flush,
+    input  logic              push_en,
+    input  logic [WIDTH-1:0]  push_data,
+    input  logic              pop_en,
+    output logic [WIDTH-1:0]  pop_data,
+    output logic              empty,
+    output logic              full
+);
+
+    localparam int PTR_W   = $clog2(DEPTH);
+    localparam int COUNT_W = $clog2(DEPTH + 1);
+
+    logic [WIDTH-1:0]   mem_q [0:DEPTH-1];
+    logic [PTR_W-1:0]   head_q;
+    logic [PTR_W-1:0]   tail_q;
+    logic [COUNT_W-1:0] count_q;
+
+    logic [COUNT_W-1:0] count_next;
+
+    assign empty    = (count_q == '0);
+    assign full     = (count_q == COUNT_W'(DEPTH));
+    assign pop_data = mem_q[head_q];
+
+    always_comb begin
+        case ({push_en, pop_en})
+            2'b10:   count_next = count_q + 1'b1;
+            2'b01:   count_next = count_q - 1'b1;
+            default: count_next = count_q;
+        endcase
+    end
+
+    // Pointers and count: cleared on reset and on job_start flush.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            head_q  <= '0;
+            tail_q  <= '0;
+            count_q <= '0;
+        end
+        else if (flush) begin
+            head_q  <= '0;
+            tail_q  <= '0;
+            count_q <= '0;
+        end
+        else begin
+            count_q <= count_next;
+            if (push_en) begin
+                tail_q <= tail_q + 1'b1;
+            end
+            if (pop_en) begin
+                head_q <= head_q + 1'b1;
+            end
+        end
+    end
+
+    // Storage: deliberately no reset on the memory array to avoid 4096 flop
+    // reset wiring; entries are don't-care until written by push.
+    always_ff @(posedge clk) begin
+        if (push_en && !flush) begin
+            mem_q[tail_q] <= push_data;
         end
     end
 
