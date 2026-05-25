@@ -128,7 +128,7 @@ module CA_Control #(
     logic [8:0]  rd_word_cnt_q;
     logic [8:0]  wr_cmd_cnt_q;
     logic [8:0]  out_cnt_q;
-    logic [7:0]  wr_pre_pipe_q;
+    logic [9:0]  wr_pre_pipe_q;
 
     logic        job_start;
     logic        rd_cmd_fire;
@@ -149,9 +149,9 @@ module CA_Control #(
     assign datapath_result_commit = datapath_result_valid;
     assign result_last            = datapath_result_commit && (out_cnt_q == 9'd255);
 
-    // The write command is issued at each 128-word boundary.  FFN and Conv now
-    // share the same 8-stage multiplier pipeline, so their data latency matches.
-    assign wr_pre_fire = wr_pre_pipe_q[6];
+    // The write command is issued at each 128-word boundary.  Pipelining the
+    // PoT max reduction adds two cycles beyond the previous PoT stage count.
+    assign wr_pre_fire = wr_pre_pipe_q[9];
     assign wr_cmd_fire = (state_q == S_RUN) && wr_pre_fire;
     assign rd_cmd_fire = (state_q == S_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
 
@@ -243,13 +243,13 @@ module CA_Control #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            wr_pre_pipe_q <= 8'd0;
+            wr_pre_pipe_q <= 10'd0;
         end
         else if (job_start) begin
-            wr_pre_pipe_q <= 8'd0;
+            wr_pre_pipe_q <= 10'd0;
         end
         else if (state_q == S_RUN) begin
-            wr_pre_pipe_q <= {wr_pre_pipe_q[6:0], datapath_in_valid};
+            wr_pre_pipe_q <= {wr_pre_pipe_q[8:0], datapath_in_valid};
         end
     end
 
@@ -315,14 +315,12 @@ module CA_DataPath #(
 
     logic          mult_valid;
     logic [2047:0] mult_data;
-    logic [31:0]   mult_max;
     logic          act_valid;
     logic [2047:0] act_data;
-    logic [31:0]   act_max;
     logic          pot_valid;
     logic [255:0]  pot_data;
 
-    // Matrix pipeline: RAM word -> 32-bit accumulation -> activation -> 4-bit PoT.
+    // Matrix pipeline: RAM word -> 32-bit accumulation -> activation -> PoT.
     Mult_8Stage_Parallel u_mult (
         .clk       (clk),
         .rst_n     (rst_n),
@@ -331,8 +329,7 @@ module CA_DataPath #(
         .in_data_A (rd_data),
         .in_data_B (param),
         .out_valid (mult_valid),
-        .out_data  (mult_data),
-        .out_max   (mult_max)
+        .out_data  (mult_data)
     );
 
     ACT_TwoStage_Parallel u_act (
@@ -342,16 +339,14 @@ module CA_DataPath #(
         .act       (act),
         .in_data   (mult_data),
         .out_valid (act_valid),
-        .out_data  (act_data),
-        .out_max   (act_max)
+        .out_data  (act_data)
     );
 
-    PoT_TwoStage_Parallel u_pot (
+    PoT_FiveStage_Parallel u_pot (
         .clk       (clk),
         .rst_n     (rst_n),
         .in_valid  (act_valid),
         .in_data   (act_data),
-        .in_max    (act_max),
         .out_valid (pot_valid),
         .out_data  (pot_data)
     );
@@ -388,8 +383,7 @@ module Mult_8Stage_Parallel (
     input  logic [255:0]         in_data_A,
     input  logic [255:0]         in_data_B,
     output logic                 out_valid,
-    output logic [2047:0]        out_data,
-    output logic [31:0]          out_max
+    output logic [2047:0]        out_data
 );
 
     localparam int STAGES = 8;
@@ -405,15 +399,10 @@ module Mult_8Stage_Parallel (
     logic         valid_q    [0:STAGES-1];
     logic [255:0] mat_A_q    [0:STAGES-1];
     s32_t         data_q     [0:STAGES-1][0:MAT_SIZE-1];
-    logic [31:0]  max_abs_q  [0:STAGES-1];
 
     // Packed matrix order is MSB-to-LSB raster: element 0 is vec[255:252].
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
-    endfunction
-
-    function automatic logic [31:0] abs32(input s32_t value);
-        abs32 = (value < 0) ? -value : value;
     endfunction
 
     function automatic s4_t get_pad_s4(input logic [255:0] vec, input integer row, input integer col);
@@ -474,14 +463,12 @@ module Mult_8Stage_Parallel (
             logic [255:0] stage_A;
             logic         stage_valid;
             s32_t         data_next [0:MAT_SIZE-1];
-            logic [31:0]  next_max;
             s32_t         value;
             integer       idx;
 
             always_comb begin
                 stage_valid = (st == 0) ? in_valid  : valid_q[PREV_STAGE];
                 stage_A     = (st == 0) ? in_data_A : mat_A_q[PREV_STAGE];
-                next_max    = (st == 0) ? 32'd0     : max_abs_q[PREV_STAGE];
 
                 for (int i = 0; i < MAT_SIZE; i++) begin
                     data_next[i] = (st == 0) ? 32'sd0 : data_q[PREV_STAGE][i];
@@ -491,23 +478,17 @@ module Mult_8Stage_Parallel (
                     idx            = (st * STAGE_LANES) + lane;
                     value          = shared_dot(op, stage_A, in_data_B, st, lane);
                     data_next[idx] = value;
-
-                    if (abs32(value) > next_max) begin
-                        next_max = abs32(value);
-                    end
                 end
             end
 
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
-                    valid_q[st]   <= 1'b0;
-                    mat_A_q[st]   <= 256'd0;
-                    max_abs_q[st] <= 32'd0;
+                    valid_q[st] <= 1'b0;
+                    mat_A_q[st] <= 256'd0;
                 end
                 else begin
-                    valid_q[st]   <= stage_valid;
-                    mat_A_q[st]   <= stage_A;
-                    max_abs_q[st] <= next_max;
+                    valid_q[st] <= stage_valid;
+                    mat_A_q[st] <= stage_A;
                 end
             end
 
@@ -527,7 +508,6 @@ module Mult_8Stage_Parallel (
     endgenerate
 
     assign out_valid = valid_q[STAGES-1];
-    assign out_max   = max_abs_q[STAGES-1];
 
     always_comb begin
         out_data = 2048'd0;
@@ -545,8 +525,7 @@ module ACT_TwoStage_Parallel (
     input  logic [1:0]    act,
     input  logic [2047:0] in_data,
     output logic          out_valid,
-    output logic [2047:0] out_data,
-    output logic [31:0]   out_max
+    output logic [2047:0] out_data
 );
 
     localparam int MAT_SIZE  = 64;
@@ -559,11 +538,8 @@ module ACT_TwoStage_Parallel (
     logic          st1_valid;
     logic [2047:0] st1_src;
     logic [2047:0] st1_matrix;
-    logic [31:0]   st1_max;
     logic [2047:0] st0_matrix_next;
     logic [2047:0] st1_matrix_next;
-    logic [31:0]   st0_max_next;
-    logic [31:0]   st1_max_next;
 
     function automatic s32_t get_i32(input logic [2047:0] vec, input integer idx);
         get_i32 = $signed(vec[2047 - (idx * 32) -: 32]);
@@ -571,10 +547,6 @@ module ACT_TwoStage_Parallel (
 
     function automatic s40_t ext40(input s32_t value);
         ext40 = {{8{value[31]}}, value};
-    endfunction
-
-    function automatic logic [31:0] abs32(input s32_t value);
-        abs32 = (value < 0) ? -value : value;
     endfunction
 
     function automatic integer lane_idx(input logic [1:0] act_sel, input logic phase, input integer lane);
@@ -662,43 +634,9 @@ module ACT_TwoStage_Parallel (
         end
     endfunction
 
-    function automatic logic [31:0] max_half(
-        input logic [2047:0] src_matrix,
-        input logic [1:0]    act_sel,
-        input logic          phase
-    );
-        integer idx;
-        integer group;
-        s32_t   act_value;
-        s40_t   sum [0:3];
-        s40_t   threshold;
-        logic [31:0] abs_value;
-        begin
-            max_half = 32'd0;
-
-            for (group = 0; group < 4; group++) begin
-                sum[group] = group_sum(src_matrix, act_sel, phase, group);
-            end
-
-            for (int lane = 0; lane < HALF_SIZE; lane++) begin
-                idx       = lane_idx(act_sel, phase, lane);
-                group     = lane_group(act_sel, lane);
-                threshold = (act_sel == 2'b11) ? (sum[group] >>> 4) : (sum[group] >>> 3);
-                act_value = activate(get_i32(src_matrix, idx), act_sel, threshold);
-                abs_value = abs32(act_value);
-
-                if (abs_value > max_half) begin
-                    max_half = abs_value;
-                end
-            end
-        end
-    endfunction
-
     always_comb begin
         st0_matrix_next = run_half(in_data, in_data, act, 1'b0);
         st1_matrix_next = run_half(st1_matrix, st1_src, act, 1'b1);
-        st0_max_next    = max_half(in_data, act, 1'b0);
-        st1_max_next    = max_half(st1_src, act, 1'b1);
     end
 
     // Keep valid bits in their own block so timing/control can be read quickly.
@@ -718,35 +656,30 @@ module ACT_TwoStage_Parallel (
         if (!rst_n) begin
             st1_src    <= 2048'd0;
             st1_matrix <= 2048'd0;
-            st1_max    <= 32'd0;
         end
         else if (in_valid) begin
             st1_src    <= in_data;
             st1_matrix <= st0_matrix_next;
-            st1_max    <= st0_max_next;
         end
     end
 
-    // Stage 2 finishes the second half and merges both half-matrix max values.
+    // Stage 2 finishes the second half of activation.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_data <= 2048'd0;
-            out_max  <= 32'd0;
         end
         else if (st1_valid) begin
             out_data <= st1_matrix_next;
-            out_max  <= (st1_max > st1_max_next) ? st1_max : st1_max_next;
         end
     end
 
 endmodule
 
-module PoT_TwoStage_Parallel (
+module PoT_FiveStage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
     input  logic [2047:0] in_data,
-    input  logic [31:0]   in_max,
     output logic          out_valid,
     output logic [255:0]  out_data
 );
@@ -757,13 +690,16 @@ module PoT_TwoStage_Parallel (
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [31:0] s32_t;
 
-    logic          st1_valid;
-    logic [5:0]    st1_shift;
-    logic [2047:0] st1_src;
-    logic [255:0]  st1_data;
+    logic          max_valid;
+    logic [31:0]   max_abs;
+    logic [2047:0] src_pipe_q [0:2];
+    logic          quant_valid;
+    logic [5:0]    quant_shift;
+    logic [2047:0] quant_src;
+    logic [255:0]  quant_data;
     logic [5:0]    shift_next;
-    logic [255:0]  st0_data_next;
-    logic [255:0]  st1_data_next;
+    logic [255:0]  quant_data_next;
+    logic [255:0]  out_data_next;
 
     function automatic s32_t get_i32(input logic [2047:0] vec, input integer idx);
         get_i32 = $signed(vec[2047 - (idx * 32) -: 32]);
@@ -816,44 +752,201 @@ module PoT_TwoStage_Parallel (
     endfunction
 
     always_comb begin
-        shift_next    = pot_shift(in_max);
-        st0_data_next = quant_half(256'd0, in_data, shift_next, 1'b0);
-        st1_data_next = quant_half(st1_data, st1_src, st1_shift, 1'b1);
+        shift_next      = pot_shift(max_abs);
+        quant_data_next = quant_half(256'd0, src_pipe_q[2], shift_next, 1'b0);
+        out_data_next   = quant_half(quant_data, quant_src, quant_shift, 1'b1);
     end
 
-    // Valid staging mirrors the two-cycle quantization pipeline.
+    Matrix_Max_3Stage_Parallel u_matrix_max (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (in_valid),
+        .in_data   (in_data),
+        .out_valid (max_valid),
+        .out_max   (max_abs)
+    );
+
+    // Keep the activated matrix aligned with the three-stage max pipeline.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            st1_valid <= 1'b0;
-            out_valid <= 1'b0;
+            for (int stage = 0; stage < 3; stage++) begin
+                src_pipe_q[stage] <= 2048'd0;
+            end
         end
         else begin
-            st1_valid <= in_valid;
-            out_valid <= st1_valid;
+            src_pipe_q[0] <= in_data;
+            src_pipe_q[1] <= src_pipe_q[0];
+            src_pipe_q[2] <= src_pipe_q[1];
         end
     end
 
-    // Stage 1 calculates the shared PoT shift and quantizes elements 0..31.
+    // Valid staging for the two quantization stages after max_abs is ready.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            st1_shift <= 6'd0;
-            st1_src   <= 2048'd0;
-            st1_data  <= 256'd0;
+            quant_valid <= 1'b0;
+            out_valid   <= 1'b0;
         end
-        else if (in_valid) begin
-            st1_shift <= shift_next;
-            st1_src   <= in_data;
-            st1_data  <= st0_data_next;
+        else begin
+            quant_valid <= max_valid;
+            out_valid   <= quant_valid;
         end
     end
 
-    // Stage 2 reuses the saved shift and quantizes elements 32..63.
+    // Quant stage 1: encode the shift and quantize elements 0..31.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            quant_shift <= 6'd0;
+            quant_src   <= 2048'd0;
+            quant_data  <= 256'd0;
+        end
+        else if (max_valid) begin
+            quant_shift <= shift_next;
+            quant_src   <= src_pipe_q[2];
+            quant_data  <= quant_data_next;
+        end
+    end
+
+    // Quant stage 2: reuse the saved shift and quantize elements 32..63.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_data <= 256'd0;
         end
+        else if (quant_valid) begin
+            out_data <= out_data_next;
+        end
+    end
+
+endmodule
+
+
+
+module Matrix_Max_3Stage_Parallel (
+    input  logic          clk,
+    input  logic          rst_n,
+    input  logic          in_valid,
+    input  logic [2047:0] in_data,
+    output logic          out_valid,
+    output logic [31:0]   out_max
+);
+
+    localparam int MAT_SIZE    = 64;
+    localparam int MAX16_COUNT = 16;
+    localparam int MAX4_COUNT  = 4;
+
+    typedef logic signed [31:0] s32_t;
+
+    logic          st1_valid;
+    logic          st2_valid;
+    logic [31:0]   max16_q [0:MAX16_COUNT-1];
+    logic [31:0]   max4_q  [0:MAX4_COUNT-1];
+    logic [31:0]   max16_next [0:MAX16_COUNT-1];
+    logic [31:0]   max4_next  [0:MAX4_COUNT-1];
+    logic [31:0]   max_abs_next;
+
+    function automatic s32_t get_i32(input logic [2047:0] vec, input integer idx);
+        get_i32 = $signed(vec[2047 - (idx * 32) -: 32]);
+    endfunction
+
+    function automatic logic [31:0] abs32(input s32_t value);
+        abs32 = (value < 0) ? -value : value;
+    endfunction
+
+    function automatic logic [31:0] max4_u32(
+        input logic [31:0] a,
+        input logic [31:0] b,
+        input logic [31:0] c,
+        input logic [31:0] d
+    );
+        logic [31:0] ab;
+        logic [31:0] cd;
+        begin
+            ab       = (a > b) ? a : b;
+            cd       = (c > d) ? c : d;
+            max4_u32 = (ab > cd) ? ab : cd;
+        end
+    endfunction
+
+    function automatic logic [31:0] max4_abs(
+        input logic [2047:0] src_data,
+        input integer        group
+    );
+        integer base;
+        begin
+            base = group * 4;
+            max4_abs = max4_u32(
+                abs32(get_i32(src_data, base)),
+                abs32(get_i32(src_data, base + 1)),
+                abs32(get_i32(src_data, base + 2)),
+                abs32(get_i32(src_data, base + 3))
+            );
+        end
+    endfunction
+
+    always_comb begin
+        for (int group = 0; group < MAX16_COUNT; group++) begin
+            max16_next[group] = max4_abs(in_data, group);
+        end
+
+        for (int group = 0; group < MAX4_COUNT; group++) begin
+            max4_next[group] = max4_u32(
+                max16_q[(group * 4)],
+                max16_q[(group * 4) + 1],
+                max16_q[(group * 4) + 2],
+                max16_q[(group * 4) + 3]
+            );
+        end
+
+        max_abs_next = max4_u32(max4_q[0], max4_q[1], max4_q[2], max4_q[3]);
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            st1_valid <= 1'b0;
+            st2_valid <= 1'b0;
+            out_valid <= 1'b0;
+        end
+        else begin
+            st1_valid <= in_valid;
+            st2_valid <= st1_valid;
+            out_valid <= st2_valid;
+        end
+    end
+
+    // Stage 1: reduce 64 signed values into sixteen absolute maxima.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int group = 0; group < MAX16_COUNT; group++) begin
+                max16_q[group] <= 32'd0;
+            end
+        end
+        else if (in_valid) begin
+            for (int group = 0; group < MAX16_COUNT; group++) begin
+                max16_q[group] <= max16_next[group];
+            end
+        end
+    end
+
+    // Stage 2: reduce sixteen group maxima into four maxima.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int group = 0; group < MAX4_COUNT; group++) begin
+                max4_q[group] <= 32'd0;
+            end
+        end
         else if (st1_valid) begin
-            out_data <= st1_data_next;
+            for (int group = 0; group < MAX4_COUNT; group++) begin
+                max4_q[group] <= max4_next[group];
+            end
+        end
+    end
+
+    // Stage 3: reduce the final four values into one matrix max.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            out_max <= 32'd0;
+        end
+        else if (st2_valid) begin
+            out_max <= max_abs_next;
         end
     end
 
