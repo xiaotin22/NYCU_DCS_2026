@@ -172,14 +172,14 @@ module CA_Control #(
     logic [1:0]  att_param_cnt_q;
     logic [1:0]  rd_req_cnt_q;
     logic [2:0]  att_rd_word_cnt_q;
-    logic [8:0]  wr_cmd_cnt_q;
-    logic [8:0]  out_cnt_q;
+    logic [7:0]  wr_cmd_cnt_q;
+    logic [7:0]  out_cnt_q;
     logic [9:0]  wr_pre_pipe_q;
-    logic [8:0]  att_group_base_q;
+    logic [7:0]  att_group_base_q;
     logic [3:0]  att_issue_cnt_q;
-    logic [3:0]  att_sv_issue_cnt_q;
+    logic [2:0]  att_sv_issue_cnt_q;
     logic [2:0]  att_final_issue_cnt_q;
-    logic [2:0]  att_final_recv_cnt_q;
+    logic [1:0]  att_final_recv_cnt_q;
     logic [13:0] att_wr_pipe_q;
     logic        att_prefetch_pending_q;
 
@@ -191,7 +191,7 @@ module CA_Control #(
     logic        result_last;
     logic        att_final_start;
     logic        att_wr_fire;
-    logic [8:0]  att_next_group_base;
+    logic [7:0]  att_next_group_base;
 
     function automatic logic op_supported(input logic [1:0] op_sel);
         op_supported = (op_sel == 2'b00) || (op_sel == 2'b01) ||
@@ -201,13 +201,13 @@ module CA_Control #(
     assign job_start              = (state_q == S_IDLE) && mem_set && in_valid && op_supported(op);
     assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
     assign datapath_result_commit = datapath_result_valid;
-    assign result_last            = datapath_result_valid && (out_cnt_q == 9'd255);
+    assign result_last            = datapath_result_valid && (out_cnt_q == 8'd255);
     assign wr_pre_fire            = wr_pre_pipe_q[9];
     assign wr_cmd_fire            = (state_q == S_RUN) && wr_pre_fire;
     assign rd_cmd_fire            = (state_q == S_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
     assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_final_issue_cnt_q == 3'd0);
     assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[13] : att_wr_pipe_q[9];
-    assign att_next_group_base    = att_group_base_q + 9'd4;
+    assign att_next_group_base    = att_group_base_q + 8'd4;
 
     always_comb begin
         datapath_issue_valid   = 1'b0;
@@ -265,14 +265,14 @@ module CA_Control #(
             att_param_cnt_q       <= 2'd0;
             rd_req_cnt_q          <= 2'd0;
             att_rd_word_cnt_q     <= 3'd0;
-            wr_cmd_cnt_q          <= 9'd0;
-            out_cnt_q             <= 9'd0;
+            wr_cmd_cnt_q          <= 8'd0;
+            out_cnt_q             <= 8'd0;
             wr_pre_pipe_q         <= 10'd0;
-            att_group_base_q      <= 9'd0;
+            att_group_base_q      <= 8'd0;
             att_issue_cnt_q       <= 4'd0;
-            att_sv_issue_cnt_q    <= 4'd0;
+            att_sv_issue_cnt_q    <= 3'd0;
             att_final_issue_cnt_q <= 3'd0;
-            att_final_recv_cnt_q  <= 3'd0;
+            att_final_recv_cnt_q  <= 2'd0;
             att_wr_pipe_q         <= 14'd0;
             att_prefetch_pending_q <= 1'b0;
             rd_en                 <= 1'b0;
@@ -305,11 +305,11 @@ module CA_Control #(
 
                         rd_req_cnt_q          <= 2'd0;
                         att_rd_word_cnt_q     <= 3'd0;
-                        wr_cmd_cnt_q          <= 9'd0;
-                        out_cnt_q             <= 9'd0;
+                        wr_cmd_cnt_q          <= 8'd0;
+                        out_cnt_q             <= 8'd0;
                         wr_pre_pipe_q         <= 10'd0;
                         att_wr_pipe_q         <= 14'd0;
-                        att_final_recv_cnt_q  <= 3'd0;
+                        att_final_recv_cnt_q  <= 2'd0;
                         att_prefetch_pending_q <= 1'b0;
 
                         if (attention_start) begin
@@ -359,11 +359,11 @@ module CA_Control #(
                         end
                         else begin
                             exec_weight_v         <= param;
-                            att_group_base_q       <= 9'd0;
+                            att_group_base_q       <= 8'd0;
                             rd_req_cnt_q           <= 2'd0;
                             att_rd_word_cnt_q      <= 3'd0;
-                            out_cnt_q              <= 9'd0;
-                            att_final_recv_cnt_q   <= 3'd0;
+                            out_cnt_q              <= 8'd0;
+                            att_final_recv_cnt_q   <= 2'd0;
                             att_wr_pipe_q          <= 14'd0;
                             att_prefetch_pending_q <= 1'b0;
                             state_q                <= S_ATT_READ;
@@ -400,20 +400,20 @@ module CA_Control #(
 
                 S_ATT_WAIT_QKV: begin
                     if (datapath_qkv_ready) begin
-                        att_sv_issue_cnt_q <= 4'd0;
+                        att_sv_issue_cnt_q <= 3'd0;
                         state_q            <= S_ATT_ISSUE_SV;
                     end
                 end
 
                 S_ATT_ISSUE_SV: begin
-                    if (!att_prefetch_pending_q && (att_group_base_q != 9'd252) && rd_ready) begin
+                    if (!att_prefetch_pending_q && (att_group_base_q != 8'd252) && rd_ready) begin
                         rd_en                    <= 1'b1;
                         rd_addr                  <= att_next_group_base[ADDR_W-1:0];
                         rd_burst                 <= BURST_4;
                         att_prefetch_pending_q  <= 1'b1;
                     end
 
-                    if (att_sv_issue_cnt_q == 4'd7) begin
+                    if (att_sv_issue_cnt_q == 3'd7) begin
                         state_q <= S_ATT_WAIT_SV;
                     end
                     else begin
@@ -424,7 +424,7 @@ module CA_Control #(
                 S_ATT_WAIT_SV: begin
                     if (datapath_sv_ready) begin
                         att_final_issue_cnt_q <= 3'd0;
-                        att_final_recv_cnt_q  <= 3'd0;
+                        att_final_recv_cnt_q  <= 2'd0;
                         att_wr_pipe_q         <= 14'd0;
                         state_q               <= S_ATT_ISSUE_FINAL;
                     end
@@ -442,15 +442,15 @@ module CA_Control #(
 
                 S_ATT_WAIT_FINAL: begin
                     if (datapath_result_valid) begin
-                        if (att_final_recv_cnt_q == 3'd3) begin
-                            if (att_group_base_q == 9'd252) begin
+                        if (att_final_recv_cnt_q == 2'd3) begin
+                            if (att_group_base_q == 8'd252) begin
                                 state_q <= S_IDLE;
                             end
                             else begin
                                 att_group_base_q     <= att_next_group_base;
                                 rd_req_cnt_q         <= att_prefetch_pending_q ? 2'd1 : 2'd0;
                                 att_rd_word_cnt_q    <= 3'd0;
-                                att_final_recv_cnt_q <= 3'd0;
+                                att_final_recv_cnt_q <= 2'd0;
                                 state_q              <= S_ATT_READ;
                             end
                         end
@@ -458,7 +458,7 @@ module CA_Control #(
                             att_final_recv_cnt_q <= att_final_recv_cnt_q + 1'b1;
                         end
 
-                        if (out_cnt_q != 9'd255) begin
+                        if (out_cnt_q != 8'd255) begin
                             out_cnt_q <= out_cnt_q + 1'b1;
                         end
                     end
@@ -530,14 +530,14 @@ module CA_DataPath #(
     } pipe_tag_t;
 
     typedef logic signed [3:0]  s4_t;
-    typedef logic signed [31:0] s32_t;
+    typedef logic signed [15:0] s16_t;
 
     logic [255:0]  x_buf_q        [0:3];
     logic [255:0]  q_buf_q        [0:3];
     logic [255:0]  k_buf_q        [0:3];
     logic [255:0]  v_buf_q        [0:3];
-    logic [2047:0] score_buf_q    [0:7];
-    logic [2047:0] mha_out0_buf_q [0:3];
+    logic [1023:0] score_buf_q    [0:7];
+    logic [1023:0] mha_out0_buf_q [0:3];
     logic [255:0]  valign_buf_q   [0:3];
     logic [3:0]    q_ready_q;
     logic [3:0]    k_ready_q;
@@ -552,27 +552,27 @@ module CA_DataPath #(
     logic          mult_issue_head_mask;
     logic          mult_issue_head_sel;
     logic [255:0]  mult_issue_A;
-    logic [2047:0] mult_issue_A_wide;
+    logic [1023:0] mult_issue_A_wide;
     logic [255:0]  mult_issue_B;
     mult_tag_t     mult_issue_tag;
     logic [2:0]    mult_issue_idx;
     logic          mult_valid;
-    logic [2047:0] mult_data;
+    logic [1023:0] mult_data;
     mult_tag_t     mult_tag_q [0:7];
     logic [2:0]    mult_idx_q [0:7];
 
     logic          act_in_valid;
     logic [1:0]    act_in_mode;
-    logic [2047:0] act_in_data;
+    logic [1023:0] act_in_data;
     pipe_tag_t     act_in_tag;
     logic [2:0]    act_in_idx;
     logic          act_valid;
-    logic [2047:0] act_data;
+    logic [1023:0] act_data;
     pipe_tag_t     act_tag_q [0:1];
     logic [2:0]    act_idx_q [0:1];
 
     logic          pot_in_valid;
-    logic [2047:0] pot_in_data;
+    logic [1023:0] pot_in_data;
     pipe_tag_t     pot_in_tag;
     logic [2:0]    pot_in_idx;
     logic          pot_valid;
@@ -581,7 +581,7 @@ module CA_DataPath #(
     logic [2:0]    pot_idx_q [0:4];
 
     logic          mha_comb_valid;
-    logic [2047:0] mha_comb_data;
+    logic [1023:0] mha_comb_data;
     logic [2:0]    mha_comb_idx;
 
     assign qkv_ready = (&q_ready_q) && (&k_ready_q) && (&v_ready_q);
@@ -600,16 +600,16 @@ module CA_DataPath #(
         end
     endfunction
 
-    function automatic s32_t get_i32(input logic [2047:0] vec, input integer idx);
-        get_i32 = $signed(vec[2047 - (idx * 32) -: 32]);
+    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
+        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
-    function automatic s4_t clamp_s4(input s32_t value);
+    function automatic s4_t clamp_s4(input s16_t value);
         begin
-            if (value > 32'sd7) begin
+            if (value > 16'sd7) begin
                 clamp_s4 = 4'sd7;
             end
-            else if (value < -32'sd8) begin
+            else if (value < -16'sd8) begin
                 clamp_s4 = -4'sd8;
             end
             else begin
@@ -618,25 +618,25 @@ module CA_DataPath #(
         end
     endfunction
 
-    function automatic logic [255:0] pack_s4(input logic [2047:0] src_data);
+    function automatic logic [255:0] pack_s4(input logic [1023:0] src_data);
         begin
             pack_s4 = 256'd0;
             for (int i = 0; i < 64; i++) begin
-                pack_s4[255 - (i * 4) -: 4] = clamp_s4(get_i32(src_data, i));
+                pack_s4[255 - (i * 4) -: 4] = clamp_s4(get_i16(src_data, i));
             end
         end
     endfunction
 
-    function automatic logic [2047:0] combine_mha_heads(
-        input logic [2047:0] head0,
-        input logic [2047:0] head1
+    function automatic logic [1023:0] combine_mha_heads(
+        input logic [1023:0] head0,
+        input logic [1023:0] head1
     );
         begin
-            combine_mha_heads = 2048'd0;
+            combine_mha_heads = 1024'd0;
             for (int i = 0; i < 64; i++) begin
-                combine_mha_heads[2047 - (i * 32) -: 32] =
-                    ((i % 8) < 4) ? head0[2047 - (i * 32) -: 32] :
-                                    head1[2047 - (i * 32) -: 32];
+                combine_mha_heads[1023 - (i * 16) -: 16] =
+                    ((i % 8) < 4) ? head0[1023 - (i * 16) -: 16] :
+                                    head1[1023 - (i * 16) -: 16];
             end
         end
     endfunction
@@ -649,7 +649,7 @@ module CA_DataPath #(
         mult_issue_head_mask   = 1'b0;
         mult_issue_head_sel    = 1'b0;
         mult_issue_A           = 256'd0;
-        mult_issue_A_wide      = 2048'd0;
+        mult_issue_A_wide      = 1024'd0;
         mult_issue_B           = 256'd0;
         mult_issue_tag         = MT_NONE;
         mult_issue_idx         = 3'd0;
@@ -665,15 +665,20 @@ module CA_DataPath #(
                 end
 
                 IM_QKV: begin
-                    mult_issue_idx = issue_idx / 3;
+                    case (issue_idx)
+                        4'd0, 4'd1, 4'd2:    mult_issue_idx = 3'd0;
+                        4'd3, 4'd4, 4'd5:    mult_issue_idx = 3'd1;
+                        4'd6, 4'd7, 4'd8:    mult_issue_idx = 3'd2;
+                        default:             mult_issue_idx = 3'd3;
+                    endcase
                     mult_issue_A   = x_buf_q[mult_issue_idx[1:0]];
 
-                    case (issue_idx % 3)
-                        0: begin
+                    case (issue_idx)
+                        4'd0, 4'd3, 4'd6, 4'd9: begin
                             mult_issue_B   = param;
                             mult_issue_tag = MT_Q;
                         end
-                        1: begin
+                        4'd1, 4'd4, 4'd7, 4'd10: begin
                             mult_issue_B   = weight_k;
                             mult_issue_tag = MT_K;
                         end
@@ -849,12 +854,12 @@ module CA_DataPath #(
                 q_buf_q[i]        <= 256'd0;
                 k_buf_q[i]        <= 256'd0;
                 v_buf_q[i]        <= 256'd0;
-                mha_out0_buf_q[i] <= 2048'd0;
+                mha_out0_buf_q[i] <= 1024'd0;
                 valign_buf_q[i]   <= 256'd0;
             end
 
             for (int i = 0; i < 8; i++) begin
-                score_buf_q[i] <= 2048'd0;
+                score_buf_q[i] <= 1024'd0;
                 mult_tag_q[i]  <= MT_NONE;
                 mult_idx_q[i]  <= 3'd0;
             end
@@ -962,10 +967,10 @@ module Mult_8Stage_Parallel (
     input  logic                 head_sel,
     input  logic                 in_valid,
     input  logic [255:0]         in_data_A,
-    input  logic [2047:0]        in_data_A_wide,
+    input  logic [1023:0]        in_data_A_wide,
     input  logic [255:0]         in_data_B,
     output logic                 out_valid,
-    output logic [2047:0]        out_data
+    output logic [1023:0]        out_data
 );
 
     localparam int STAGES   = 8;
@@ -974,7 +979,7 @@ module Mult_8Stage_Parallel (
     localparam int DOT_SIZE = 9;
 
     typedef logic signed [3:0]  s4_t;
-    typedef logic signed [31:0] s32_t;
+    typedef logic signed [15:0] s16_t;
 
     logic          valid_q      [0:STAGES-1];
     logic [1:0]    op_q         [0:STAGES-1];
@@ -983,16 +988,16 @@ module Mult_8Stage_Parallel (
     logic          head_mask_q  [0:STAGES-1];
     logic          head_sel_q   [0:STAGES-1];
     logic [255:0]  mat_A_q      [0:STAGES-1];
-    logic [2047:0] mat_A_wide_q [0:STAGES-1];
+    logic [1023:0] mat_A_wide_q [0:STAGES-1];
     logic [255:0]  mat_B_q      [0:STAGES-1];
-    s32_t          data_q       [0:STAGES-1][0:MAT_SIZE-1];
+    s16_t          data_q       [0:STAGES-1][0:MAT_SIZE-1];
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
     endfunction
 
-    function automatic s32_t get_i32(input logic [2047:0] vec, input integer idx);
-        get_i32 = $signed(vec[2047 - (idx * 32) -: 32]);
+    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
+        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic s4_t get_pad_s4(input logic [255:0] vec, input integer row, input integer col);
@@ -1004,9 +1009,9 @@ module Mult_8Stage_Parallel (
         end
     endfunction
 
-    function automatic s32_t sel_a(
+    function automatic s16_t sel_a(
         input logic [255:0]  mat_A,
-        input logic [2047:0] mat_A_wide,
+        input logic [1023:0] mat_A_wide,
         input logic [1:0]    op_sel,
         input logic          a_wide_sel,
         input logic          head_mask_sel,
@@ -1026,14 +1031,14 @@ module Mult_8Stage_Parallel (
                 sel_a = get_pad_s4(mat_A, row + (tap / 3) - 1, col + (tap % 3) - 1);
             end
             else if (tap == 8) begin
-                sel_a = 32'sd0;
+                sel_a = 16'sd0;
             end
             else if (head_mask_sel &&
                      ((!head_sel_sel && (tap >= 4)) || (head_sel_sel && (tap < 4)))) begin
-                sel_a = 32'sd0;
+                sel_a = 16'sd0;
             end
             else if (a_wide_sel) begin
-                sel_a = get_i32(mat_A_wide, (stage * ROW_ELEM) + tap);
+                sel_a = get_i16(mat_A_wide, (stage * ROW_ELEM) + tap);
             end
             else begin
                 sel_a = get_s4(mat_A, (stage * ROW_ELEM) + tap);
@@ -1076,7 +1081,7 @@ module Mult_8Stage_Parallel (
             localparam int PREV_STAGE = (st == 0) ? 0 : st - 1;
 
             logic [255:0]  stage_A;
-            logic [2047:0] stage_A_wide;
+            logic [1023:0] stage_A_wide;
             logic [255:0]  stage_B;
             logic          stage_valid;
             logic [1:0]    stage_op;
@@ -1084,11 +1089,11 @@ module Mult_8Stage_Parallel (
             logic          stage_a_wide;
             logic          stage_head_mask;
             logic          stage_head_sel;
-            s32_t          data_next [0:MAT_SIZE-1];
-            s32_t          mul_a [0:ROW_ELEM-1][0:DOT_SIZE-1];
+            s16_t          data_next [0:MAT_SIZE-1];
+            s16_t          mul_a [0:ROW_ELEM-1][0:DOT_SIZE-1];
             s4_t           mul_b [0:ROW_ELEM-1][0:DOT_SIZE-1];
-            s32_t          prod  [0:ROW_ELEM-1][0:DOT_SIZE-1];
-            s32_t          value;
+            s16_t          prod  [0:ROW_ELEM-1][0:DOT_SIZE-1];
+            s16_t          value;
             integer        idx;
 
             always_comb begin
@@ -1103,7 +1108,7 @@ module Mult_8Stage_Parallel (
                 stage_B         = (st == 0) ? in_data_B      : mat_B_q[PREV_STAGE];
 
                 for (int i = 0; i < MAT_SIZE; i++) begin
-                    data_next[i] = (st == 0) ? 32'sd0 : data_q[PREV_STAGE][i];
+                    data_next[i] = (st == 0) ? 16'sd0 : data_q[PREV_STAGE][i];
                 end
 
                 for (int lane = 0; lane < ROW_ELEM; lane++) begin
@@ -1135,10 +1140,10 @@ module Mult_8Stage_Parallel (
                     head_mask_q[st]  <= 1'b0;
                     head_sel_q[st]   <= 1'b0;
                     mat_A_q[st]      <= 256'd0;
-                    mat_A_wide_q[st] <= 2048'd0;
+                    mat_A_wide_q[st] <= 1024'd0;
                     mat_B_q[st]      <= 256'd0;
                     for (int i = 0; i < MAT_SIZE; i++) begin
-                        data_q[st][i] <= 32'sd0;
+                        data_q[st][i] <= 16'sd0;
                     end
                 end
                 else begin
@@ -1163,9 +1168,9 @@ module Mult_8Stage_Parallel (
     assign out_valid = valid_q[STAGES-1];
 
     always_comb begin
-        out_data = 2048'd0;
+        out_data = 1024'd0;
         for (int i = 0; i < MAT_SIZE; i++) begin
-            out_data[2047 - (i * 32) -: 32] = data_q[STAGES-1][i];
+            out_data[1023 - (i * 16) -: 16] = data_q[STAGES-1][i];
         end
     end
 
@@ -1177,9 +1182,9 @@ module ACT_TwoStage_Parallel (
     input  logic          in_valid,
     input  logic [1:0]    act,
     input  logic [1:0]    act_mode,
-    input  logic [2047:0] in_data,
+    input  logic [1023:0] in_data,
     output logic          out_valid,
-    output logic [2047:0] out_data
+    output logic [1023:0] out_data
 );
 
     localparam int MAT_SIZE  = 64;
@@ -1190,23 +1195,23 @@ module ACT_TwoStage_Parallel (
     localparam logic [1:0] ACT_BYPASS  = 2'd1;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
-    typedef logic signed [31:0] s32_t;
-    typedef logic signed [39:0] s40_t;
+    typedef logic signed [15:0] s16_t;
+    typedef logic signed [19:0] s20_t;
 
     logic          st1_valid;
     logic [1:0]    st1_act_q;
     logic [1:0]    st1_mode_q;
-    logic [2047:0] st1_src;
-    logic [2047:0] st1_matrix;
-    logic [2047:0] st0_matrix_next;
-    logic [2047:0] st1_matrix_next;
+    logic [1023:0] st1_src;
+    logic [1023:0] st1_matrix;
+    logic [1023:0] st0_matrix_next;
+    logic [1023:0] st1_matrix_next;
 
-    function automatic s32_t get_i32(input logic [2047:0] vec, input integer idx);
-        get_i32 = $signed(vec[2047 - (idx * 32) -: 32]);
+    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
+        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
-    function automatic s40_t ext40(input s32_t value);
-        ext40 = {{8{value[31]}}, value};
+    function automatic s20_t ext20(input s16_t value);
+        ext20 = {{4{value[15]}}, value};
     endfunction
 
     function automatic integer lane_idx(input logic [1:0] act_sel, input logic phase, input integer lane);
@@ -1234,8 +1239,8 @@ module ACT_TwoStage_Parallel (
         lane_group = (act_sel == 2'b11) ? (lane / 16) : (lane / ROW_ELEM);
     endfunction
 
-    function automatic s40_t group_sum(
-        input logic [2047:0] matrix,
+    function automatic s20_t group_sum(
+        input logic [1023:0] matrix,
         input logic [1:0]    act_sel,
         input logic          phase,
         input integer        group
@@ -1243,36 +1248,36 @@ module ACT_TwoStage_Parallel (
         integer lane;
         integer group_size;
         begin
-            group_sum  = 40'sd0;
+            group_sum  = 20'sd0;
             group_size = (act_sel == 2'b11) ? 16 : ROW_ELEM;
 
             if ((act_sel != 2'b00) && !((act_sel == 2'b11) && (group > 1))) begin
                 for (int i = 0; i < 16; i++) begin
                     if (i < group_size) begin
                         lane = (group * group_size) + i;
-                        group_sum += ext40(get_i32(matrix, lane_idx(act_sel, phase, lane)));
+                        group_sum += ext20(get_i16(matrix, lane_idx(act_sel, phase, lane)));
                     end
                 end
             end
         end
     endfunction
 
-    function automatic s32_t activate_user(input s32_t value, input logic [1:0] act_sel, input s40_t threshold);
+    function automatic s16_t activate_user(input s16_t value, input logic [1:0] act_sel, input s20_t threshold);
         begin
             if (act_sel == 2'b00) begin
-                activate_user = (value < 0) ? 32'sd0 : value;
+                activate_user = (value < 0) ? 16'sd0 : value;
             end
             else begin
-                activate_user = (ext40(value) < threshold) ? (value >>> 3) : value;
+                activate_user = (ext20(value) < threshold) ? (value >>> 3) : value;
             end
         end
     endfunction
 
-    function automatic s32_t activate_mode(
-        input s32_t        value,
+    function automatic s16_t activate_mode(
+        input s16_t        value,
         input logic [1:0]  act_sel,
         input logic [1:0]  mode_sel,
-        input s40_t        threshold
+        input s20_t        threshold
     );
         begin
             case (mode_sel)
@@ -1289,17 +1294,17 @@ module ACT_TwoStage_Parallel (
         end
     endfunction
 
-    function automatic logic [2047:0] run_half(
-        input logic [2047:0] base_matrix,
-        input logic [2047:0] src_matrix,
+    function automatic logic [1023:0] run_half(
+        input logic [1023:0] base_matrix,
+        input logic [1023:0] src_matrix,
         input logic [1:0]    act_sel,
         input logic [1:0]    mode_sel,
         input logic          phase
     );
         integer idx;
         integer group;
-        s40_t  sum [0:3];
-        s40_t  threshold;
+        s20_t  sum [0:3];
+        s20_t  threshold;
         begin
             run_half = base_matrix;
 
@@ -1312,15 +1317,15 @@ module ACT_TwoStage_Parallel (
                     idx       = lane_idx(act_sel, phase, lane);
                     group     = lane_group(act_sel, lane);
                     threshold = (act_sel == 2'b11) ? (sum[group] >>> 4) : (sum[group] >>> 3);
-                    run_half[2047 - (idx * 32) -: 32] =
-                        activate_mode(get_i32(src_matrix, idx), act_sel, mode_sel, threshold);
+                    run_half[1023 - (idx * 16) -: 16] =
+                        activate_mode(get_i16(src_matrix, idx), act_sel, mode_sel, threshold);
                 end
             end
             else begin
                 for (int lane = 0; lane < HALF_SIZE; lane++) begin
                     idx = (phase ? HALF_SIZE : 0) + lane;
-                    run_half[2047 - (idx * 32) -: 32] =
-                        activate_mode(get_i32(src_matrix, idx), act_sel, mode_sel, 40'sd0);
+                    run_half[1023 - (idx * 16) -: 16] =
+                        activate_mode(get_i16(src_matrix, idx), act_sel, mode_sel, 20'sd0);
                 end
             end
         end
@@ -1346,8 +1351,8 @@ module ACT_TwoStage_Parallel (
         if (!rst_n) begin
             st1_act_q  <= 2'd0;
             st1_mode_q <= ACT_USER;
-            st1_src    <= 2048'd0;
-            st1_matrix <= 2048'd0;
+            st1_src    <= 1024'd0;
+            st1_matrix <= 1024'd0;
         end
         else if (in_valid) begin
             st1_act_q  <= act;
@@ -1359,7 +1364,7 @@ module ACT_TwoStage_Parallel (
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            out_data <= 2048'd0;
+            out_data <= 1024'd0;
         end
         else if (st1_valid) begin
             out_data <= st1_matrix_next;
@@ -1372,7 +1377,7 @@ module PoT_FiveStage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
-    input  logic [2047:0] in_data,
+    input  logic [1023:0] in_data,
     output logic          out_valid,
     output logic [255:0]  out_data
 );
@@ -1381,42 +1386,42 @@ module PoT_FiveStage_Parallel (
     localparam int HALF_SIZE = MAT_SIZE / 2;
 
     typedef logic signed [3:0]  s4_t;
-    typedef logic signed [31:0] s32_t;
+    typedef logic signed [15:0] s16_t;
 
     logic          max_valid;
-    logic [31:0]   max_abs;
-    logic [2047:0] src_pipe_q [0:2];
+    logic [15:0]   max_abs;
+    logic [1023:0] src_pipe_q [0:2];
     logic          quant_valid;
-    logic [5:0]    quant_shift;
-    logic [2047:0] quant_src;
+    logic [3:0]    quant_shift;
+    logic [1023:0] quant_src;
     logic [255:0]  quant_data;
-    logic [5:0]    shift_next;
+    logic [3:0]    shift_next;
     logic [255:0]  quant_data_next;
     logic [255:0]  out_data_next;
 
-    function automatic s32_t get_i32(input logic [2047:0] vec, input integer idx);
-        get_i32 = $signed(vec[2047 - (idx * 32) -: 32]);
+    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
+        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
-    function automatic logic [5:0] pot_shift(input logic [31:0] max_abs);
-        logic [5:0] msb;
+    function automatic logic [3:0] pot_shift(input logic [15:0] max_abs);
+        logic [3:0] msb;
         begin
-            msb = 6'd0;
-            for (int b = 0; b < 32; b++) begin
+            msb = 4'd0;
+            for (int b = 0; b < 16; b++) begin
                 if (max_abs[b]) begin
-                    msb = b[5:0];
+                    msb = b[3:0];
                 end
             end
-            pot_shift = (msb > 6'd2) ? (msb - 6'd2) : 6'd0;
+            pot_shift = (msb > 4'd2) ? (msb - 4'd2) : 4'd0;
         end
     endfunction
 
-    function automatic s4_t clamp_s4(input s32_t value);
+    function automatic s4_t clamp_s4(input s16_t value);
         begin
-            if (value > 32'sd7) begin
+            if (value > 16'sd7) begin
                 clamp_s4 = 4'sd7;
             end
-            else if (value < -32'sd8) begin
+            else if (value < -16'sd8) begin
                 clamp_s4 = -4'sd8;
             end
             else begin
@@ -1427,18 +1432,18 @@ module PoT_FiveStage_Parallel (
 
     function automatic logic [255:0] quant_half(
         input logic [255:0]  base_data,
-        input logic [2047:0] src_data,
-        input logic [5:0]    shift,
+        input logic [1023:0] src_data,
+        input logic [3:0]    shift,
         input logic          phase
     );
         integer idx;
-        s32_t   scaled;
+        s16_t   scaled;
         begin
             quant_half = base_data;
 
             for (int lane = 0; lane < HALF_SIZE; lane++) begin
                 idx    = (phase ? HALF_SIZE : 0) + lane;
-                scaled = get_i32(src_data, idx) >>> shift;
+                scaled = get_i16(src_data, idx) >>> shift;
                 quant_half[255 - (idx * 4) -: 4] = clamp_s4(scaled);
             end
         end
@@ -1462,7 +1467,7 @@ module PoT_FiveStage_Parallel (
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int stage = 0; stage < 3; stage++) begin
-                src_pipe_q[stage] <= 2048'd0;
+                src_pipe_q[stage] <= 1024'd0;
             end
         end
         else begin
@@ -1485,8 +1490,8 @@ module PoT_FiveStage_Parallel (
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            quant_shift <= 6'd0;
-            quant_src   <= 2048'd0;
+            quant_shift <= 4'd0;
+            quant_src   <= 1024'd0;
             quant_data  <= 256'd0;
         end
         else if (max_valid) begin
@@ -1511,57 +1516,57 @@ module Matrix_Max_3Stage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
-    input  logic [2047:0] in_data,
+    input  logic [1023:0] in_data,
     output logic          out_valid,
-    output logic [31:0]   out_max
+    output logic [15:0]   out_max
 );
 
     localparam int MAT_SIZE    = 64;
     localparam int MAX16_COUNT = 16;
     localparam int MAX4_COUNT  = 4;
 
-    typedef logic signed [31:0] s32_t;
+    typedef logic signed [15:0] s16_t;
 
     logic          st1_valid;
     logic          st2_valid;
-    logic [31:0]   max16_next [0:MAX16_COUNT-1];
-    logic [31:0]   max4_next  [0:MAX4_COUNT-1];
-    logic [31:0]   max16_q    [0:MAX16_COUNT-1];
-    logic [31:0]   max4_q     [0:MAX4_COUNT-1];
-    logic [31:0]   out_max_next;
+    logic [15:0]   max16_next [0:MAX16_COUNT-1];
+    logic [15:0]   max4_next  [0:MAX4_COUNT-1];
+    logic [15:0]   max16_q    [0:MAX16_COUNT-1];
+    logic [15:0]   max4_q     [0:MAX4_COUNT-1];
+    logic [15:0]   out_max_next;
 
-    function automatic s32_t get_i32(input logic [2047:0] vec, input integer idx);
-        get_i32 = $signed(vec[2047 - (idx * 32) -: 32]);
+    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
+        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
-    function automatic logic [31:0] abs32(input s32_t value);
-        abs32 = (value < 0) ? -value : value;
+    function automatic logic [15:0] abs16(input s16_t value);
+        abs16 = (value < 0) ? -value : value;
     endfunction
 
-    function automatic logic [31:0] max4_u32(
-        input logic [31:0] a,
-        input logic [31:0] b,
-        input logic [31:0] c,
-        input logic [31:0] d
+    function automatic logic [15:0] max4_u16(
+        input logic [15:0] a,
+        input logic [15:0] b,
+        input logic [15:0] c,
+        input logic [15:0] d
     );
-        logic [31:0] ab;
-        logic [31:0] cd;
+        logic [15:0] ab;
+        logic [15:0] cd;
         begin
             ab       = (a > b) ? a : b;
             cd       = (c > d) ? c : d;
-            max4_u32 = (ab > cd) ? ab : cd;
+            max4_u16 = (ab > cd) ? ab : cd;
         end
     endfunction
 
-    function automatic logic [31:0] max4_abs(
-        input logic [2047:0] matrix,
+    function automatic logic [15:0] max4_abs(
+        input logic [1023:0] matrix,
         input integer        base_idx
     );
         begin
-            max4_abs = max4_u32(abs32(get_i32(matrix, base_idx + 0)),
-                                abs32(get_i32(matrix, base_idx + 1)),
-                                abs32(get_i32(matrix, base_idx + 2)),
-                                abs32(get_i32(matrix, base_idx + 3)));
+            max4_abs = max4_u16(abs16(get_i16(matrix, base_idx + 0)),
+                                abs16(get_i16(matrix, base_idx + 1)),
+                                abs16(get_i16(matrix, base_idx + 2)),
+                                abs16(get_i16(matrix, base_idx + 3)));
         end
     endfunction
 
@@ -1571,13 +1576,13 @@ module Matrix_Max_3Stage_Parallel (
         end
 
         for (int i = 0; i < MAX4_COUNT; i++) begin
-            max4_next[i] = max4_u32(max16_q[(i * 4) + 0],
+            max4_next[i] = max4_u16(max16_q[(i * 4) + 0],
                                     max16_q[(i * 4) + 1],
                                     max16_q[(i * 4) + 2],
                                     max16_q[(i * 4) + 3]);
         end
 
-        out_max_next = max4_u32(max4_q[0], max4_q[1], max4_q[2], max4_q[3]);
+        out_max_next = max4_u16(max4_q[0], max4_q[1], max4_q[2], max4_q[3]);
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -1596,7 +1601,7 @@ module Matrix_Max_3Stage_Parallel (
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < MAX16_COUNT; i++) begin
-                max16_q[i] <= 32'd0;
+                max16_q[i] <= 16'd0;
             end
         end
         else if (in_valid) begin
@@ -1609,7 +1614,7 @@ module Matrix_Max_3Stage_Parallel (
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < MAX4_COUNT; i++) begin
-                max4_q[i] <= 32'd0;
+                max4_q[i] <= 16'd0;
             end
         end
         else if (st1_valid) begin
@@ -1621,7 +1626,7 @@ module Matrix_Max_3Stage_Parallel (
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            out_max <= 32'd0;
+            out_max <= 16'd0;
         end
         else if (st2_valid) begin
             out_max <= out_max_next;
