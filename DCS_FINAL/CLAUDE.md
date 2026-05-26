@@ -20,11 +20,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ---
 
 ## 執行說明
-
-因為在本機跑Verilog Code會錯誤，做完code review或是完成一段代碼後不用測試執行看看檔案。
-不要在本機跑verilog套件會錯誤。
-只需要做語法跟邏輯檢查就好了。
 PATTERN.sv, RAM.sv 現在被保護，不用去查看裡面寫什麼
+
+在本機無法使用Verilog套件，在初步檢查語法以及邏輯後，可以通過終端機指令測試RTL code
+1. 執行 `ssh dcs_mimi` 去訪問工作站
+2. Enter `yes` 進入工作站
+3. 進到本次project 資料夾 `cd Final/`
+4. 修改工作站檔案 01_RTL/CA.sv 並用本地端的 DCS_Final/CA.sv覆蓋
+5. 在01_RTL資料夾下執行 ./01_run_vcs_gate 來測試RTL simulation
+
 ---
 
 ## CA.sv 介面
