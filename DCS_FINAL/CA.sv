@@ -1105,7 +1105,12 @@ module Mult_8Stage_Parallel (
                 stage_B         = (st == 0) ? in_data_B      : mat_B_q[PREV_STAGE];
 
                 for (int i = 0; i < MAT_SIZE; i++) begin
-                    data_next[i] = (st == 0) ? 16'sd0 : data_q[PREV_STAGE][i];
+                    if ((st != 0) && (i < st * ROW_ELEM)) begin
+                        data_next[i] = data_q[PREV_STAGE][i];
+                    end
+                    else begin
+                        data_next[i] = 16'sd0;
+                    end
                 end
 
                 for (int lane = 0; lane < ROW_ELEM; lane++) begin
@@ -1150,12 +1155,37 @@ module Mult_8Stage_Parallel (
                     a_wide_q[st]     <= stage_a_wide;
                     head_mask_q[st]  <= stage_head_mask;
                     head_sel_q[st]   <= stage_head_sel;
-                    mat_A_q[st]      <= stage_A;
-                    mat_A_wide_q[st] <= stage_A_wide;
-                    mat_B_q[st]      <= stage_B;
+
+                    if (st < STAGES - 1) begin
+                        for (int r = 0; r < ROW_ELEM; r++) begin
+                            if (r >= st) begin
+                                mat_A_q[st][255 - r*32 -: 32] <= stage_A[255 - r*32 -: 32];
+                            end
+                            else begin
+                                mat_A_q[st][255 - r*32 -: 32] <= 32'd0;
+                            end
+                            if (r > st) begin
+                                mat_A_wide_q[st][1023 - r*128 -: 128] <= stage_A_wide[1023 - r*128 -: 128];
+                            end
+                            else begin
+                                mat_A_wide_q[st][1023 - r*128 -: 128] <= 128'd0;
+                            end
+                        end
+                        mat_B_q[st] <= stage_B;
+                    end
+                    else begin
+                        mat_A_q[st]      <= 256'd0;
+                        mat_A_wide_q[st] <= 1024'd0;
+                        mat_B_q[st]      <= 256'd0;
+                    end
 
                     for (int i = 0; i < MAT_SIZE; i++) begin
-                        data_q[st][i] <= data_next[i];
+                        if (i < (st + 1) * ROW_ELEM) begin
+                            data_q[st][i] <= data_next[i];
+                        end
+                        else begin
+                            data_q[st][i] <= 16'sd0;
+                        end
                     end
                 end
             end
