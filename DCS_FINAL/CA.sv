@@ -1,3 +1,11 @@
+typedef enum logic [2:0] {
+    IM_NONE  = 3'd0,
+    IM_NORM  = 3'd1,
+    IM_QKV   = 3'd2,
+    IM_SV    = 3'd3,
+    IM_FINAL = 3'd4
+} issue_mode_t;
+
 module CA #(
     parameter RAM_DEPTH = 256,
     parameter RAM_WIDTH = 256,
@@ -36,7 +44,7 @@ module CA #(
     logic [255:0]  exec_weight_v;
 
     logic          datapath_issue_valid;
-    logic [2:0]    datapath_issue_mode;
+    issue_mode_t   datapath_issue_mode;
     logic [3:0]    datapath_issue_idx;
     logic          datapath_capture_valid;
     logic [1:0]    datapath_capture_idx;
@@ -130,7 +138,7 @@ module CA_Control #(
     output logic [255:0]                    exec_weight_k,
     output logic [255:0]                    exec_weight_v,
     output logic                            datapath_issue_valid,
-    output logic [2:0]                      datapath_issue_mode,
+    output issue_mode_t                     datapath_issue_mode,
     output logic [3:0]                      datapath_issue_idx,
     output logic                            datapath_capture_valid,
     output logic [1:0]                      datapath_capture_idx,
@@ -148,12 +156,6 @@ module CA_Control #(
     localparam logic [BURST_BIT-1:0] BURST_4   = 3'd2;
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
-
-    localparam logic [2:0] IM_NONE  = 3'd0;
-    localparam logic [2:0] IM_NORM  = 3'd1;
-    localparam logic [2:0] IM_QKV   = 3'd2;
-    localparam logic [2:0] IM_SV    = 3'd3;
-    localparam logic [2:0] IM_FINAL = 3'd4;
 
     typedef enum logic [3:0] {
         S_IDLE,
@@ -479,7 +481,7 @@ module CA_DataPath #(
     input  logic                 clk,
     input  logic                 rst_n,
     input  logic                 issue_valid,
-    input  logic [2:0]           issue_mode,
+    input  issue_mode_t          issue_mode,
     input  logic [3:0]           issue_idx,
     input  logic                 capture_valid,
     input  logic [1:0]           capture_idx,
@@ -498,11 +500,6 @@ module CA_DataPath #(
     output logic                 out_valid,
     output logic [31:0]          out_data
 );
-
-    localparam logic [2:0] IM_NORM  = 3'd1;
-    localparam logic [2:0] IM_QKV   = 3'd2;
-    localparam logic [2:0] IM_SV    = 3'd3;
-    localparam logic [2:0] IM_FINAL = 3'd4;
 
     localparam logic [1:0] ACT_USER    = 2'd0;
     localparam logic [1:0] ACT_BYPASS  = 2'd1;
