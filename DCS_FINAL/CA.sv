@@ -6,6 +6,17 @@ typedef enum logic [2:0] {
     IM_FINAL = 3'd4
 } issue_mode_t;
 
+typedef enum logic [2:0] {
+    MT_NONE,
+    MT_NORM,
+    MT_Q,
+    MT_K,
+    MT_V,
+    MT_SCORE,
+    MT_VALIGN,
+    MT_FINAL
+} mult_tag_t;
+
 module CA #(
     parameter RAM_DEPTH = 256,
     parameter RAM_WIDTH = 256,
@@ -51,7 +62,6 @@ module CA #(
     logic          datapath_qkv_ready;
     logic          datapath_sv_ready;
     logic          datapath_result_valid;
-    logic          datapath_result_commit;
 
     CA_Control #(
         .RAM_DEPTH (RAM_DEPTH),
@@ -59,16 +69,20 @@ module CA #(
     ) u_control (
         .clk                    (clk),
         .rst_n                  (rst_n),
+        // From Top Module
         .mem_set                (mem_set),
         .in_valid               (in_valid),
         .op                     (op),
         .act                    (act),
         .param                  (param),
+        // From RAM interface
         .rd_ready               (rd_ready),
         .rd_valid               (rd_valid),
+        // From DataPath
         .datapath_qkv_ready     (datapath_qkv_ready),
         .datapath_sv_ready      (datapath_sv_ready),
         .datapath_result_valid  (datapath_result_valid),
+        // Output to DataPath
         .exec_op                (exec_op),
         .exec_act               (exec_act),
         .exec_param             (exec_param),
@@ -79,7 +93,7 @@ module CA #(
         .datapath_issue_idx     (datapath_issue_idx),
         .datapath_capture_valid (datapath_capture_valid),
         .datapath_capture_idx   (datapath_capture_idx),
-        .datapath_result_commit (datapath_result_commit),
+        // Output for RAM interface
         .rd_en                  (rd_en),
         .rd_addr                (rd_addr),
         .rd_burst               (rd_burst),
@@ -93,6 +107,7 @@ module CA #(
     ) u_datapath (
         .clk                    (clk),
         .rst_n                  (rst_n),
+        // From Control Module
         .issue_valid            (datapath_issue_valid),
         .issue_mode             (datapath_issue_mode),
         .issue_idx              (datapath_issue_idx),
@@ -103,11 +118,14 @@ module CA #(
         .param                  (exec_param),
         .weight_k               (exec_weight_k),
         .weight_v               (exec_weight_v),
+        // Reading from RAM
         .rd_data                (rd_data),
-        .result_commit          (datapath_result_commit),
+        // Output to Control Module
+        .result_commit          (datapath_result_valid),
         .qkv_ready              (datapath_qkv_ready),
         .sv_ready               (datapath_sv_ready),
         .result_valid           (datapath_result_valid),
+        // Output to Top Module
         .wr_data                (wr_data),
         .out_valid              (out_valid),
         .out_data               (out_data)
@@ -142,7 +160,6 @@ module CA_Control #(
     output logic [3:0]                      datapath_issue_idx,
     output logic                            datapath_capture_valid,
     output logic [1:0]                      datapath_capture_idx,
-    output logic                            datapath_result_commit,
 
     output logic                            rd_en,
     output logic [$clog2(RAM_DEPTH)-1:0]    rd_addr,
@@ -202,7 +219,6 @@ module CA_Control #(
 
     assign job_start              = (state_q == S_IDLE) && mem_set && in_valid && op_supported(op);
     assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
-    assign datapath_result_commit = datapath_result_valid;
     assign result_last            = datapath_result_valid && (out_cnt_q == 8'd255);
     assign wr_pre_fire            = wr_pre_pipe_q[12];
     assign wr_cmd_fire            = (state_q == S_RUN) && wr_pre_fire;
@@ -506,17 +522,6 @@ module CA_DataPath #(
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
     typedef enum logic [2:0] {
-        MT_NONE,
-        MT_NORM,
-        MT_Q,
-        MT_K,
-        MT_V,
-        MT_SCORE,
-        MT_VALIGN,
-        MT_FINAL
-    } mult_tag_t;
-
-    typedef enum logic [2:0] {
         PT_NONE,
         PT_NORM,
         PT_Q,
@@ -542,21 +547,10 @@ module CA_DataPath #(
     logic [7:0]    score_ready_q;
     logic [3:0]    valign_ready_q;
 
-    logic          mult_issue_valid;
-    logic [1:0]    mult_issue_op;
-    logic          mult_issue_b_transpose;
-    logic          mult_issue_a_wide;
-    logic          mult_issue_head_mask;
-    logic          mult_issue_head_sel;
-    logic [255:0]  mult_issue_A;
-    logic [1023:0] mult_issue_A_wide;
-    logic [255:0]  mult_issue_B;
-    mult_tag_t     mult_issue_tag;
-    logic [2:0]    mult_issue_idx;
     logic          mult_valid;
     logic [1023:0] mult_data;
-    mult_tag_t     mult_tag_q [0:7];
-    logic [2:0]    mult_idx_q [0:7];
+    mult_tag_t     mult_tag_out;
+    logic [2:0]    mult_idx_out;
 
     logic          act_in_valid;
     logic [1:0]    act_in_mode;
@@ -588,17 +582,8 @@ module CA_DataPath #(
                           ((pot_tag_q[4] == PT_NORM) ||
                            (pot_tag_q[4] == PT_FINAL));
 
-    function automatic logic [255:0] identity_matrix();
-        begin
-            identity_matrix = 256'd0;
-            for (int i = 0; i < 8; i++) begin
-                identity_matrix[255 - (((i * 8) + i) * 4) -: 4] = 4'sd1;
-            end
-        end
-    endfunction
-
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic s4_t clamp_s4(input s16_t value);
@@ -619,7 +604,7 @@ module CA_DataPath #(
         begin
             pack_s4 = 256'd0;
             for (int i = 0; i < 64; i++) begin
-                pack_s4[255 - (i * 4) -: 4] = clamp_s4(get_i16(src_data, i));
+                pack_s4[255 - (i * 4) -: 4] = clamp_s4(get_s16(src_data, i));
             end
         end
     endfunction
@@ -638,120 +623,26 @@ module CA_DataPath #(
         end
     endfunction
 
-    always_comb begin
-        mult_issue_valid       = 1'b0;
-        mult_issue_op          = op;
-        mult_issue_b_transpose = 1'b0;
-        mult_issue_a_wide      = 1'b0;
-        mult_issue_head_mask   = 1'b0;
-        mult_issue_head_sel    = 1'b0;
-        mult_issue_A           = 256'd0;
-        mult_issue_A_wide      = 1024'd0;
-        mult_issue_B           = 256'd0;
-        mult_issue_tag         = MT_NONE;
-        mult_issue_idx         = 3'd0;
-
-        if (issue_valid) begin
-            mult_issue_valid = 1'b1;
-
-            case (issue_mode)
-                IM_NORM: begin
-                    mult_issue_A   = rd_data[255:0];
-                    mult_issue_B   = param;
-                    mult_issue_tag = MT_NORM;
-                end
-
-                IM_QKV: begin
-                    case (issue_idx)
-                        4'd0, 4'd1, 4'd2:    mult_issue_idx = 3'd0;
-                        4'd3, 4'd4, 4'd5:    mult_issue_idx = 3'd1;
-                        4'd6, 4'd7, 4'd8:    mult_issue_idx = 3'd2;
-                        default:             mult_issue_idx = 3'd3;
-                    endcase
-                    mult_issue_A   = x_buf_q[mult_issue_idx[1:0]];
-
-                    case (issue_idx)
-                        4'd0, 4'd3, 4'd6, 4'd9: begin
-                            mult_issue_B   = param;
-                            mult_issue_tag = MT_Q;
-                        end
-                        4'd1, 4'd4, 4'd7, 4'd10: begin
-                            mult_issue_B   = weight_k;
-                            mult_issue_tag = MT_K;
-                        end
-                        default: begin
-                            mult_issue_B   = weight_v;
-                            mult_issue_tag = MT_V;
-                        end
-                    endcase
-                end
-
-                IM_SV: begin
-                    if (op == 2'b11) begin
-                        mult_issue_idx         = {issue_idx[2], issue_idx[1:0]};
-                        mult_issue_A           = q_buf_q[issue_idx[1:0]];
-                        mult_issue_B           = k_buf_q[issue_idx[1:0]];
-                        mult_issue_b_transpose = 1'b1;
-                        mult_issue_head_mask   = 1'b1;
-                        mult_issue_head_sel    = issue_idx[2];
-                        mult_issue_tag         = MT_SCORE;
-                    end
-                    else begin
-                        mult_issue_idx = {1'b0, issue_idx[2:1]};
-
-                        if (!issue_idx[0]) begin
-                            mult_issue_A           = q_buf_q[issue_idx[2:1]];
-                            mult_issue_B           = k_buf_q[issue_idx[2:1]];
-                            mult_issue_b_transpose = 1'b1;
-                            mult_issue_tag         = MT_SCORE;
-                        end
-                        else begin
-                            mult_issue_A   = v_buf_q[issue_idx[2:1]];
-                            mult_issue_B   = identity_matrix();
-                            mult_issue_tag = MT_VALIGN;
-                        end
-                    end
-                end
-
-                IM_FINAL: begin
-                    mult_issue_idx    = (op == 2'b11) ?
-                                        {issue_idx[2], issue_idx[1:0]} :
-                                        {1'b0, issue_idx[1:0]};
-                    mult_issue_a_wide = 1'b1;
-                    mult_issue_A_wide = score_buf_q[mult_issue_idx];
-                    mult_issue_B      = (op == 2'b11) ?
-                                        v_buf_q[issue_idx[1:0]] :
-                                        valign_buf_q[issue_idx[1:0]];
-                    mult_issue_tag    = MT_FINAL;
-                end
-
-                default: begin
-                    mult_issue_valid = 1'b0;
-                end
-            endcase
-        end
-    end
-
     assign mha_comb_valid = mult_valid && (op == 2'b11) &&
-                            (mult_tag_q[7] == MT_FINAL) && mult_idx_q[7][2];
-    assign mha_comb_idx   = {1'b0, mult_idx_q[7][1:0]};
-    assign mha_comb_data  = combine_mha_heads(mha_out0_buf_q[mult_idx_q[7][1:0]], mult_data);
+                            (mult_tag_out == MT_FINAL) && mult_idx_out[2];
+    assign mha_comb_idx   = {1'b0, mult_idx_out[1:0]};
+    assign mha_comb_data  = combine_mha_heads(mha_out0_buf_q[mult_idx_out[1:0]], mult_data);
 
     assign act_in_valid = mha_comb_valid ||
                           (mult_valid &&
-                           ((mult_tag_q[7] == MT_NORM) ||
-                            (mult_tag_q[7] == MT_SCORE) ||
-                            ((mult_tag_q[7] == MT_FINAL) && (op != 2'b11))));
+                           ((mult_tag_out == MT_NORM) ||
+                            (mult_tag_out == MT_SCORE) ||
+                            ((mult_tag_out == MT_FINAL) && (op != 2'b11))));
     assign act_in_data  = mha_comb_valid ? mha_comb_data : mult_data;
-    assign act_in_idx   = ((mult_tag_q[7] == MT_FINAL) || mha_comb_valid ||
-                           (mult_tag_q[7] == MT_SCORE)) ?
-                          (mha_comb_valid ? mha_comb_idx : mult_idx_q[7]) : 3'd0;
+    assign act_in_idx   = ((mult_tag_out == MT_FINAL) || mha_comb_valid ||
+                           (mult_tag_out == MT_SCORE)) ?
+                          (mha_comb_valid ? mha_comb_idx : mult_idx_out) : 3'd0;
 
     always_comb begin
         act_in_tag  = PT_NONE;
         act_in_mode = ACT_USER;
 
-        case (mult_tag_q[7])
+        case (mult_tag_out)
             MT_NORM: begin
                 act_in_tag  = PT_NORM;
                 act_in_mode = ACT_USER;
@@ -772,15 +663,15 @@ module CA_DataPath #(
     assign pot_in_valid = (act_valid &&
                            ((act_tag_q[4] == PT_NORM) ||
                             (act_tag_q[4] == PT_FINAL))) ||
-                          (mult_valid && ((mult_tag_q[7] == MT_Q) ||
-                                          (mult_tag_q[7] == MT_K) ||
-                                          (mult_tag_q[7] == MT_V)));
+                          (mult_valid && ((mult_tag_out == MT_Q) ||
+                                          (mult_tag_out == MT_K) ||
+                                          (mult_tag_out == MT_V)));
     assign pot_in_data  = (act_valid &&
                            ((act_tag_q[4] == PT_NORM) ||
                             (act_tag_q[4] == PT_FINAL))) ? act_data : mult_data;
     assign pot_in_idx   = (act_valid &&
                            ((act_tag_q[4] == PT_NORM) ||
-                            (act_tag_q[4] == PT_FINAL))) ? act_idx_q[4] : mult_idx_q[7];
+                            (act_tag_q[4] == PT_FINAL))) ? act_idx_q[4] : mult_idx_out;
 
     always_comb begin
         pot_in_tag = PT_NONE;
@@ -790,7 +681,7 @@ module CA_DataPath #(
             pot_in_tag = act_tag_q[4];
         end
         else begin
-            case (mult_tag_q[7])
+            case (mult_tag_out)
                 MT_Q: pot_in_tag = PT_Q;
                 MT_K: pot_in_tag = PT_K;
                 MT_V: pot_in_tag = PT_V;
@@ -799,23 +690,30 @@ module CA_DataPath #(
         end
     end
 
-    Mult_8Stage_Parallel u_mult (
-        .clk            (clk),
-        .rst_n          (rst_n),
-        .op             (mult_issue_op),
-        .b_transpose    (mult_issue_b_transpose),
-        .a_wide         (mult_issue_a_wide),
-        .head_mask      (mult_issue_head_mask),
-        .head_sel       (mult_issue_head_sel),
-        .in_valid       (mult_issue_valid),
-        .in_data_A      (mult_issue_A),
-        .in_data_A_wide (mult_issue_A_wide),
-        .in_data_B      (mult_issue_B),
-        .out_valid      (mult_valid),
-        .out_data       (mult_data)
+    Multiple_Processor u_mult_proc (
+        .clk          (clk),
+        .rst_n        (rst_n),
+        .issue_valid  (issue_valid),
+        .issue_mode   (issue_mode),
+        .issue_idx    (issue_idx),
+        .op           (op),
+        .param        (param),
+        .weight_k     (weight_k),
+        .weight_v     (weight_v),
+        .rd_data      (rd_data),
+        .x_buf        (x_buf_q),
+        .q_buf        (q_buf_q),
+        .k_buf        (k_buf_q),
+        .v_buf        (v_buf_q),
+        .score_buf    (score_buf_q),
+        .valign_buf   (valign_buf_q),
+        .mult_valid   (mult_valid),
+        .mult_data    (mult_data),
+        .mult_tag_out (mult_tag_out),
+        .mult_idx_out (mult_idx_out)
     );
 
-    ACT_TwoStage_Parallel u_act (
+    ACT_FiveStage_Parallel u_act (
         .clk       (clk),
         .rst_n     (rst_n),
         .in_valid  (act_in_valid),
@@ -857,8 +755,6 @@ module CA_DataPath #(
 
             for (int i = 0; i < 8; i++) begin
                 score_buf_q[i] <= 1024'd0;
-                mult_tag_q[i]  <= MT_NONE;
-                mult_idx_q[i]  <= 3'd0;
             end
 
             for (int i = 0; i < 5; i++) begin
@@ -886,13 +782,6 @@ module CA_DataPath #(
                 x_buf_q[capture_idx] <= rd_data[255:0];
             end
 
-            mult_tag_q[0] <= mult_issue_valid ? mult_issue_tag : MT_NONE;
-            mult_idx_q[0] <= mult_issue_idx;
-            for (int i = 1; i < 8; i++) begin
-                mult_tag_q[i] <= mult_tag_q[i - 1];
-                mult_idx_q[i] <= mult_idx_q[i - 1];
-            end
-
             act_tag_q[0] <= act_in_valid ? act_in_tag : PT_NONE;
             act_idx_q[0] <= act_in_idx;
             for (int i = 1; i < 5; i++) begin
@@ -913,14 +802,14 @@ module CA_DataPath #(
             end
 
             if (mult_valid) begin
-                case (mult_tag_q[7])
+                case (mult_tag_out)
                     MT_VALIGN: begin
-                        valign_buf_q[mult_idx_q[7][1:0]] <= pack_s4(mult_data);
-                        valign_ready_q[mult_idx_q[7][1:0]] <= 1'b1;
+                        valign_buf_q[mult_idx_out[1:0]] <= pack_s4(mult_data);
+                        valign_ready_q[mult_idx_out[1:0]] <= 1'b1;
                     end
                     MT_FINAL: begin
-                        if ((op == 2'b11) && !mult_idx_q[7][2]) begin
-                            mha_out0_buf_q[mult_idx_q[7][1:0]] <= mult_data;
+                        if ((op == 2'b11) && !mult_idx_out[2]) begin
+                            mha_out0_buf_q[mult_idx_out[1:0]] <= mult_data;
                         end
                     end
                     default: begin
@@ -956,6 +845,189 @@ module CA_DataPath #(
 
 endmodule
 
+module Multiple_Processor (
+    input  logic           clk,
+    input  logic           rst_n,
+
+    input  logic           issue_valid,
+    input  issue_mode_t    issue_mode,
+    input  logic [3:0]     issue_idx,
+
+    input  logic [1:0]     op,
+    input  logic [255:0]   param,
+    input  logic [255:0]   weight_k,
+    input  logic [255:0]   weight_v,
+    input  logic [255:0]   rd_data,
+
+    input  logic [255:0]   x_buf       [0:3],
+    input  logic [255:0]   q_buf       [0:3],
+    input  logic [255:0]   k_buf       [0:3],
+    input  logic [255:0]   v_buf       [0:3],
+    input  logic [1023:0]  score_buf   [0:7],
+    input  logic [255:0]   valign_buf  [0:3],
+
+    output logic           mult_valid,
+    output logic [1023:0]  mult_data,
+    output mult_tag_t      mult_tag_out,
+    output logic [2:0]     mult_idx_out
+);
+
+    localparam int MULT_STAGES = 8;
+
+    logic          mult_issue_valid;
+    logic          mult_issue_b_transpose;
+    logic          mult_issue_a_wide;
+    logic          mult_issue_head_mask;
+    logic          mult_issue_head_sel;
+    logic [255:0]  mult_issue_A;
+    logic [1023:0] mult_issue_A_wide;
+    logic [255:0]  mult_issue_B;
+    mult_tag_t     mult_issue_tag;
+    logic [2:0]    mult_issue_idx;
+
+    mult_tag_t  mult_tag_q [0:MULT_STAGES-1];
+    logic [2:0] mult_idx_q [0:MULT_STAGES-1];
+
+    function automatic logic [255:0] identity_matrix();
+        begin
+            identity_matrix = 256'd0;
+            for (int i = 0; i < 8; i++) begin
+                identity_matrix[255 - (((i * 8) + i) * 4) -: 4] = 4'sd1;
+            end
+        end
+    endfunction
+
+    always_comb begin
+        mult_issue_valid       = 1'b0;
+        mult_issue_b_transpose = 1'b0;
+        mult_issue_a_wide      = 1'b0;
+        mult_issue_head_mask   = 1'b0;
+        mult_issue_head_sel    = 1'b0;
+        mult_issue_A           = 256'd0;
+        mult_issue_A_wide      = 1024'd0;
+        mult_issue_B           = 256'd0;
+        mult_issue_tag         = MT_NONE;
+        mult_issue_idx         = 3'd0;
+
+        if (issue_valid) begin
+            mult_issue_valid = 1'b1;
+
+            case (issue_mode)
+                IM_NORM: begin
+                    mult_issue_A   = rd_data;
+                    mult_issue_B   = param;
+                    mult_issue_tag = MT_NORM;
+                end
+
+                IM_QKV: begin
+                    case (issue_idx)
+                        4'd0, 4'd1, 4'd2:    mult_issue_idx = 3'd0;
+                        4'd3, 4'd4, 4'd5:    mult_issue_idx = 3'd1;
+                        4'd6, 4'd7, 4'd8:    mult_issue_idx = 3'd2;
+                        default:             mult_issue_idx = 3'd3;
+                    endcase
+                    mult_issue_A = x_buf[mult_issue_idx[1:0]];
+
+                    case (issue_idx)
+                        4'd0, 4'd3, 4'd6, 4'd9: begin
+                            mult_issue_B   = param;
+                            mult_issue_tag = MT_Q;
+                        end
+                        4'd1, 4'd4, 4'd7, 4'd10: begin
+                            mult_issue_B   = weight_k;
+                            mult_issue_tag = MT_K;
+                        end
+                        default: begin
+                            mult_issue_B   = weight_v;
+                            mult_issue_tag = MT_V;
+                        end
+                    endcase
+                end
+
+                IM_SV: begin
+                    if (op == 2'b11) begin
+                        mult_issue_idx         = {issue_idx[2], issue_idx[1:0]};
+                        mult_issue_A           = q_buf[issue_idx[1:0]];
+                        mult_issue_B           = k_buf[issue_idx[1:0]];
+                        mult_issue_b_transpose = 1'b1;
+                        mult_issue_head_mask   = 1'b1;
+                        mult_issue_head_sel    = issue_idx[2];
+                        mult_issue_tag         = MT_SCORE;
+                    end
+                    else begin
+                        mult_issue_idx = {1'b0, issue_idx[2:1]};
+
+                        if (!issue_idx[0]) begin
+                            mult_issue_A           = q_buf[issue_idx[2:1]];
+                            mult_issue_B           = k_buf[issue_idx[2:1]];
+                            mult_issue_b_transpose = 1'b1;
+                            mult_issue_tag         = MT_SCORE;
+                        end
+                        else begin
+                            mult_issue_A   = v_buf[issue_idx[2:1]];
+                            mult_issue_B   = identity_matrix();
+                            mult_issue_tag = MT_VALIGN;
+                        end
+                    end
+                end
+
+                IM_FINAL: begin
+                    mult_issue_idx    = (op == 2'b11) ?
+                                        {issue_idx[2], issue_idx[1:0]} :
+                                        {1'b0, issue_idx[1:0]};
+                    mult_issue_a_wide = 1'b1;
+                    mult_issue_A_wide = score_buf[mult_issue_idx];
+                    mult_issue_B      = (op == 2'b11) ?
+                                        v_buf[issue_idx[1:0]] :
+                                        valign_buf[issue_idx[1:0]];
+                    mult_issue_tag    = MT_FINAL;
+                end
+
+                default: begin
+                    mult_issue_valid = 1'b0;
+                end
+            endcase
+        end
+    end
+
+    Mult_8Stage_Parallel u_mult (
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .op             (op),
+        .b_transpose    (mult_issue_b_transpose),
+        .a_wide         (mult_issue_a_wide),
+        .head_mask      (mult_issue_head_mask),
+        .head_sel       (mult_issue_head_sel),
+        .in_valid       (mult_issue_valid),
+        .in_data_A      (mult_issue_A),
+        .in_data_A_wide (mult_issue_A_wide),
+        .in_data_B      (mult_issue_B),
+        .out_valid      (mult_valid),
+        .out_data       (mult_data)
+    );
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < MULT_STAGES; i++) begin
+                mult_tag_q[i] <= MT_NONE;
+                mult_idx_q[i] <= 3'd0;
+            end
+        end
+        else begin
+            mult_tag_q[0] <= mult_issue_valid ? mult_issue_tag : MT_NONE;
+            mult_idx_q[0] <= mult_issue_idx;
+            for (int i = 1; i < MULT_STAGES; i++) begin
+                mult_tag_q[i] <= mult_tag_q[i - 1];
+                mult_idx_q[i] <= mult_idx_q[i - 1];
+            end
+        end
+    end
+
+    assign mult_tag_out = mult_tag_q[MULT_STAGES-1];
+    assign mult_idx_out = mult_idx_q[MULT_STAGES-1];
+
+endmodule
+
 module Mult_8Stage_Parallel (
     input  logic                 clk,
     input  logic                 rst_n,
@@ -981,7 +1053,6 @@ module Mult_8Stage_Parallel (
     typedef logic signed [15:0] s16_t;
 
     logic          valid_q      [0:STAGES-1];
-    logic [1:0]    op_q         [0:STAGES-1];
     logic          b_trans_q    [0:STAGES-1];
     logic          a_wide_q     [0:STAGES-1];
     logic          head_mask_q  [0:STAGES-1];
@@ -995,8 +1066,8 @@ module Mult_8Stage_Parallel (
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
     endfunction
 
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic s4_t get_pad_s4(input logic [255:0] vec, input integer row, input integer col);
@@ -1037,7 +1108,7 @@ module Mult_8Stage_Parallel (
                 sel_a = 16'sd0;
             end
             else if (a_wide_sel) begin
-                sel_a = get_i16(mat_A_wide, (stage * ROW_ELEM) + tap);
+                sel_a = get_s16(mat_A_wide, (stage * ROW_ELEM) + tap);
             end
             else begin
                 sel_a = get_s4(mat_A, (stage * ROW_ELEM) + tap);
@@ -1097,7 +1168,7 @@ module Mult_8Stage_Parallel (
 
             always_comb begin
                 stage_valid     = (st == 0) ? in_valid       : valid_q[PREV_STAGE];
-                stage_op        = (st == 0) ? op             : op_q[PREV_STAGE];
+                stage_op        = op;
                 stage_b_trans   = (st == 0) ? b_transpose    : b_trans_q[PREV_STAGE];
                 stage_a_wide    = (st == 0) ? a_wide         : a_wide_q[PREV_STAGE];
                 stage_head_mask = (st == 0) ? head_mask      : head_mask_q[PREV_STAGE];
@@ -1138,7 +1209,6 @@ module Mult_8Stage_Parallel (
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
                     valid_q[st]      <= 1'b0;
-                    op_q[st]         <= 2'b00;
                     b_trans_q[st]    <= 1'b0;
                     a_wide_q[st]     <= 1'b0;
                     head_mask_q[st]  <= 1'b0;
@@ -1152,7 +1222,6 @@ module Mult_8Stage_Parallel (
                 end
                 else begin
                     valid_q[st]      <= stage_valid;
-                    op_q[st]         <= stage_op;
                     b_trans_q[st]    <= stage_b_trans;
                     a_wide_q[st]     <= stage_a_wide;
                     head_mask_q[st]  <= stage_head_mask;
@@ -1205,7 +1274,7 @@ module Mult_8Stage_Parallel (
 
 endmodule
 
-module ACT_TwoStage_Parallel (
+module ACT_FiveStage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
@@ -1244,8 +1313,8 @@ module ACT_TwoStage_Parallel (
     assign out_valid = valid_q[ACT_STAGES-1];
     assign out_data  = matrix_q[ACT_STAGES-1];
 
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic s20_t ext20(input s16_t value);
@@ -1278,8 +1347,8 @@ module ACT_TwoStage_Parallel (
                     row0 = chunk * 2;
                     row1 = row0 + 1;
                     for (int c = 0; c < ROW_ELEM; c++) begin
-                        sum_a += ext20(get_i16(matrix, (row0 * ROW_ELEM) + c));
-                        sum_b += ext20(get_i16(matrix, (row1 * ROW_ELEM) + c));
+                        sum_a += ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
+                        sum_b += ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
                     end
                     thr_a = sum_a >>> 3;
                     thr_b = sum_b >>> 3;
@@ -1289,8 +1358,8 @@ module ACT_TwoStage_Parallel (
                     col0 = chunk * 2;
                     col1 = col0 + 1;
                     for (int r = 0; r < ROW_ELEM; r++) begin
-                        sum_a += ext20(get_i16(matrix, (r * ROW_ELEM) + col0));
-                        sum_b += ext20(get_i16(matrix, (r * ROW_ELEM) + col1));
+                        sum_a += ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
+                        sum_b += ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
                     end
                     thr_a = sum_a >>> 3;
                     thr_b = sum_b >>> 3;
@@ -1301,7 +1370,7 @@ module ACT_TwoStage_Parallel (
                     base_col = (chunk % 2) * 4;
                     for (int r = 0; r < 4; r++) begin
                         for (int c = 0; c < 4; c++) begin
-                            sum_a += ext20(get_i16(matrix,
+                            sum_a += ext20(get_s16(matrix,
                                                    ((base_row + r) * ROW_ELEM) +
                                                    (base_col + c)));
                         end
@@ -1427,7 +1496,7 @@ module ACT_TwoStage_Parallel (
                 idx       = chunk_idx(act_sel, mode_sel, chunk, lane);
                 threshold = select_threshold(act_sel, lane, threshold_a, threshold_b);
                 apply_chunk[1023 - (idx * 16) -: 16] =
-                    activate_value(get_i16(src_matrix, idx), act_sel, mode_sel, threshold);
+                    activate_value(get_s16(src_matrix, idx), act_sel, mode_sel, threshold);
             end
         end
     endfunction
@@ -1526,8 +1595,8 @@ module PoT_FiveStage_Parallel (
     logic [255:0]  quant_data_next;
     logic [255:0]  out_data_next;
 
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic logic [3:0] pot_shift(input logic [15:0] max_abs);
@@ -1570,7 +1639,7 @@ module PoT_FiveStage_Parallel (
 
             for (int lane = 0; lane < HALF_SIZE; lane++) begin
                 idx    = (phase ? HALF_SIZE : 0) + lane;
-                scaled = get_i16(src_data, idx) >>> shift;
+                scaled = get_s16(src_data, idx) >>> shift;
                 quant_half[255 - (idx * 4) -: 4] = clamp_s4(scaled);
             end
         end
@@ -1662,8 +1731,8 @@ module Matrix_Max_3Stage_Parallel (
     logic [15:0]   max4_q     [0:MAX4_COUNT-1];
     logic [15:0]   out_max_next;
 
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic logic [15:0] abs16(input s16_t value);
@@ -1690,10 +1759,10 @@ module Matrix_Max_3Stage_Parallel (
         input integer        base_idx
     );
         begin
-            max4_abs = max4_u16(abs16(get_i16(matrix, base_idx + 0)),
-                                abs16(get_i16(matrix, base_idx + 1)),
-                                abs16(get_i16(matrix, base_idx + 2)),
-                                abs16(get_i16(matrix, base_idx + 3)));
+            max4_abs = max4_u16(abs16(get_s16(matrix, base_idx + 0)),
+                                abs16(get_s16(matrix, base_idx + 1)),
+                                abs16(get_s16(matrix, base_idx + 2)),
+                                abs16(get_s16(matrix, base_idx + 3)));
         end
     endfunction
 
