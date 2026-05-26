@@ -13,7 +13,6 @@ typedef enum logic [2:0] {
     MT_K,
     MT_V,
     MT_SCORE,
-    MT_VALIGN,
     MT_FINAL
 } mult_tag_t;
 
@@ -64,24 +63,22 @@ module CA #(
     logic          datapath_result_valid;
 
     CA_Control #(
-        .RAM_DEPTH (RAM_DEPTH),
-        .BURST_BIT (BURST_BIT)
+        .RAM_DEPTH (RAM_DEPTH), .BURST_BIT (BURST_BIT)
     ) u_control (
-        .clk                    (clk),
-        .rst_n                  (rst_n),
+        .clk(clk), .rst_n(rst_n),
+
         // From Top Module
-        .mem_set                (mem_set),
-        .in_valid               (in_valid),
-        .op                     (op),
-        .act                    (act),
-        .param                  (param),
+        .mem_set(mem_set), .in_valid(in_valid),
+        .op(op), .act(act), .param(param),
+
         // From RAM interface
-        .rd_ready               (rd_ready),
-        .rd_valid               (rd_valid),
-        // From DataPath
+        .rd_ready(rd_ready), .rd_valid(rd_valid),
+
+        // Receive DataPath
         .datapath_qkv_ready     (datapath_qkv_ready),
         .datapath_sv_ready      (datapath_sv_ready),
         .datapath_result_valid  (datapath_result_valid),
+
         // Output to DataPath
         .exec_op                (exec_op),
         .exec_act               (exec_act),
@@ -93,13 +90,10 @@ module CA #(
         .datapath_issue_idx     (datapath_issue_idx),
         .datapath_capture_valid (datapath_capture_valid),
         .datapath_capture_idx   (datapath_capture_idx),
+
         // Output for RAM interface
-        .rd_en                  (rd_en),
-        .rd_addr                (rd_addr),
-        .rd_burst               (rd_burst),
-        .wr_en                  (wr_en),
-        .wr_addr                (wr_addr),
-        .wr_burst               (wr_burst)
+        .rd_en(rd_en), .rd_addr(rd_addr), .rd_burst(rd_burst),
+        .wr_en(wr_en), .wr_addr(wr_addr), .wr_burst(wr_burst)
     );
 
     CA_DataPath #(
@@ -121,7 +115,6 @@ module CA #(
         // Reading from RAM
         .rd_data                (rd_data),
         // Output to Control Module
-        .result_commit          (datapath_result_valid),
         .qkv_ready              (datapath_qkv_ready),
         .sv_ready               (datapath_sv_ready),
         .result_valid           (datapath_result_valid),
@@ -176,7 +169,7 @@ module CA_Control #(
 
     typedef enum logic [3:0] {
         S_IDLE,
-        S_RUN,
+        S_FAST_RUN,
         S_ATT_PARAM,
         S_ATT_READ,
         S_ATT_ISSUE_QKV,
@@ -188,17 +181,14 @@ module CA_Control #(
     } state_t;
 
     state_t      state_q;
-    logic [1:0]  att_param_cnt_q;
+    logic        att_param_phase_q;
     logic [1:0]  rd_req_cnt_q;
     logic [2:0]  att_rd_word_cnt_q;
     logic [7:0]  wr_cmd_cnt_q;
     logic [7:0]  out_cnt_q;
     logic [12:0] wr_pre_pipe_q;
     logic [7:0]  att_group_base_q;
-    logic [3:0]  att_issue_cnt_q;
-    logic [2:0]  att_sv_issue_cnt_q;
-    logic [2:0]  att_final_issue_cnt_q;
-    logic [1:0]  att_final_recv_cnt_q;
+    logic [3:0]  att_phase_cnt_q;
     logic [16:0] att_wr_pipe_q;
     logic        att_prefetch_pending_q;
 
@@ -207,23 +197,28 @@ module CA_Control #(
     logic        wr_pre_fire;
     logic        wr_cmd_fire;
     logic        rd_cmd_fire;
+    logic        att_read_fire;
+    logic        att_prefetch_fire;
     logic        result_last;
     logic        att_final_start;
     logic        att_wr_fire;
     logic [7:0]  att_next_group_base;
 
-    function automatic logic op_supported(input logic [1:0] op_sel);
-        op_supported = (op_sel == 2'b00) || (op_sel == 2'b01) ||
-                       (op_sel == 2'b10) || (op_sel == 2'b11);
-    endfunction
-
-    assign job_start              = (state_q == S_IDLE) && mem_set && in_valid && op_supported(op);
+    assign job_start              = (state_q == S_IDLE) && mem_set && in_valid;
     assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
     assign result_last            = datapath_result_valid && (out_cnt_q == 8'd255);
     assign wr_pre_fire            = wr_pre_pipe_q[12];
-    assign wr_cmd_fire            = (state_q == S_RUN) && wr_pre_fire;
-    assign rd_cmd_fire            = (state_q == S_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
-    assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_final_issue_cnt_q == 3'd0);
+    assign wr_cmd_fire            = (state_q == S_FAST_RUN) && wr_pre_fire;
+    assign rd_cmd_fire            = (state_q == S_FAST_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
+    assign att_read_fire          = (state_q == S_ATT_READ) &&
+                                    !att_prefetch_pending_q &&
+                                    (rd_req_cnt_q == 2'd0) &&
+                                    rd_ready;
+    assign att_prefetch_fire      = (state_q == S_ATT_ISSUE_SV) &&
+                                    !att_prefetch_pending_q &&
+                                    (att_group_base_q != 8'd252) &&
+                                    rd_ready;
+    assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_phase_cnt_q == 4'd0);
     assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[16] : att_wr_pipe_q[12];
     assign att_next_group_base    = att_group_base_q + 8'd4;
 
@@ -235,7 +230,7 @@ module CA_Control #(
         datapath_capture_idx   = att_rd_word_cnt_q[1:0];
 
         case (state_q)
-            S_RUN: begin
+            S_FAST_RUN: begin
                 if (rd_valid) begin
                     datapath_issue_valid = 1'b1;
                     datapath_issue_mode  = IM_NORM;
@@ -252,19 +247,19 @@ module CA_Control #(
             S_ATT_ISSUE_QKV: begin
                 datapath_issue_valid = 1'b1;
                 datapath_issue_mode  = IM_QKV;
-                datapath_issue_idx   = att_issue_cnt_q;
+                datapath_issue_idx   = att_phase_cnt_q;
             end
 
             S_ATT_ISSUE_SV: begin
                 datapath_issue_valid = 1'b1;
                 datapath_issue_mode  = IM_SV;
-                datapath_issue_idx   = att_sv_issue_cnt_q;
+                datapath_issue_idx   = att_phase_cnt_q;
             end
 
             S_ATT_ISSUE_FINAL: begin
                 datapath_issue_valid = 1'b1;
                 datapath_issue_mode  = IM_FINAL;
-                datapath_issue_idx   = {1'b0, att_final_issue_cnt_q};
+                datapath_issue_idx   = att_phase_cnt_q;
             end
 
             default: begin
@@ -280,30 +275,23 @@ module CA_Control #(
             exec_param            <= 256'd0;
             exec_weight_k         <= 256'd0;
             exec_weight_v         <= 256'd0;
-            att_param_cnt_q       <= 2'd0;
+            att_param_phase_q     <= 1'b0;
             rd_req_cnt_q          <= 2'd0;
             att_rd_word_cnt_q     <= 3'd0;
             wr_cmd_cnt_q          <= 8'd0;
             out_cnt_q             <= 8'd0;
             wr_pre_pipe_q         <= 13'd0;
             att_group_base_q      <= 8'd0;
-            att_issue_cnt_q       <= 4'd0;
-            att_sv_issue_cnt_q    <= 3'd0;
-            att_final_issue_cnt_q <= 3'd0;
-            att_final_recv_cnt_q  <= 2'd0;
+            att_phase_cnt_q       <= 4'd0;
             att_wr_pipe_q         <= 17'd0;
             att_prefetch_pending_q <= 1'b0;
-            rd_en                 <= 1'b0;
             rd_addr               <= '0;
-            rd_burst              <= '0;
             wr_en                 <= 1'b0;
             wr_addr               <= '0;
             wr_burst              <= '0;
         end
         else begin
-            rd_en    <= 1'b0;
             wr_en    <= 1'b0;
-            rd_burst <= '0;
             wr_burst <= '0;
 
             att_wr_pipe_q <= {att_wr_pipe_q[15:0], att_final_start};
@@ -327,26 +315,23 @@ module CA_Control #(
                         out_cnt_q             <= 8'd0;
                         wr_pre_pipe_q         <= 13'd0;
                         att_wr_pipe_q         <= 17'd0;
-                        att_final_recv_cnt_q  <= 2'd0;
                         att_prefetch_pending_q <= 1'b0;
 
                         if (attention_start) begin
-                            att_param_cnt_q <= 2'd1;
-                            state_q         <= S_ATT_PARAM;
+                            att_param_phase_q <= 1'b0;
+                            state_q           <= S_ATT_PARAM;
                         end
                         else begin
-                            state_q <= S_RUN;
+                            state_q <= S_FAST_RUN;
                         end
                     end
                 end
 
-                S_RUN: begin
+                S_FAST_RUN: begin
                     wr_pre_pipe_q <= {wr_pre_pipe_q[11:0], datapath_issue_valid};
 
                     if (rd_cmd_fire) begin
-                        rd_en        <= 1'b1;
                         rd_addr      <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
-                        rd_burst     <= BURST_128;
                         rd_req_cnt_q <= rd_req_cnt_q + 1'b1;
                     end
 
@@ -371,17 +356,16 @@ module CA_Control #(
 
                 S_ATT_PARAM: begin
                     if (in_valid) begin
-                        if (att_param_cnt_q == 2'd1) begin
-                            exec_weight_k   <= param;
-                            att_param_cnt_q <= 2'd2;
+                        if (!att_param_phase_q) begin
+                            exec_weight_k     <= param;
+                            att_param_phase_q <= 1'b1;
                         end
                         else begin
-                            exec_weight_v         <= param;
+                            exec_weight_v          <= param;
                             att_group_base_q       <= 8'd0;
                             rd_req_cnt_q           <= 2'd0;
                             att_rd_word_cnt_q      <= 3'd0;
                             out_cnt_q              <= 8'd0;
-                            att_final_recv_cnt_q   <= 2'd0;
                             att_wr_pipe_q          <= 17'd0;
                             att_prefetch_pending_q <= 1'b0;
                             state_q                <= S_ATT_READ;
@@ -390,90 +374,82 @@ module CA_Control #(
                 end
 
                 S_ATT_READ: begin
-                    if (!att_prefetch_pending_q && (rd_req_cnt_q == 2'd0) && rd_ready) begin
-                        rd_en        <= 1'b1;
+                    if (att_read_fire) begin
                         rd_addr      <= att_group_base_q[ADDR_W-1:0];
-                        rd_burst     <= BURST_4;
                         rd_req_cnt_q <= 2'd1;
                     end
 
                     if (rd_valid && (att_rd_word_cnt_q < 3'd4)) begin
                         if (att_rd_word_cnt_q == 3'd3) begin
-                            att_issue_cnt_q         <= 4'd0;
+                            att_phase_cnt_q        <= 4'd0;
                             att_prefetch_pending_q <= 1'b0;
-                            state_q                 <= S_ATT_ISSUE_QKV;
+                            state_q                <= S_ATT_ISSUE_QKV;
                         end
                         att_rd_word_cnt_q <= att_rd_word_cnt_q + 3'd1;
                     end
                 end
 
                 S_ATT_ISSUE_QKV: begin
-                    if (att_issue_cnt_q == 4'd11) begin
+                    if (att_phase_cnt_q == 4'd11) begin
                         state_q <= S_ATT_WAIT_QKV;
                     end
                     else begin
-                        att_issue_cnt_q <= att_issue_cnt_q + 1'b1;
+                        att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
                     end
                 end
 
                 S_ATT_WAIT_QKV: begin
                     if (datapath_qkv_ready) begin
-                        att_sv_issue_cnt_q <= 3'd0;
-                        state_q            <= S_ATT_ISSUE_SV;
+                        att_phase_cnt_q <= 4'd0;
+                        state_q         <= S_ATT_ISSUE_SV;
                     end
                 end
 
                 S_ATT_ISSUE_SV: begin
-                    if (!att_prefetch_pending_q && (att_group_base_q != 8'd252) && rd_ready) begin
-                        rd_en                    <= 1'b1;
-                        rd_addr                  <= att_next_group_base[ADDR_W-1:0];
-                        rd_burst                 <= BURST_4;
+                    if (att_prefetch_fire) begin
+                        rd_addr                 <= att_next_group_base[ADDR_W-1:0];
                         att_prefetch_pending_q  <= 1'b1;
                     end
 
-                    if (att_sv_issue_cnt_q == 3'd7) begin
+                    if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
+                        ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
                         state_q <= S_ATT_WAIT_SV;
                     end
                     else begin
-                        att_sv_issue_cnt_q <= att_sv_issue_cnt_q + 1'b1;
+                        att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
                     end
                 end
 
                 S_ATT_WAIT_SV: begin
                     if (datapath_sv_ready) begin
-                        att_final_issue_cnt_q <= 3'd0;
-                        att_final_recv_cnt_q  <= 2'd0;
-                        att_wr_pipe_q         <= 17'd0;
-                        state_q               <= S_ATT_ISSUE_FINAL;
+                        att_phase_cnt_q <= 4'd0;
+                        att_wr_pipe_q   <= 17'd0;
+                        state_q         <= S_ATT_ISSUE_FINAL;
                     end
                 end
 
                 S_ATT_ISSUE_FINAL: begin
-                    if (((exec_op == 2'b11) && (att_final_issue_cnt_q == 3'd7)) ||
-                        ((exec_op != 2'b11) && (att_final_issue_cnt_q == 3'd3))) begin
+                    if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
+                        ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
                         state_q <= S_ATT_WAIT_FINAL;
                     end
                     else begin
-                        att_final_issue_cnt_q <= att_final_issue_cnt_q + 1'b1;
+                        att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
                     end
                 end
 
                 S_ATT_WAIT_FINAL: begin
                     if (datapath_result_valid) begin
-                        if (att_final_recv_cnt_q == 2'd3) begin
+                        if (out_cnt_q[1:0] == 2'd3) begin
                             if (att_group_base_q == 8'd252) begin
                                 state_q <= S_IDLE;
                             end
                             else begin
-                                att_group_base_q     <= att_next_group_base;
-                                rd_req_cnt_q         <= att_prefetch_pending_q ? 2'd1 : 2'd0;
-                                att_rd_word_cnt_q    <= 3'd0;
-                                att_final_recv_cnt_q <= 2'd0;
-                                state_q              <= S_ATT_READ;
+                                att_group_base_q  <= att_next_group_base;
+                                rd_req_cnt_q      <= att_prefetch_pending_q ? 2'd1 : 2'd0;
+                                att_rd_word_cnt_q <= 3'd0;
+                                state_q           <= S_ATT_READ;
                             end
-                        end
-                        else begin
-                            att_final_recv_cnt_q <= att_final_recv_cnt_q + 1'b1;
                         end
 
                         if (out_cnt_q != 8'd255) begin
@@ -486,6 +462,26 @@ module CA_Control #(
                     state_q <= S_IDLE;
                 end
             endcase
+        end
+    end
+
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            rd_en    <= 1'b0;
+            rd_burst <= '0;
+        end
+        else begin
+            rd_en    <= 1'b0;
+            rd_burst <= '0;
+            if (rd_cmd_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_128;
+            end
+            else if (att_read_fire || att_prefetch_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_4;
+            end
         end
     end
 
@@ -507,7 +503,6 @@ module CA_DataPath #(
     input  logic [255:0]         weight_k,
     input  logic [255:0]         weight_v,
     input  logic [RAM_WIDTH-1:0] rd_data,
-    input  logic                 result_commit,
 
     output logic                 qkv_ready,
     output logic                 sv_ready,
@@ -531,7 +526,6 @@ module CA_DataPath #(
         PT_FINAL
     } pipe_tag_t;
 
-    typedef logic signed [3:0]  s4_t;
     typedef logic signed [15:0] s16_t;
 
     logic [255:0]  x_buf_q        [0:3];
@@ -540,12 +534,10 @@ module CA_DataPath #(
     logic [255:0]  v_buf_q        [0:3];
     logic [1023:0] score_buf_q    [0:7];
     logic [1023:0] mha_out0_buf_q [0:3];
-    logic [255:0]  valign_buf_q   [0:3];
     logic [3:0]    q_ready_q;
     logic [3:0]    k_ready_q;
     logic [3:0]    v_ready_q;
     logic [7:0]    score_ready_q;
-    logic [3:0]    valign_ready_q;
 
     logic          mult_valid;
     logic [1023:0] mult_data;
@@ -576,37 +568,13 @@ module CA_DataPath #(
     logic [2:0]    mha_comb_idx;
 
     assign qkv_ready = (&q_ready_q) && (&k_ready_q) && (&v_ready_q);
-    assign sv_ready  = (op == 2'b11) ? (&score_ready_q) :
-                       ((&score_ready_q[3:0]) && (&valign_ready_q));
+    assign sv_ready  = (op == 2'b11) ? (&score_ready_q) : (&score_ready_q[3:0]);
     assign result_valid = pot_valid &&
                           ((pot_tag_q[4] == PT_NORM) ||
                            (pot_tag_q[4] == PT_FINAL));
 
     function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
         get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
-    endfunction
-
-    function automatic s4_t clamp_s4(input s16_t value);
-        begin
-            if (value > 16'sd7) begin
-                clamp_s4 = 4'sd7;
-            end
-            else if (value < -16'sd8) begin
-                clamp_s4 = -4'sd8;
-            end
-            else begin
-                clamp_s4 = value[3:0];
-            end
-        end
-    endfunction
-
-    function automatic logic [255:0] pack_s4(input logic [1023:0] src_data);
-        begin
-            pack_s4 = 256'd0;
-            for (int i = 0; i < 64; i++) begin
-                pack_s4[255 - (i * 4) -: 4] = clamp_s4(get_s16(src_data, i));
-            end
-        end
     endfunction
 
     function automatic logic [1023:0] combine_mha_heads(
@@ -706,7 +674,6 @@ module CA_DataPath #(
         .k_buf        (k_buf_q),
         .v_buf        (v_buf_q),
         .score_buf    (score_buf_q),
-        .valign_buf   (valign_buf_q),
         .mult_valid   (mult_valid),
         .mult_data    (mult_data),
         .mult_tag_out (mult_tag_out),
@@ -739,7 +706,6 @@ module CA_DataPath #(
             k_ready_q      <= 4'd0;
             v_ready_q      <= 4'd0;
             score_ready_q  <= 8'd0;
-            valign_ready_q <= 4'd0;
             out_valid      <= 1'b0;
             wr_data        <= '0;
             out_data       <= 32'd0;
@@ -750,7 +716,6 @@ module CA_DataPath #(
                 k_buf_q[i]        <= 256'd0;
                 v_buf_q[i]        <= 256'd0;
                 mha_out0_buf_q[i] <= 1024'd0;
-                valign_buf_q[i]   <= 256'd0;
             end
 
             for (int i = 0; i < 8; i++) begin
@@ -768,14 +733,13 @@ module CA_DataPath #(
             end
         end
         else begin
-            out_valid <= result_commit;
+            out_valid <= result_valid;
 
             if (capture_valid && (capture_idx == 2'd0)) begin
-                q_ready_q      <= 4'd0;
-                k_ready_q      <= 4'd0;
-                v_ready_q      <= 4'd0;
-                score_ready_q  <= 8'd0;
-                valign_ready_q <= 4'd0;
+                q_ready_q     <= 4'd0;
+                k_ready_q     <= 4'd0;
+                v_ready_q     <= 4'd0;
+                score_ready_q <= 8'd0;
             end
 
             if (capture_valid) begin
@@ -801,20 +765,9 @@ module CA_DataPath #(
                 score_ready_q[act_idx_q[4]] <= 1'b1;
             end
 
-            if (mult_valid) begin
-                case (mult_tag_out)
-                    MT_VALIGN: begin
-                        valign_buf_q[mult_idx_out[1:0]] <= pack_s4(mult_data);
-                        valign_ready_q[mult_idx_out[1:0]] <= 1'b1;
-                    end
-                    MT_FINAL: begin
-                        if ((op == 2'b11) && !mult_idx_out[2]) begin
-                            mha_out0_buf_q[mult_idx_out[1:0]] <= mult_data;
-                        end
-                    end
-                    default: begin
-                    end
-                endcase
+            if (mult_valid && (mult_tag_out == MT_FINAL) &&
+                (op == 2'b11) && !mult_idx_out[2]) begin
+                mha_out0_buf_q[mult_idx_out[1:0]] <= mult_data;
             end
 
             if (pot_valid) begin
@@ -836,7 +789,7 @@ module CA_DataPath #(
                 endcase
             end
 
-            if (result_commit) begin
+            if (result_valid) begin
                 wr_data  <= pot_data;
                 out_data <= pot_data[31:0];
             end
@@ -864,7 +817,6 @@ module Multiple_Processor (
     input  logic [255:0]   k_buf       [0:3],
     input  logic [255:0]   v_buf       [0:3],
     input  logic [1023:0]  score_buf   [0:7],
-    input  logic [255:0]   valign_buf  [0:3],
 
     output logic           mult_valid,
     output logic [1023:0]  mult_data,
@@ -887,15 +839,6 @@ module Multiple_Processor (
 
     mult_tag_t  mult_tag_q [0:MULT_STAGES-1];
     logic [2:0] mult_idx_q [0:MULT_STAGES-1];
-
-    function automatic logic [255:0] identity_matrix();
-        begin
-            identity_matrix = 256'd0;
-            for (int i = 0; i < 8; i++) begin
-                identity_matrix[255 - (((i * 8) + i) * 4) -: 4] = 4'sd1;
-            end
-        end
-    endfunction
 
     always_comb begin
         mult_issue_valid       = 1'b0;
@@ -946,29 +889,17 @@ module Multiple_Processor (
 
                 IM_SV: begin
                     if (op == 2'b11) begin
-                        mult_issue_idx         = {issue_idx[2], issue_idx[1:0]};
-                        mult_issue_A           = q_buf[issue_idx[1:0]];
-                        mult_issue_B           = k_buf[issue_idx[1:0]];
-                        mult_issue_b_transpose = 1'b1;
-                        mult_issue_head_mask   = 1'b1;
-                        mult_issue_head_sel    = issue_idx[2];
-                        mult_issue_tag         = MT_SCORE;
+                        mult_issue_idx       = {issue_idx[2], issue_idx[1:0]};
+                        mult_issue_head_mask = 1'b1;
+                        mult_issue_head_sel  = issue_idx[2];
                     end
                     else begin
-                        mult_issue_idx = {1'b0, issue_idx[2:1]};
-
-                        if (!issue_idx[0]) begin
-                            mult_issue_A           = q_buf[issue_idx[2:1]];
-                            mult_issue_B           = k_buf[issue_idx[2:1]];
-                            mult_issue_b_transpose = 1'b1;
-                            mult_issue_tag         = MT_SCORE;
-                        end
-                        else begin
-                            mult_issue_A   = v_buf[issue_idx[2:1]];
-                            mult_issue_B   = identity_matrix();
-                            mult_issue_tag = MT_VALIGN;
-                        end
+                        mult_issue_idx = {1'b0, issue_idx[1:0]};
                     end
+                    mult_issue_A           = q_buf[issue_idx[1:0]];
+                    mult_issue_B           = k_buf[issue_idx[1:0]];
+                    mult_issue_b_transpose = 1'b1;
+                    mult_issue_tag         = MT_SCORE;
                 end
 
                 IM_FINAL: begin
@@ -977,9 +908,7 @@ module Multiple_Processor (
                                         {1'b0, issue_idx[1:0]};
                     mult_issue_a_wide = 1'b1;
                     mult_issue_A_wide = score_buf[mult_issue_idx];
-                    mult_issue_B      = (op == 2'b11) ?
-                                        v_buf[issue_idx[1:0]] :
-                                        valign_buf[issue_idx[1:0]];
+                    mult_issue_B      = v_buf[issue_idx[1:0]];
                     mult_issue_tag    = MT_FINAL;
                 end
 
