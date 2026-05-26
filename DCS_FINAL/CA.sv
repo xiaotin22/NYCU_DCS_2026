@@ -49,6 +49,7 @@ module CA #(
         .RAM_DEPTH (RAM_DEPTH),
         .BURST_BIT (BURST_BIT)
     ) u_control (
+        // input from top
         .clk                    (clk),
         .rst_n                  (rst_n),
         .mem_set                (mem_set),
@@ -61,6 +62,7 @@ module CA #(
         .datapath_qkv_ready     (datapath_qkv_ready),
         .datapath_sv_ready      (datapath_sv_ready),
         .datapath_result_valid  (datapath_result_valid),
+        // output to datapath
         .exec_op                (exec_op),
         .exec_act               (exec_act),
         .exec_param             (exec_param),
@@ -83,8 +85,10 @@ module CA #(
     CA_DataPath #(
         .RAM_WIDTH (RAM_WIDTH)
     ) u_datapath (
+        // input from top
         .clk                    (clk),
         .rst_n                  (rst_n),
+        // input from control
         .issue_valid            (datapath_issue_valid),
         .issue_mode             (datapath_issue_mode),
         .issue_idx              (datapath_issue_idx),
@@ -101,6 +105,7 @@ module CA #(
         .sv_ready               (datapath_sv_ready),
         .result_valid           (datapath_result_valid),
         .wr_data                (wr_data),
+        // output to top
         .out_valid              (out_valid),
         .out_data               (out_data)
     );
@@ -171,7 +176,7 @@ module CA_Control #(
     state_t      state_q;
     logic [1:0]  att_param_cnt_q;
     logic [1:0]  rd_req_cnt_q;
-    logic [2:0]  att_rd_word_cnt_q;
+    logic [8:0]  rd_word_cnt_q;
     logic [8:0]  wr_cmd_cnt_q;
     logic [8:0]  out_cnt_q;
     logic [9:0]  wr_pre_pipe_q;
@@ -181,7 +186,7 @@ module CA_Control #(
     logic [2:0]  att_final_issue_cnt_q;
     logic [2:0]  att_final_recv_cnt_q;
     logic [13:0] att_wr_pipe_q;
-    logic        att_prefetch_pending_q;
+    logic        att_rd_req_sent_q;
 
     logic        job_start;
     logic        attention_start;
@@ -191,7 +196,9 @@ module CA_Control #(
     logic        result_last;
     logic        att_final_start;
     logic        att_wr_fire;
-    logic [8:0]  att_next_group_base;
+    logic        att_rd_fire;
+    logic        att_capture_fire;
+    logic [ADDR_W-1:0] att_next_group_addr;
 
     function automatic logic op_supported(input logic [1:0] op_sel);
         op_supported = (op_sel == 2'b00) || (op_sel == 2'b01) ||
@@ -207,27 +214,46 @@ module CA_Control #(
     assign rd_cmd_fire            = (state_q == S_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
     assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_final_issue_cnt_q == 3'd0);
     assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[13] : att_wr_pipe_q[9];
-    assign att_next_group_base    = att_group_base_q + 9'd4;
+    assign att_rd_fire            = (((state_q == S_ATT_READ) ||
+                                      ((state_q != S_IDLE) && (state_q != S_RUN) &&
+                                       (state_q != S_ATT_PARAM) &&
+                                       (att_group_base_q != 9'd252))) &&
+                                     !att_rd_req_sent_q && rd_ready);
+    assign att_capture_fire       = (rd_valid && (rd_word_cnt_q < 9'd4) &&
+                                     ((state_q == S_ATT_READ) || att_rd_req_sent_q));
+    assign att_next_group_addr    = att_group_base_q[ADDR_W-1:0] + ADDR_W'(4);
 
     always_comb begin
         datapath_issue_valid   = 1'b0;
         datapath_issue_mode    = IM_NONE;
         datapath_issue_idx     = 4'd0;
         datapath_capture_valid = 1'b0;
-        datapath_capture_idx   = att_rd_word_cnt_q[1:0];
+        datapath_capture_idx   = rd_word_cnt_q[1:0];
 
         case (state_q)
             S_RUN: begin
-                if (rd_valid) begin
+                if (rd_valid && (rd_word_cnt_q < 9'd256)) begin
                     datapath_issue_valid = 1'b1;
                     datapath_issue_mode  = IM_NORM;
                 end
             end
 
             S_ATT_READ: begin
-                if (rd_valid && (att_rd_word_cnt_q < 3'd4)) begin
+                if (att_capture_fire) begin
                     datapath_capture_valid = 1'b1;
-                    datapath_capture_idx   = att_rd_word_cnt_q[1:0];
+                    datapath_capture_idx   = rd_word_cnt_q[1:0];
+                end
+            end
+
+            S_ATT_ISSUE_QKV,
+            S_ATT_WAIT_QKV,
+            S_ATT_ISSUE_SV,
+            S_ATT_WAIT_SV,
+            S_ATT_ISSUE_FINAL,
+            S_ATT_WAIT_FINAL: begin
+                if (att_capture_fire) begin
+                    datapath_capture_valid = 1'b1;
+                    datapath_capture_idx   = rd_word_cnt_q[1:0];
                 end
             end
 
@@ -264,7 +290,7 @@ module CA_Control #(
             exec_weight_v         <= 256'd0;
             att_param_cnt_q       <= 2'd0;
             rd_req_cnt_q          <= 2'd0;
-            att_rd_word_cnt_q     <= 3'd0;
+            rd_word_cnt_q         <= 9'd0;
             wr_cmd_cnt_q          <= 9'd0;
             out_cnt_q             <= 9'd0;
             wr_pre_pipe_q         <= 10'd0;
@@ -274,7 +300,7 @@ module CA_Control #(
             att_final_issue_cnt_q <= 3'd0;
             att_final_recv_cnt_q  <= 3'd0;
             att_wr_pipe_q         <= 14'd0;
-            att_prefetch_pending_q <= 1'b0;
+            att_rd_req_sent_q     <= 1'b0;
             rd_en                 <= 1'b0;
             rd_addr               <= '0;
             rd_burst              <= '0;
@@ -296,6 +322,15 @@ module CA_Control #(
                 wr_burst <= BURST_4;
             end
 
+            if (att_rd_fire) begin
+                rd_en             <= 1'b1;
+                rd_addr           <= (state_q == S_ATT_READ) ?
+                                     att_group_base_q[ADDR_W-1:0] :
+                                     att_next_group_addr;
+                rd_burst          <= BURST_4;
+                att_rd_req_sent_q <= 1'b1;
+            end
+
             case (state_q)
                 S_IDLE: begin
                     if (job_start) begin
@@ -304,13 +339,13 @@ module CA_Control #(
                         exec_param <= param;
 
                         rd_req_cnt_q          <= 2'd0;
-                        att_rd_word_cnt_q     <= 3'd0;
+                        rd_word_cnt_q         <= 9'd0;
                         wr_cmd_cnt_q          <= 9'd0;
                         out_cnt_q             <= 9'd0;
                         wr_pre_pipe_q         <= 10'd0;
                         att_wr_pipe_q         <= 14'd0;
+                        att_rd_req_sent_q     <= 1'b0;
                         att_final_recv_cnt_q  <= 3'd0;
-                        att_prefetch_pending_q <= 1'b0;
 
                         if (attention_start) begin
                             att_param_cnt_q <= 2'd1;
@@ -330,6 +365,10 @@ module CA_Control #(
                         rd_addr      <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
                         rd_burst     <= BURST_128;
                         rd_req_cnt_q <= rd_req_cnt_q + 1'b1;
+                    end
+
+                    if (datapath_issue_valid) begin
+                        rd_word_cnt_q <= rd_word_cnt_q + 1'b1;
                     end
 
                     if (wr_cmd_fire) begin
@@ -359,37 +398,43 @@ module CA_Control #(
                         end
                         else begin
                             exec_weight_v         <= param;
-                            att_group_base_q       <= 9'd0;
-                            rd_req_cnt_q           <= 2'd0;
-                            att_rd_word_cnt_q      <= 3'd0;
-                            out_cnt_q              <= 9'd0;
-                            att_final_recv_cnt_q   <= 3'd0;
-                            att_wr_pipe_q          <= 14'd0;
-                            att_prefetch_pending_q <= 1'b0;
-                            state_q                <= S_ATT_READ;
+                            att_group_base_q      <= 9'd0;
+                            rd_req_cnt_q          <= 2'd0;
+                            rd_word_cnt_q         <= 9'd0;
+                            out_cnt_q             <= 9'd0;
+                            att_final_recv_cnt_q  <= 3'd0;
+                            att_wr_pipe_q         <= 14'd0;
+                            att_rd_req_sent_q     <= 1'b0;
+                            state_q               <= S_ATT_READ;
                         end
                     end
                 end
 
                 S_ATT_READ: begin
-                    if (!att_prefetch_pending_q && (rd_req_cnt_q == 2'd0) && rd_ready) begin
-                        rd_en        <= 1'b1;
-                        rd_addr      <= att_group_base_q[ADDR_W-1:0];
-                        rd_burst     <= BURST_4;
-                        rd_req_cnt_q <= 2'd1;
+                    if (rd_word_cnt_q == 9'd4) begin
+                        rd_word_cnt_q     <= 9'd0;
+                        att_issue_cnt_q   <= 4'd0;
+                        att_rd_req_sent_q <= 1'b0;
+                        state_q           <= S_ATT_ISSUE_QKV;
                     end
-
-                    if (rd_valid && (att_rd_word_cnt_q < 3'd4)) begin
-                        if (att_rd_word_cnt_q == 3'd3) begin
-                            att_issue_cnt_q         <= 4'd0;
-                            att_prefetch_pending_q <= 1'b0;
-                            state_q                 <= S_ATT_ISSUE_QKV;
+                    else if (att_capture_fire) begin
+                        if (rd_word_cnt_q == 9'd3) begin
+                            att_issue_cnt_q <= 4'd0;
+                            rd_word_cnt_q   <= 9'd0;
+                            att_rd_req_sent_q <= 1'b0;
+                            state_q         <= S_ATT_ISSUE_QKV;
                         end
-                        att_rd_word_cnt_q <= att_rd_word_cnt_q + 3'd1;
+                        else begin
+                            rd_word_cnt_q <= rd_word_cnt_q + 1'b1;
+                        end
                     end
                 end
 
                 S_ATT_ISSUE_QKV: begin
+                    if (att_capture_fire) begin
+                        rd_word_cnt_q <= rd_word_cnt_q + 1'b1;
+                    end
+
                     if (att_issue_cnt_q == 4'd11) begin
                         state_q <= S_ATT_WAIT_QKV;
                     end
@@ -399,6 +444,10 @@ module CA_Control #(
                 end
 
                 S_ATT_WAIT_QKV: begin
+                    if (att_capture_fire) begin
+                        rd_word_cnt_q <= rd_word_cnt_q + 1'b1;
+                    end
+
                     if (datapath_qkv_ready) begin
                         att_sv_issue_cnt_q <= 4'd0;
                         state_q            <= S_ATT_ISSUE_SV;
@@ -406,11 +455,8 @@ module CA_Control #(
                 end
 
                 S_ATT_ISSUE_SV: begin
-                    if (!att_prefetch_pending_q && (att_group_base_q != 9'd252) && rd_ready) begin
-                        rd_en                    <= 1'b1;
-                        rd_addr                  <= att_next_group_base[ADDR_W-1:0];
-                        rd_burst                 <= BURST_4;
-                        att_prefetch_pending_q  <= 1'b1;
+                    if (att_capture_fire) begin
+                        rd_word_cnt_q <= rd_word_cnt_q + 1'b1;
                     end
 
                     if (att_sv_issue_cnt_q == 4'd7) begin
@@ -422,6 +468,10 @@ module CA_Control #(
                 end
 
                 S_ATT_WAIT_SV: begin
+                    if (att_capture_fire) begin
+                        rd_word_cnt_q <= rd_word_cnt_q + 1'b1;
+                    end
+
                     if (datapath_sv_ready) begin
                         att_final_issue_cnt_q <= 3'd0;
                         att_final_recv_cnt_q  <= 3'd0;
@@ -431,6 +481,10 @@ module CA_Control #(
                 end
 
                 S_ATT_ISSUE_FINAL: begin
+                    if (att_capture_fire) begin
+                        rd_word_cnt_q <= rd_word_cnt_q + 1'b1;
+                    end
+
                     if (((exec_op == 2'b11) && (att_final_issue_cnt_q == 3'd7)) ||
                         ((exec_op != 2'b11) && (att_final_issue_cnt_q == 3'd3))) begin
                         state_q <= S_ATT_WAIT_FINAL;
@@ -441,17 +495,28 @@ module CA_Control #(
                 end
 
                 S_ATT_WAIT_FINAL: begin
+                    if (att_capture_fire) begin
+                        rd_word_cnt_q <= rd_word_cnt_q + 1'b1;
+                    end
+
                     if (datapath_result_valid) begin
                         if (att_final_recv_cnt_q == 3'd3) begin
                             if (att_group_base_q == 9'd252) begin
                                 state_q <= S_IDLE;
                             end
                             else begin
-                                att_group_base_q     <= att_next_group_base;
-                                rd_req_cnt_q         <= att_prefetch_pending_q ? 2'd1 : 2'd0;
-                                att_rd_word_cnt_q    <= 3'd0;
+                                att_group_base_q     <= att_group_base_q + 9'd4;
                                 att_final_recv_cnt_q <= 3'd0;
-                                state_q              <= S_ATT_READ;
+
+                                if (rd_word_cnt_q == 9'd4) begin
+                                    rd_word_cnt_q     <= 9'd0;
+                                    att_issue_cnt_q   <= 4'd0;
+                                    att_rd_req_sent_q <= 1'b0;
+                                    state_q           <= S_ATT_ISSUE_QKV;
+                                end
+                                else begin
+                                    state_q <= S_ATT_READ;
+                                end
                             end
                         end
                         else begin
