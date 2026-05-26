@@ -87,12 +87,6 @@ extract_cycles() {
   extract_number_by_pattern "$log_file" "cycle[ _-]*latency|latency[ _-]*cycle|latency[[:space:]]*[:=].*cycle|latecny[[:space:]]*[:=].*cycle" "last"
 }
 
-extract_latency_ns() {
-  log_file="$1"
-
-  extract_number_by_pattern "$log_file" "total[[:space:]]+latency.*ns|latency[[:space:]]*[:=].*ns|latecny[[:space:]]*[:=].*ns" "last"
-}
-
 extract_clock_period() {
   log_file="$1"
 
@@ -183,7 +177,37 @@ calc_performance() {
 
   awk -v clk="$clk" -v cycles="$cycles" -v area="$area" '
     BEGIN {
-      printf "%.6e", clk * cycles * area
+      printf "%.2E", clk * cycles * area
+    }
+  '
+}
+
+format_area() {
+  value="$1"
+
+  if ! is_number "$value"; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  printf '%s\n' "${value%%.*}"
+}
+
+format_clk() {
+  value="$1"
+
+  if ! is_number "$value"; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  awk -v value="$value" '
+    BEGIN {
+      if (value == int(value)) {
+        printf "%d\n", value
+      } else {
+        print value
+      }
     }
   '
 }
@@ -193,14 +217,11 @@ syn_log="$(find_log "02_SYN/syn.log" "syn.log")"
 
 clk="NA"
 cycles="NA"
-latency="NA"
 area="NA"
 
 if [ -n "$vcs_log" ] && [ -f "$vcs_log" ]; then
   cycles="$(extract_cycles "$vcs_log")"
-  latency="$(extract_latency_ns "$vcs_log")"
   [ -n "$cycles" ] || cycles="NA"
-  [ -n "$latency" ] || latency="NA"
 fi
 
 if [ -n "$syn_log" ] && [ -f "$syn_log" ]; then
@@ -215,12 +236,16 @@ if [ "$clk" = "NA" ] && [ -n "$vcs_log" ] && [ -f "$vcs_log" ]; then
   [ -n "$clk" ] || clk="NA"
 fi
 
-if [ "$latency" = "NA" ] && is_number "$clk" && is_number "$cycles"; then
-  latency="$(awk -v clk="$clk" -v cycles="$cycles" 'BEGIN { printf "%.6g", clk * cycles }')"
-fi
-
 performance="$(calc_performance "$clk" "$cycles" "$area")"
+performance="${performance/E/ E}"
+clk_display="$(format_clk "$clk")"
+area_display="$(format_area "$area")"
 
-printf '%-12s %-14s %-14s %-16s %-16s\n' "CLK(ns)" "CYCLES" "LATENCY(ns)" "AREA" "PERFORMANCE"
-printf '%-12s %-14s %-14s %-16s %-16s\n' "------------" "--------------" "--------------" "----------------" "----------------"
-printf '%-12s %-14s %-14s %-16s %-16s\n' "$clk" "$cycles" "$latency" "$area" "$performance"
+printf '\033[34m==================== Report =====================\033[0m\n'
+printf '\033[36mMimi Good Job! Here is the performance summary of your design:\033[0m\n\n'
+printf '\033[33mClk = %s ns\033[0m\n' "$clk_display"
+printf '\033[33mLatency = %s cycle\033[0m\n' "$cycles"
+printf '\033[33mArea = %s\033[0m\n' "$area_display"
+printf '\033[33mPerformance = %s\033[0m\n' "$performance"
+printf '\n\033[36mKeep improve !!!\033[0m\n'
+printf '\033[34m===============================================================\033[0m\n'
