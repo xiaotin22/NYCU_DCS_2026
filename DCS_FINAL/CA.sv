@@ -186,10 +186,10 @@ module CA_Control #(
     logic [2:0]  att_rd_word_cnt_q;
     logic [7:0]  wr_cmd_cnt_q;
     logic [7:0]  out_cnt_q;
-    logic [12:0] wr_pre_pipe_q;
+    logic [13:0] wr_pre_pipe_q;
     logic [7:0]  att_group_base_q;
     logic [3:0]  att_phase_cnt_q;
-    logic [16:0] att_wr_pipe_q;
+    logic [17:0] att_wr_pipe_q;
     logic        att_prefetch_pending_q;
 
     logic        job_start;
@@ -207,7 +207,7 @@ module CA_Control #(
     assign job_start              = (state_q == S_IDLE) && mem_set && in_valid;
     assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
     assign result_last            = datapath_result_valid && (out_cnt_q == 8'd255);
-    assign wr_pre_fire            = wr_pre_pipe_q[12];
+    assign wr_pre_fire            = wr_pre_pipe_q[13];
     assign wr_cmd_fire            = (state_q == S_FAST_RUN) && wr_pre_fire;
     assign rd_cmd_fire            = (state_q == S_FAST_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
     assign att_read_fire          = (state_q == S_ATT_READ) &&
@@ -219,7 +219,7 @@ module CA_Control #(
                                     (att_group_base_q != 8'd252) &&
                                     rd_ready;
     assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_phase_cnt_q == 4'd0);
-    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[16] : att_wr_pipe_q[12];
+    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[17] : att_wr_pipe_q[13];
     assign att_next_group_base    = att_group_base_q + 8'd4;
 
     always_comb begin
@@ -280,10 +280,10 @@ module CA_Control #(
             att_rd_word_cnt_q     <= 3'd0;
             wr_cmd_cnt_q          <= 8'd0;
             out_cnt_q             <= 8'd0;
-            wr_pre_pipe_q         <= 13'd0;
+            wr_pre_pipe_q         <= 14'd0;
             att_group_base_q      <= 8'd0;
             att_phase_cnt_q       <= 4'd0;
-            att_wr_pipe_q         <= 17'd0;
+            att_wr_pipe_q         <= 18'd0;
             att_prefetch_pending_q <= 1'b0;
             rd_addr               <= '0;
             wr_en                 <= 1'b0;
@@ -294,7 +294,7 @@ module CA_Control #(
             wr_en    <= 1'b0;
             wr_burst <= '0;
 
-            att_wr_pipe_q <= {att_wr_pipe_q[15:0], att_final_start};
+            att_wr_pipe_q <= {att_wr_pipe_q[16:0], att_final_start};
 
             if (att_wr_fire) begin
                 wr_en    <= 1'b1;
@@ -313,8 +313,8 @@ module CA_Control #(
                         att_rd_word_cnt_q     <= 3'd0;
                         wr_cmd_cnt_q          <= 8'd0;
                         out_cnt_q             <= 8'd0;
-                        wr_pre_pipe_q         <= 13'd0;
-                        att_wr_pipe_q         <= 17'd0;
+                        wr_pre_pipe_q         <= 14'd0;
+                        att_wr_pipe_q         <= 18'd0;
                         att_prefetch_pending_q <= 1'b0;
 
                         if (attention_start) begin
@@ -328,7 +328,7 @@ module CA_Control #(
                 end
 
                 S_FAST_RUN: begin
-                    wr_pre_pipe_q <= {wr_pre_pipe_q[11:0], datapath_issue_valid};
+                    wr_pre_pipe_q <= {wr_pre_pipe_q[12:0], datapath_issue_valid};
 
                     if (rd_cmd_fire) begin
                         rd_addr      <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
@@ -366,7 +366,7 @@ module CA_Control #(
                             rd_req_cnt_q           <= 2'd0;
                             att_rd_word_cnt_q      <= 3'd0;
                             out_cnt_q              <= 8'd0;
-                            att_wr_pipe_q          <= 17'd0;
+                            att_wr_pipe_q          <= 18'd0;
                             att_prefetch_pending_q <= 1'b0;
                             state_q                <= S_ATT_READ;
                         end
@@ -423,7 +423,7 @@ module CA_Control #(
                 S_ATT_WAIT_SV: begin
                     if (datapath_sv_ready) begin
                         att_phase_cnt_q <= 4'd0;
-                        att_wr_pipe_q   <= 17'd0;
+                        att_wr_pipe_q   <= 18'd0;
                         state_q         <= S_ATT_ISSUE_FINAL;
                     end
                 end
@@ -567,6 +567,13 @@ module CA_DataPath #(
     logic [1023:0] mha_comb_data;
     logic [2:0]    mha_comb_idx;
 
+    logic                 issue_valid_q;
+    issue_mode_t          issue_mode_q;
+    logic [3:0]           issue_idx_q;
+    logic                 capture_valid_q;
+    logic [1:0]           capture_idx_q;
+    logic [RAM_WIDTH-1:0] rd_data_q;
+
     assign qkv_ready = (&q_ready_q) && (&k_ready_q) && (&v_ready_q);
     assign sv_ready  = (op == 2'b11) ? (&score_ready_q) : (&score_ready_q[3:0]);
     assign result_valid = pot_valid &&
@@ -658,17 +665,36 @@ module CA_DataPath #(
         end
     end
 
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            issue_valid_q   <= 1'b0;
+            issue_mode_q    <= IM_NONE;
+            issue_idx_q     <= 4'd0;
+            capture_valid_q <= 1'b0;
+            capture_idx_q   <= 2'd0;
+            rd_data_q       <= '0;
+        end
+        else begin
+            issue_valid_q   <= issue_valid;
+            issue_mode_q    <= issue_valid ? issue_mode : IM_NONE;
+            issue_idx_q     <= issue_valid ? issue_idx : 4'd0;
+            capture_valid_q <= capture_valid;
+            capture_idx_q   <= capture_idx;
+            rd_data_q       <= rd_data;
+        end
+    end
+
     Multiple_Processor u_mult_proc (
         .clk          (clk),
         .rst_n        (rst_n),
-        .issue_valid  (issue_valid),
-        .issue_mode   (issue_mode),
-        .issue_idx    (issue_idx),
+        .issue_valid  (issue_valid_q),
+        .issue_mode   (issue_mode_q),
+        .issue_idx    (issue_idx_q),
         .op           (op),
         .param        (param),
         .weight_k     (weight_k),
         .weight_v     (weight_v),
-        .rd_data      (rd_data),
+        .rd_data      (rd_data_q),
         .x_buf        (x_buf_q),
         .q_buf        (q_buf_q),
         .k_buf        (k_buf_q),
@@ -735,15 +761,15 @@ module CA_DataPath #(
         else begin
             out_valid <= result_valid;
 
-            if (capture_valid && (capture_idx == 2'd0)) begin
+            if (capture_valid_q && (capture_idx_q == 2'd0)) begin
                 q_ready_q     <= 4'd0;
                 k_ready_q     <= 4'd0;
                 v_ready_q     <= 4'd0;
                 score_ready_q <= 8'd0;
             end
 
-            if (capture_valid) begin
-                x_buf_q[capture_idx] <= rd_data[255:0];
+            if (capture_valid_q) begin
+                x_buf_q[capture_idx_q] <= rd_data_q[255:0];
             end
 
             act_tag_q[0] <= act_in_valid ? act_in_tag : PT_NONE;
