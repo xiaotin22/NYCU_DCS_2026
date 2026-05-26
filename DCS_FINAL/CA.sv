@@ -183,7 +183,7 @@ module CA_Control #(
     state_t      state_q;
     logic        att_param_phase_q;
     logic [1:0]  rd_req_cnt_q;
-    logic [2:0]  att_rd_word_cnt_q;
+    logic [1:0]  att_rd_word_cnt_q;
     logic [7:0]  wr_cmd_cnt_q;
     logic [7:0]  out_cnt_q;
     logic [13:0] wr_pre_pipe_q;
@@ -227,7 +227,7 @@ module CA_Control #(
         datapath_issue_mode    = IM_NONE;
         datapath_issue_idx     = 4'd0;
         datapath_capture_valid = 1'b0;
-        datapath_capture_idx   = att_rd_word_cnt_q[1:0];
+        datapath_capture_idx   = att_rd_word_cnt_q;
 
         case (state_q)
             S_FAST_RUN: begin
@@ -238,9 +238,9 @@ module CA_Control #(
             end
 
             S_ATT_READ: begin
-                if (rd_valid && (att_rd_word_cnt_q < 3'd4)) begin
+                if (rd_valid) begin
                     datapath_capture_valid = 1'b1;
-                    datapath_capture_idx   = att_rd_word_cnt_q[1:0];
+                    datapath_capture_idx   = att_rd_word_cnt_q;
                 end
             end
 
@@ -277,7 +277,7 @@ module CA_Control #(
             exec_weight_v         <= 256'd0;
             att_param_phase_q     <= 1'b0;
             rd_req_cnt_q          <= 2'd0;
-            att_rd_word_cnt_q     <= 3'd0;
+            att_rd_word_cnt_q     <= 2'd0;
             wr_cmd_cnt_q          <= 8'd0;
             out_cnt_q             <= 8'd0;
             wr_pre_pipe_q         <= 14'd0;
@@ -310,7 +310,7 @@ module CA_Control #(
                         exec_param <= param;
 
                         rd_req_cnt_q          <= 2'd0;
-                        att_rd_word_cnt_q     <= 3'd0;
+                        att_rd_word_cnt_q     <= 2'd0;
                         wr_cmd_cnt_q          <= 8'd0;
                         out_cnt_q             <= 8'd0;
                         wr_pre_pipe_q         <= 14'd0;
@@ -364,7 +364,7 @@ module CA_Control #(
                             exec_weight_v          <= param;
                             att_group_base_q       <= 8'd0;
                             rd_req_cnt_q           <= 2'd0;
-                            att_rd_word_cnt_q      <= 3'd0;
+                            att_rd_word_cnt_q      <= 2'd0;
                             out_cnt_q              <= 8'd0;
                             att_wr_pipe_q          <= 18'd0;
                             att_prefetch_pending_q <= 1'b0;
@@ -379,13 +379,15 @@ module CA_Control #(
                         rd_req_cnt_q <= 2'd1;
                     end
 
-                    if (rd_valid && (att_rd_word_cnt_q < 3'd4)) begin
-                        if (att_rd_word_cnt_q == 3'd3) begin
+                    if (rd_valid) begin
+                        if (att_rd_word_cnt_q == 2'd3) begin
                             att_phase_cnt_q        <= 4'd0;
                             att_prefetch_pending_q <= 1'b0;
                             state_q                <= S_ATT_ISSUE_QKV;
                         end
-                        att_rd_word_cnt_q <= att_rd_word_cnt_q + 3'd1;
+                        else begin
+                            att_rd_word_cnt_q <= att_rd_word_cnt_q + 1'b1;
+                        end
                     end
                 end
 
@@ -447,7 +449,7 @@ module CA_Control #(
                             else begin
                                 att_group_base_q  <= att_next_group_base;
                                 rd_req_cnt_q      <= att_prefetch_pending_q ? 2'd1 : 2'd0;
-                                att_rd_word_cnt_q <= 3'd0;
+                                att_rd_word_cnt_q <= 2'd0;
                                 state_q           <= S_ATT_READ;
                             end
                         end
@@ -513,7 +515,6 @@ module CA_DataPath #(
 );
 
     localparam logic [1:0] ACT_USER    = 2'd0;
-    localparam logic [1:0] ACT_BYPASS  = 2'd1;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
     typedef enum logic [2:0] {
@@ -526,14 +527,19 @@ module CA_DataPath #(
         PT_FINAL
     } pipe_tag_t;
 
-    typedef logic signed [15:0] s16_t;
+    localparam int SCORE_ELEM_W   = 11;
+    localparam int SCORE_PACK_W   = SCORE_ELEM_W * 64;
+    localparam int MHA_OUT_ELEM_W = 15;
+    localparam int MHA_OUT_PACK_W = MHA_OUT_ELEM_W * 64;
 
+    // Attention scores are activated before buffering: SHA fits in signed 11 bits.
+    // MHA head0 FINAL partial output can reach -16384, so it keeps 15-bit lanes.
     logic [255:0]  x_buf_q        [0:3];
     logic [255:0]  q_buf_q        [0:3];
     logic [255:0]  k_buf_q        [0:3];
     logic [255:0]  v_buf_q        [0:3];
-    logic [1023:0] score_buf_q    [0:7];
-    logic [1023:0] mha_out0_buf_q [0:3];
+    logic [SCORE_PACK_W-1:0]   score_buf_q    [0:7];
+    logic [MHA_OUT_PACK_W-1:0] mha_out0_buf_q [0:3];
     logic [3:0]    q_ready_q;
     logic [3:0]    k_ready_q;
     logic [3:0]    v_ready_q;
@@ -580,20 +586,47 @@ module CA_DataPath #(
                           ((pot_tag_q[4] == PT_NORM) ||
                            (pot_tag_q[4] == PT_FINAL));
 
-    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
-        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
-    endfunction
-
     function automatic logic [1023:0] combine_mha_heads(
         input logic [1023:0] head0,
         input logic [1023:0] head1
     );
+        logic [1023:0] result;
         begin
-            combine_mha_heads = 1024'd0;
+            result = 1024'd0;
+            for (int r = 0; r < 8; r++) begin
+                result[1023 -  r*128       -: 64] = head0[1023 -  r*128       -: 64];
+                result[1023 - (r*128 + 64) -: 64] = head1[1023 - (r*128 + 64) -: 64];
+            end
+            combine_mha_heads = result;
+        end
+    endfunction
+
+    function automatic logic [SCORE_PACK_W-1:0] pack_score(input logic [1023:0] src);
+        begin
             for (int i = 0; i < 64; i++) begin
-                combine_mha_heads[1023 - (i * 16) -: 16] =
-                    ((i % 8) < 4) ? head0[1023 - (i * 16) -: 16] :
-                                    head1[1023 - (i * 16) -: 16];
+                pack_score[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W] =
+                    src[1023 - (i * 16) - (16 - SCORE_ELEM_W) -: SCORE_ELEM_W];
+            end
+        end
+    endfunction
+
+    function automatic logic [MHA_OUT_PACK_W-1:0] pack_mha_out(input logic [1023:0] src);
+        begin
+            for (int i = 0; i < 64; i++) begin
+                pack_mha_out[MHA_OUT_PACK_W-1 - (i * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W] =
+                    src[1023 - (i * 16) - (16 - MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
+            end
+        end
+    endfunction
+
+    function automatic logic [1023:0] unpack_mha_out(input logic [MHA_OUT_PACK_W-1:0] src);
+        logic [MHA_OUT_ELEM_W-1:0] lane;
+        begin
+            unpack_mha_out = 1024'd0;
+            for (int i = 0; i < 64; i++) begin
+                lane = src[MHA_OUT_PACK_W-1 - (i * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
+                unpack_mha_out[1023 - (i * 16) -: 16] =
+                    {{(16-MHA_OUT_ELEM_W){lane[MHA_OUT_ELEM_W-1]}}, lane};
             end
         end
     endfunction
@@ -601,7 +634,8 @@ module CA_DataPath #(
     assign mha_comb_valid = mult_valid && (op == 2'b11) &&
                             (mult_tag_out == MT_FINAL) && mult_idx_out[2];
     assign mha_comb_idx   = {1'b0, mult_idx_out[1:0]};
-    assign mha_comb_data  = combine_mha_heads(mha_out0_buf_q[mult_idx_out[1:0]], mult_data);
+    assign mha_comb_data  = combine_mha_heads(unpack_mha_out(mha_out0_buf_q[mult_idx_out[1:0]]),
+                                              mult_data);
 
     assign act_in_valid = mha_comb_valid ||
                           (mult_valid &&
@@ -609,9 +643,10 @@ module CA_DataPath #(
                             (mult_tag_out == MT_SCORE) ||
                             ((mult_tag_out == MT_FINAL) && (op != 2'b11))));
     assign act_in_data  = mha_comb_valid ? mha_comb_data : mult_data;
-    assign act_in_idx   = ((mult_tag_out == MT_FINAL) || mha_comb_valid ||
-                           (mult_tag_out == MT_SCORE)) ?
-                          (mha_comb_valid ? mha_comb_idx : mult_idx_out) : 3'd0;
+    assign act_in_idx   = mha_comb_valid                       ? mha_comb_idx :
+                          ((mult_tag_out == MT_FINAL) ||
+                           (mult_tag_out == MT_SCORE))         ? mult_idx_out :
+                                                                 3'd0;
 
     always_comb begin
         act_in_tag  = PT_NONE;
@@ -635,31 +670,26 @@ module CA_DataPath #(
         endcase
     end
 
-    assign pot_in_valid = (act_valid &&
-                           ((act_tag_q[4] == PT_NORM) ||
-                            (act_tag_q[4] == PT_FINAL))) ||
+    logic use_act_for_pot;
+    assign use_act_for_pot = act_valid &&
+                             ((act_tag_q[4] == PT_NORM) || (act_tag_q[4] == PT_FINAL));
+
+    assign pot_in_valid = use_act_for_pot ||
                           (mult_valid && ((mult_tag_out == MT_Q) ||
                                           (mult_tag_out == MT_K) ||
                                           (mult_tag_out == MT_V)));
-    assign pot_in_data  = (act_valid &&
-                           ((act_tag_q[4] == PT_NORM) ||
-                            (act_tag_q[4] == PT_FINAL))) ? act_data : mult_data;
-    assign pot_in_idx   = (act_valid &&
-                           ((act_tag_q[4] == PT_NORM) ||
-                            (act_tag_q[4] == PT_FINAL))) ? act_idx_q[4] : mult_idx_out;
+    assign pot_in_data  = use_act_for_pot ? act_data       : mult_data;
+    assign pot_in_idx   = use_act_for_pot ? act_idx_q[4]   : mult_idx_out;
 
     always_comb begin
-        pot_in_tag = PT_NONE;
-
-        if (act_valid && ((act_tag_q[4] == PT_NORM) ||
-                          (act_tag_q[4] == PT_FINAL))) begin
+        if (use_act_for_pot) begin
             pot_in_tag = act_tag_q[4];
         end
         else begin
             case (mult_tag_out)
-                MT_Q: pot_in_tag = PT_Q;
-                MT_K: pot_in_tag = PT_K;
-                MT_V: pot_in_tag = PT_V;
+                MT_Q:    pot_in_tag = PT_Q;
+                MT_K:    pot_in_tag = PT_K;
+                MT_V:    pot_in_tag = PT_V;
                 default: pot_in_tag = PT_NONE;
             endcase
         end
@@ -684,7 +714,10 @@ module CA_DataPath #(
         end
     end
 
-    Multiple_Processor u_mult_proc (
+    Multiple_Processor #(
+        .SCORE_ELEM_W (SCORE_ELEM_W),
+        .SCORE_PACK_W (SCORE_PACK_W)
+    ) u_mult_proc (
         .clk          (clk),
         .rst_n        (rst_n),
         .issue_valid  (issue_valid_q),
@@ -741,11 +774,11 @@ module CA_DataPath #(
                 q_buf_q[i]        <= 256'd0;
                 k_buf_q[i]        <= 256'd0;
                 v_buf_q[i]        <= 256'd0;
-                mha_out0_buf_q[i] <= 1024'd0;
+                mha_out0_buf_q[i] <= '0;
             end
 
             for (int i = 0; i < 8; i++) begin
-                score_buf_q[i] <= 1024'd0;
+                score_buf_q[i] <= '0;
             end
 
             for (int i = 0; i < 5; i++) begin
@@ -787,13 +820,13 @@ module CA_DataPath #(
             end
 
             if (act_valid && (act_tag_q[4] == PT_SCORE)) begin
-                score_buf_q[act_idx_q[4]] <= act_data;
+                score_buf_q[act_idx_q[4]] <= pack_score(act_data);
                 score_ready_q[act_idx_q[4]] <= 1'b1;
             end
 
             if (mult_valid && (mult_tag_out == MT_FINAL) &&
                 (op == 2'b11) && !mult_idx_out[2]) begin
-                mha_out0_buf_q[mult_idx_out[1:0]] <= mult_data;
+                mha_out0_buf_q[mult_idx_out[1:0]] <= pack_mha_out(mult_data);
             end
 
             if (pot_valid) begin
@@ -824,7 +857,10 @@ module CA_DataPath #(
 
 endmodule
 
-module Multiple_Processor (
+module Multiple_Processor #(
+    parameter int SCORE_ELEM_W = 11,
+    parameter int SCORE_PACK_W = SCORE_ELEM_W * 64
+)(
     input  logic           clk,
     input  logic           rst_n,
 
@@ -842,7 +878,7 @@ module Multiple_Processor (
     input  logic [255:0]   q_buf       [0:3],
     input  logic [255:0]   k_buf       [0:3],
     input  logic [255:0]   v_buf       [0:3],
-    input  logic [1023:0]  score_buf   [0:7],
+    input  logic [SCORE_PACK_W-1:0] score_buf [0:7],
 
     output logic           mult_valid,
     output logic [1023:0]  mult_data,
@@ -865,6 +901,18 @@ module Multiple_Processor (
 
     mult_tag_t  mult_tag_q [0:MULT_STAGES-1];
     logic [2:0] mult_idx_q [0:MULT_STAGES-1];
+
+    function automatic logic [1023:0] unpack_score(input logic [SCORE_PACK_W-1:0] src);
+        logic [SCORE_ELEM_W-1:0] lane;
+        begin
+            unpack_score = 1024'd0;
+            for (int i = 0; i < 64; i++) begin
+                lane = src[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W];
+                unpack_score[1023 - (i * 16) -: 16] =
+                    {{(16-SCORE_ELEM_W){lane[SCORE_ELEM_W-1]}}, lane};
+            end
+        end
+    endfunction
 
     always_comb begin
         mult_issue_valid       = 1'b0;
@@ -933,7 +981,7 @@ module Multiple_Processor (
                                         {issue_idx[2], issue_idx[1:0]} :
                                         {1'b0, issue_idx[1:0]};
                     mult_issue_a_wide = 1'b1;
-                    mult_issue_A_wide = score_buf[mult_issue_idx];
+                    mult_issue_A_wide = unpack_score(score_buf[mult_issue_idx]);
                     mult_issue_B      = v_buf[issue_idx[1:0]];
                     mult_issue_tag    = MT_FINAL;
                 end
@@ -1184,12 +1232,16 @@ module Mult_8Stage_Parallel (
 
                     if (st < STAGES - 1) begin
                         for (int r = 0; r < ROW_ELEM; r++) begin
+                            // mat_A_q[st] must carry rows {st..7} forward: Conv stage
+                            // st+1 reads rows {st, st+1, st+2}, and subsequent stages
+                            // need the rest propagated through this register.
                             if (r >= st) begin
                                 mat_A_q[st][255 - r*32 -: 32] <= stage_A[255 - r*32 -: 32];
                             end
                             else begin
                                 mat_A_q[st][255 - r*32 -: 32] <= 32'd0;
                             end
+                            // mat_A_wide_q[st] must carry rows {st+1..7} forward.
                             if (r > st) begin
                                 mat_A_wide_q[st][1023 - r*128 -: 128] <= stage_A_wide[1023 - r*128 -: 128];
                             end
@@ -1246,7 +1298,6 @@ module ACT_FiveStage_Parallel (
     localparam int ACT_STAGES = 5;
 
     localparam logic [1:0] ACT_USER    = 2'd0;
-    localparam logic [1:0] ACT_BYPASS  = 2'd1;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
     typedef logic signed [15:0] s16_t;
@@ -1255,7 +1306,6 @@ module ACT_FiveStage_Parallel (
     logic          valid_q  [0:ACT_STAGES-1];
     logic [1:0]    act_q    [0:ACT_STAGES-1];
     logic [1:0]    mode_q   [0:ACT_STAGES-1];
-    logic [1023:0] src_q    [0:ACT_STAGES-1];
     logic [1023:0] matrix_q [0:ACT_STAGES-1];
     s20_t          thr_a_q  [0:ACT_STAGES-1];
     s20_t          thr_b_q  [0:ACT_STAGES-1];
@@ -1413,10 +1463,6 @@ module ACT_FiveStage_Parallel (
     );
         begin
             case (mode_sel)
-                ACT_BYPASS: begin
-                    activate_value = value;
-                end
-
                 ACT_SPECIAL: begin
                     activate_value = (value < 0) ? (value >>> 2) : value;
                 end
@@ -1457,10 +1503,10 @@ module ACT_FiveStage_Parallel (
     endfunction
 
     always_comb begin
-        thr0_pair = calc_threshold_pair(in_data,  act,      0);
-        thr1_pair = calc_threshold_pair(src_q[0], act_q[0], 1);
-        thr2_pair = calc_threshold_pair(src_q[1], act_q[1], 2);
-        thr3_pair = calc_threshold_pair(src_q[2], act_q[2], 3);
+        thr0_pair = calc_threshold_pair(in_data,     act,      0);
+        thr1_pair = calc_threshold_pair(matrix_q[0], act_q[0], 1);
+        thr2_pair = calc_threshold_pair(matrix_q[1], act_q[1], 2);
+        thr3_pair = calc_threshold_pair(matrix_q[2], act_q[2], 3);
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -1469,7 +1515,6 @@ module ACT_FiveStage_Parallel (
                 valid_q[i]  <= 1'b0;
                 act_q[i]    <= 2'd0;
                 mode_q[i]   <= ACT_USER;
-                src_q[i]    <= 1024'd0;
                 matrix_q[i] <= 1024'd0;
                 thr_a_q[i]  <= 20'sd0;
                 thr_b_q[i]  <= 20'sd0;
@@ -1479,7 +1524,6 @@ module ACT_FiveStage_Parallel (
             valid_q[0]  <= in_valid;
             act_q[0]    <= act;
             mode_q[0]   <= act_mode;
-            src_q[0]    <= in_data;
             matrix_q[0] <= in_data;
             thr_a_q[0]  <= $signed(thr0_pair[39:20]);
             thr_b_q[0]  <= $signed(thr0_pair[19:0]);
@@ -1487,8 +1531,7 @@ module ACT_FiveStage_Parallel (
             valid_q[1]  <= valid_q[0];
             act_q[1]    <= act_q[0];
             mode_q[1]   <= mode_q[0];
-            src_q[1]    <= src_q[0];
-            matrix_q[1] <= apply_chunk(matrix_q[0], src_q[0], act_q[0], mode_q[0],
+            matrix_q[1] <= apply_chunk(matrix_q[0], matrix_q[0], act_q[0], mode_q[0],
                                        0, thr_a_q[0], thr_b_q[0]);
             thr_a_q[1]  <= $signed(thr1_pair[39:20]);
             thr_b_q[1]  <= $signed(thr1_pair[19:0]);
@@ -1496,8 +1539,7 @@ module ACT_FiveStage_Parallel (
             valid_q[2]  <= valid_q[1];
             act_q[2]    <= act_q[1];
             mode_q[2]   <= mode_q[1];
-            src_q[2]    <= src_q[1];
-            matrix_q[2] <= apply_chunk(matrix_q[1], src_q[1], act_q[1], mode_q[1],
+            matrix_q[2] <= apply_chunk(matrix_q[1], matrix_q[1], act_q[1], mode_q[1],
                                        1, thr_a_q[1], thr_b_q[1]);
             thr_a_q[2]  <= $signed(thr2_pair[39:20]);
             thr_b_q[2]  <= $signed(thr2_pair[19:0]);
@@ -1505,8 +1547,7 @@ module ACT_FiveStage_Parallel (
             valid_q[3]  <= valid_q[2];
             act_q[3]    <= act_q[2];
             mode_q[3]   <= mode_q[2];
-            src_q[3]    <= src_q[2];
-            matrix_q[3] <= apply_chunk(matrix_q[2], src_q[2], act_q[2], mode_q[2],
+            matrix_q[3] <= apply_chunk(matrix_q[2], matrix_q[2], act_q[2], mode_q[2],
                                        2, thr_a_q[2], thr_b_q[2]);
             thr_a_q[3]  <= $signed(thr3_pair[39:20]);
             thr_b_q[3]  <= $signed(thr3_pair[19:0]);
@@ -1514,8 +1555,7 @@ module ACT_FiveStage_Parallel (
             valid_q[4]  <= valid_q[3];
             act_q[4]    <= act_q[3];
             mode_q[4]   <= mode_q[3];
-            src_q[4]    <= src_q[3];
-            matrix_q[4] <= apply_chunk(matrix_q[3], src_q[3], act_q[3], mode_q[3],
+            matrix_q[4] <= apply_chunk(matrix_q[3], matrix_q[3], act_q[3], mode_q[3],
                                        3, thr_a_q[3], thr_b_q[3]);
             thr_a_q[4]  <= 20'sd0;
             thr_b_q[4]  <= 20'sd0;
@@ -1557,12 +1597,25 @@ module PoT_FiveStage_Parallel (
     function automatic logic [3:0] pot_shift(input logic [15:0] max_abs);
         logic [3:0] msb;
         begin
-            msb = 4'd0;
-            for (int b = 0; b < 16; b++) begin
-                if (max_abs[b]) begin
-                    msb = b[3:0];
-                end
-            end
+            casez (max_abs)
+                16'b1???????????????: msb = 4'd15;
+                16'b01??????????????: msb = 4'd14;
+                16'b001?????????????: msb = 4'd13;
+                16'b0001????????????: msb = 4'd12;
+                16'b00001???????????: msb = 4'd11;
+                16'b000001??????????: msb = 4'd10;
+                16'b0000001?????????: msb = 4'd9;
+                16'b00000001????????: msb = 4'd8;
+                16'b000000001???????: msb = 4'd7;
+                16'b0000000001??????: msb = 4'd6;
+                16'b00000000001?????: msb = 4'd5;
+                16'b000000000001????: msb = 4'd4;
+                16'b0000000000001???: msb = 4'd3;
+                16'b00000000000001??: msb = 4'd2;
+                16'b000000000000001?: msb = 4'd1;
+                16'b0000000000000001: msb = 4'd0;
+                default:              msb = 4'd0;
+            endcase
             pot_shift = (msb > 4'd2) ? (msb - 4'd2) : 4'd0;
         end
     endfunction
