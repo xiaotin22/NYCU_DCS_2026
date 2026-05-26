@@ -117,3 +117,11 @@ Check:
 3. Would a proposed edit improve correctness without hurting area/cycles/timing too much?
 4. Are reset behavior, handshakes, signed arithmetic, and pack/unpack order preserved?
 5. If code was edited, explain the syntax/logic checks performed instead of claiming local Verilog simulation passed.
+
+## Verilog simulation test
+
+1. Run `ssh dcs_mimi` in the terminal to get into workstation if you want to test RTL
+2. Get in workstation and enter 'yes' 
+3. `cd Final/01_RTL`
+4. modified CA.sv to local DCS_Final/CA.sv
+5. Run ./01_run_vcs_rtl to test the RTL simulation
