@@ -186,10 +186,10 @@ module CA_Control #(
     logic [1:0]  att_rd_word_cnt_q;
     logic [7:0]  wr_cmd_cnt_q;
     logic [7:0]  out_cnt_q;
-    logic [13:0] wr_pre_pipe_q;
+    logic [7:0]  wr_pre_pipe_q;
     logic [7:0]  att_group_base_q;
     logic [3:0]  att_phase_cnt_q;
-    logic [17:0] att_wr_pipe_q;
+    logic [11:0] att_wr_pipe_q;
     logic        att_prefetch_pending_q;
 
     logic        job_start;
@@ -207,7 +207,7 @@ module CA_Control #(
     assign job_start              = (state_q == S_IDLE) && mem_set && in_valid;
     assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
     assign result_last            = datapath_result_valid && (out_cnt_q == 8'd255);
-    assign wr_pre_fire            = wr_pre_pipe_q[13];
+    assign wr_pre_fire            = wr_pre_pipe_q[7];
     assign wr_cmd_fire            = (state_q == S_FAST_RUN) && wr_pre_fire;
     assign rd_cmd_fire            = (state_q == S_FAST_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
     assign att_read_fire          = (state_q == S_ATT_READ) &&
@@ -219,7 +219,7 @@ module CA_Control #(
                                     (att_group_base_q != 8'd252) &&
                                     rd_ready;
     assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_phase_cnt_q == 4'd0);
-    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[17] : att_wr_pipe_q[13];
+    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[11] : att_wr_pipe_q[7];
     assign att_next_group_base    = att_group_base_q + 8'd4;
 
     always_comb begin
@@ -274,10 +274,10 @@ module CA_Control #(
             att_rd_word_cnt_q      <= 2'd0;
             wr_cmd_cnt_q           <= 8'd0;
             out_cnt_q              <= 8'd0;
-            wr_pre_pipe_q          <= 14'd0;
+            wr_pre_pipe_q          <= 8'd0;
             att_group_base_q       <= 8'd0;
             att_phase_cnt_q        <= 4'd0;
-            att_wr_pipe_q          <= 18'd0;
+            att_wr_pipe_q          <= 12'd0;
             att_prefetch_pending_q <= 1'b0;
             wr_en                  <= 1'b0;
         end
@@ -285,7 +285,7 @@ module CA_Control #(
             wr_en    <= 1'b0;
             wr_burst <= '0;
 
-            att_wr_pipe_q <= {att_wr_pipe_q[16:0], att_final_start};
+            att_wr_pipe_q <= {att_wr_pipe_q[10:0], att_final_start};
 
             if (att_wr_fire) begin
                 wr_en    <= 1'b1;
@@ -304,8 +304,8 @@ module CA_Control #(
                         att_rd_word_cnt_q     <= 2'd0;
                         wr_cmd_cnt_q          <= 8'd0;
                         out_cnt_q             <= 8'd0;
-                        wr_pre_pipe_q         <= 14'd0;
-                        att_wr_pipe_q         <= 18'd0;
+                        wr_pre_pipe_q         <= 8'd0;
+                        att_wr_pipe_q         <= 12'd0;
                         att_prefetch_pending_q <= 1'b0;
 
                         if (attention_start) begin
@@ -319,7 +319,7 @@ module CA_Control #(
                 end
 
                 S_FAST_RUN: begin
-                    wr_pre_pipe_q <= {wr_pre_pipe_q[12:0], datapath_issue_valid};
+                    wr_pre_pipe_q <= {wr_pre_pipe_q[6:0], datapath_issue_valid};
 
                     if (rd_cmd_fire) begin
                         rd_addr      <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
@@ -357,7 +357,7 @@ module CA_Control #(
                             rd_req_cnt_q           <= 2'd0;
                             att_rd_word_cnt_q      <= 2'd0;
                             out_cnt_q              <= 8'd0;
-                            att_wr_pipe_q          <= 18'd0;
+                            att_wr_pipe_q          <= 12'd0;
                             att_prefetch_pending_q <= 1'b0;
                             state_q                <= S_ATT_READ;
                         end
@@ -392,6 +392,11 @@ module CA_Control #(
                 end
 
                 S_ATT_WAIT_QKV: begin
+                    if (att_prefetch_fire) begin
+                        rd_addr                 <= att_next_group_base[ADDR_W-1:0];
+                        att_prefetch_pending_q  <= 1'b1;
+                    end
+
                     if (datapath_qkv_ready) begin
                         att_phase_cnt_q <= 4'd0;
                         state_q         <= S_ATT_ISSUE_SV;
@@ -399,11 +404,6 @@ module CA_Control #(
                 end
 
                 S_ATT_ISSUE_SV: begin
-                    if (att_prefetch_fire) begin
-                        rd_addr                 <= att_next_group_base[ADDR_W-1:0];
-                        att_prefetch_pending_q  <= 1'b1;
-                    end
-
                     if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
                         ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
                         state_q <= S_ATT_WAIT_SV;
@@ -416,7 +416,7 @@ module CA_Control #(
                 S_ATT_WAIT_SV: begin
                     if (datapath_sv_ready) begin
                         att_phase_cnt_q <= 4'd0;
-                        att_wr_pipe_q   <= 18'd0;
+                        att_wr_pipe_q   <= 12'd0;
                         state_q         <= S_ATT_ISSUE_FINAL;
                     end
                 end
@@ -458,6 +458,8 @@ module CA_Control #(
         end
     end
 
+    logic [2:0] selected_burst;
+    assign selected_burst = (exec_op[1]) ? BURST_128 :BURST_4;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -504,9 +506,8 @@ module CA_DataPath #(
     output logic [31:0]          out_data
 );
 
-    localparam logic [1:0] ACT_USER     = 2'd0;
-    localparam logic [1:0] ACT_IDENTITY = 2'd1;
-    localparam logic [1:0] ACT_SPECIAL  = 2'd2;
+    localparam logic [1:0] ACT_USER    = 2'd0;
+    localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
     typedef enum logic [2:0] {
         PT_NONE,
@@ -548,13 +549,11 @@ module CA_DataPath #(
     logic [2:0]    act_in_idx;
     logic          act_valid;
     logic [1023:0] act_data;
-    logic [15:0]   act_max_abs;
     pipe_tag_t     act_tag_q [0:4];
     logic [2:0]    act_idx_q [0:4];
 
     logic          pot_in_valid;
     logic [1023:0] pot_in_data;
-    logic [15:0]   pot_in_max_abs;
     pipe_tag_t     pot_in_tag;
     logic [2:0]    pot_in_idx;
     logic          pot_valid;
@@ -633,19 +632,13 @@ module CA_DataPath #(
     assign act_in_valid = mha_comb_valid ||
                           (mult_valid &&
                            ((mult_tag_out == MT_NORM) ||
-                            (mult_tag_out == MT_Q) ||
-                            (mult_tag_out == MT_K) ||
-                            (mult_tag_out == MT_V) ||
                             (mult_tag_out == MT_SCORE) ||
                             ((mult_tag_out == MT_FINAL) && (op != 2'b11))));
     assign act_in_data  = mha_comb_valid ? mha_comb_data : mult_data;
     assign act_in_idx   = mha_comb_valid                       ? mha_comb_idx :
                           ((mult_tag_out == MT_FINAL) ||
-                           (mult_tag_out == MT_SCORE) ||
-                           (mult_tag_out == MT_Q) ||
-                           (mult_tag_out == MT_K) ||
-                           (mult_tag_out == MT_V))             ? mult_idx_out :
-                                                                  3'd0;
+                           (mult_tag_out == MT_SCORE))         ? mult_idx_out :
+                                                                 3'd0;
 
     always_comb begin
         act_in_tag  = PT_NONE;
@@ -655,18 +648,6 @@ module CA_DataPath #(
             MT_NORM: begin
                 act_in_tag  = PT_NORM;
                 act_in_mode = ACT_USER;
-            end
-            MT_Q: begin
-                act_in_tag  = PT_Q;
-                act_in_mode = ACT_IDENTITY;
-            end
-            MT_K: begin
-                act_in_tag  = PT_K;
-                act_in_mode = ACT_IDENTITY;
-            end
-            MT_V: begin
-                act_in_tag  = PT_V;
-                act_in_mode = ACT_IDENTITY;
             end
             MT_SCORE: begin
                 act_in_tag  = PT_SCORE;
@@ -683,23 +664,26 @@ module CA_DataPath #(
 
     logic use_act_for_pot;
     assign use_act_for_pot = act_valid &&
-                             ((act_tag_q[4] == PT_NORM) ||
-                              (act_tag_q[4] == PT_Q) ||
-                              (act_tag_q[4] == PT_K) ||
-                              (act_tag_q[4] == PT_V) ||
-                              (act_tag_q[4] == PT_FINAL));
+                             ((act_tag_q[4] == PT_NORM) || (act_tag_q[4] == PT_FINAL));
 
-    assign pot_in_valid   = use_act_for_pot;
-    assign pot_in_data    = act_data;
-    assign pot_in_max_abs = act_max_abs;
-    assign pot_in_idx     = act_idx_q[4];
+    assign pot_in_valid = use_act_for_pot ||
+                          (mult_valid && ((mult_tag_out == MT_Q) ||
+                                          (mult_tag_out == MT_K) ||
+                                          (mult_tag_out == MT_V)));
+    assign pot_in_data  = use_act_for_pot ? act_data       : mult_data;
+    assign pot_in_idx   = use_act_for_pot ? act_idx_q[4]   : mult_idx_out;
 
     always_comb begin
         if (use_act_for_pot) begin
             pot_in_tag = act_tag_q[4];
         end
         else begin
-            pot_in_tag = PT_NONE;
+            case (mult_tag_out)
+                MT_Q:    pot_in_tag = PT_Q;
+                MT_K:    pot_in_tag = PT_K;
+                MT_V:    pot_in_tag = PT_V;
+                default: pot_in_tag = PT_NONE;
+            endcase
         end
     end
 
@@ -751,8 +735,7 @@ module CA_DataPath #(
         .act_mode  (act_in_mode),
         .in_data   (act_in_data),
         .out_valid (act_valid),
-        .out_data  (act_data),
-        .out_max_abs (act_max_abs)
+        .out_data  (act_data)
     );
 
     PoT_FiveStage_Parallel u_pot (
@@ -760,7 +743,6 @@ module CA_DataPath #(
         .rst_n     (rst_n),
         .in_valid  (pot_in_valid),
         .in_data   (pot_in_data),
-        .in_max_abs (pot_in_max_abs),
         .out_valid (pot_valid),
         .out_data  (pot_data)
     );
@@ -869,7 +851,7 @@ module Multiple_Processor #(
     output logic [2:0]     mult_idx_out
 );
 
-    localparam int MULT_STAGES = 8;
+    localparam int MULT_STAGES = 2;
 
     logic          mult_issue_valid;
     logic          mult_issue_b_transpose;
@@ -976,7 +958,7 @@ module Multiple_Processor #(
         end
     end
 
-    Mult_8Stage_Parallel u_mult (
+    Mult_2Stage_Parallel u_mult (
         .clk            (clk),
         .rst_n          (rst_n),
         .op             (op),
@@ -1006,7 +988,7 @@ module Multiple_Processor #(
 
 endmodule
 
-module Mult_8Stage_Parallel (
+module Mult_2Stage_Parallel (
     input  logic                 clk,
     input  logic                 rst_n,
     input  logic [1:0]           op,
@@ -1022,23 +1004,12 @@ module Mult_8Stage_Parallel (
     output logic [1023:0]        out_data
 );
 
-    localparam int STAGES   = 8;
     localparam int ROW_ELEM = 8;
     localparam int MAT_SIZE = 64;
     localparam int DOT_SIZE = 9;
 
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [15:0] s16_t;
-
-    logic          valid_q      [0:STAGES-1];
-    logic          b_trans_q    [0:STAGES-1];
-    logic          a_wide_q     [0:STAGES-1];
-    logic          head_mask_q  [0:STAGES-1];
-    logic          head_sel_q   [0:STAGES-1];
-    logic [255:0]  mat_A_q      [0:STAGES-1];
-    logic [1023:0] mat_A_wide_q [0:STAGES-1];
-    logic [255:0]  mat_B_q      [0:STAGES-1];
-    s16_t          data_q       [0:STAGES-1][0:MAT_SIZE-1];
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
@@ -1064,7 +1035,7 @@ module Mult_8Stage_Parallel (
         input logic          a_wide_sel,
         input logic          head_mask_sel,
         input logic          head_sel_sel,
-        input integer        stage,
+        input integer        row_idx,
         input integer        lane,
         input integer        tap
     );
@@ -1073,7 +1044,7 @@ module Mult_8Stage_Parallel (
         integer col;
         begin
             if (op_sel == 2'b01) begin
-                idx   = (stage * ROW_ELEM) + lane;
+                idx   = (row_idx * ROW_ELEM) + lane;
                 row   = idx / ROW_ELEM;
                 col   = idx % ROW_ELEM;
                 sel_a = get_pad_s4(mat_A, row + (tap / 3) - 1, col + (tap % 3) - 1);
@@ -1086,10 +1057,10 @@ module Mult_8Stage_Parallel (
                 sel_a = 16'sd0;
             end
             else if (a_wide_sel) begin
-                sel_a = get_s16(mat_A_wide, (stage * ROW_ELEM) + tap);
+                sel_a = get_s16(mat_A_wide, (row_idx * ROW_ELEM) + tap);
             end
             else begin
-                sel_a = get_s4(mat_A, (stage * ROW_ELEM) + tap);
+                sel_a = get_s4(mat_A, (row_idx * ROW_ELEM) + tap);
             end
         end
     endfunction
@@ -1123,119 +1094,65 @@ module Mult_8Stage_Parallel (
         end
     endfunction
 
-    genvar st;
-    generate
-        for (st = 0; st < STAGES; st++) begin : g_stage
-            localparam int PREV_STAGE = (st == 0) ? 0 : st - 1;
+    // Stage 1 = all 64*9 = 576 partial products combinational, then register.
+    // Stage 2 = per-lane 9-input add tree combinational, then register.
+    logic stage1_valid_q;
+    logic stage2_valid_q;
+    s16_t prod_q   [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s16_t sum_q    [0:MAT_SIZE-1];
 
-            logic [255:0]  stage_A;
-            logic [1023:0] stage_A_wide;
-            logic [255:0]  stage_B;
-            logic          stage_valid;
-            logic [1:0]    stage_op;
-            logic          stage_b_trans;
-            logic          stage_a_wide;
-            logic          stage_head_mask;
-            logic          stage_head_sel;
-            s16_t          data_next [0:MAT_SIZE-1];
-            s16_t          mul_a [0:ROW_ELEM-1][0:DOT_SIZE-1];
-            s4_t           mul_b [0:ROW_ELEM-1][0:DOT_SIZE-1];
-            s16_t          prod  [0:ROW_ELEM-1][0:DOT_SIZE-1];
-            s16_t          value;
-            integer        idx;
+    s16_t prod_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s16_t sum_next  [0:MAT_SIZE-1];
 
-            always_comb begin
-                stage_valid     = (st == 0) ? in_valid       : valid_q[PREV_STAGE];
-                stage_op        = op;
-                stage_b_trans   = (st == 0) ? b_transpose    : b_trans_q[PREV_STAGE];
-                stage_a_wide    = (st == 0) ? a_wide         : a_wide_q[PREV_STAGE];
-                stage_head_mask = (st == 0) ? head_mask      : head_mask_q[PREV_STAGE];
-                stage_head_sel  = (st == 0) ? head_sel       : head_sel_q[PREV_STAGE];
-                stage_A         = (st == 0) ? in_data_A      : mat_A_q[PREV_STAGE];
-                stage_A_wide    = (st == 0) ? in_data_A_wide : mat_A_wide_q[PREV_STAGE];
-                stage_B         = (st == 0) ? in_data_B      : mat_B_q[PREV_STAGE];
-
-                for (int i = 0; i < MAT_SIZE; i++) begin
-                    if ((st != 0) && (i < st * ROW_ELEM)) begin
-                        data_next[i] = data_q[PREV_STAGE][i];
-                    end
-                    else begin
-                        data_next[i] = 16'sd0;
-                    end
-                end
-
-                for (int lane = 0; lane < ROW_ELEM; lane++) begin
-                    for (int tap = 0; tap < DOT_SIZE; tap++) begin
-                        mul_a[lane][tap] = sel_a(stage_A, stage_A_wide, stage_op,
-                                                 stage_a_wide, stage_head_mask,
-                                                 stage_head_sel, st, lane, tap);
-                        mul_b[lane][tap] = sel_b(stage_B, stage_op, stage_b_trans,
-                                                 stage_head_mask, stage_head_sel,
-                                                 lane, tap);
-                        prod[lane][tap]  = $signed(mul_a[lane][tap]) * $signed(mul_b[lane][tap]);
-                    end
-
-                    idx   = (st * ROW_ELEM) + lane;
-                    value = ((prod[lane][0] + prod[lane][1]) + (prod[lane][2] + prod[lane][3])) +
-                            ((prod[lane][4] + prod[lane][5]) + (prod[lane][6] + prod[lane][7]) +
-                             prod[lane][8]);
-
-                    data_next[idx] = value;
-                end
-            end
-
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    valid_q[st] <= 1'b0;
-                end
-                else begin
-                    valid_q[st]      <= stage_valid;
-                    
-
-                    if (st < STAGES - 1) begin
-                        b_trans_q[st]    <= stage_b_trans;
-                        a_wide_q[st]     <= stage_a_wide;
-                        head_mask_q[st]  <= stage_head_mask;
-                        head_sel_q[st]   <= stage_head_sel;
-                        for (int r = 0; r < ROW_ELEM; r++) begin
-                            // mat_A_q[st] must carry rows {st..7} forward: Conv stage
-                            // st+1 reads rows {st, st+1, st+2}, and subsequent stages
-                            // need the rest propagated through this register.
-                            if (r >= st) begin
-                                mat_A_q[st][255 - r*32 -: 32] <= stage_A[255 - r*32 -: 32];
-                            end
-                            else begin
-                                mat_A_q[st][255 - r*32 -: 32] <= 32'd0;
-                            end
-                            // mat_A_wide_q[st] must carry rows {st+1..7} forward.
-                            if (r > st) begin
-                                mat_A_wide_q[st][1023 - r*128 -: 128] <= stage_A_wide[1023 - r*128 -: 128];
-                            end
-                            else begin
-                                mat_A_wide_q[st][1023 - r*128 -: 128] <= 128'd0;
-                            end
-                        end
-                        mat_B_q[st] <= stage_B;
-                    end
-                    for (int i = 0; i < MAT_SIZE; i++) begin
-                        if (i < (st + 1) * ROW_ELEM) begin
-                            data_q[st][i] <= data_next[i];
-                        end
-                        else begin
-                            data_q[st][i] <= 16'sd0;
-                        end
-                    end
+    always_comb begin
+        for (int row = 0; row < ROW_ELEM; row++) begin
+            for (int lane = 0; lane < ROW_ELEM; lane++) begin
+                for (int tap = 0; tap < DOT_SIZE; tap++) begin
+                    prod_next[(row * ROW_ELEM) + lane][tap] =
+                        $signed(sel_a(in_data_A, in_data_A_wide, op,
+                                      a_wide, head_mask, head_sel,
+                                      row, lane, tap)) *
+                        $signed(sel_b(in_data_B, op, b_transpose,
+                                      head_mask, head_sel,
+                                      lane, tap));
                 end
             end
         end
-    endgenerate
+    end
 
-    assign out_valid = valid_q[STAGES-1];
+    always_comb begin
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            sum_next[i] = ((prod_q[i][0] + prod_q[i][1]) + (prod_q[i][2] + prod_q[i][3])) +
+                          ((prod_q[i][4] + prod_q[i][5]) + (prod_q[i][6] + prod_q[i][7]) +
+                           prod_q[i][8]);
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            stage1_valid_q <= 1'b0;
+            stage2_valid_q <= 1'b0;
+        end
+        else begin
+            stage1_valid_q <= in_valid;
+            stage2_valid_q <= stage1_valid_q;
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                for (int t = 0; t < DOT_SIZE; t++) begin
+                    prod_q[i][t] <= prod_next[i][t];
+                end
+            end
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                sum_q[i] <= sum_next[i];
+            end
+        end
+    end
+
+    assign out_valid = stage2_valid_q;
 
     always_comb begin
         out_data = 1024'd0;
         for (int i = 0; i < MAT_SIZE; i++) begin
-            out_data[1023 - (i * 16) -: 16] = data_q[STAGES-1][i];
+            out_data[1023 - (i * 16) -: 16] = sum_q[i];
         end
     end
 
@@ -1249,8 +1166,7 @@ module ACT_FiveStage_Parallel (
     input  logic [1:0]    act_mode,
     input  logic [1023:0] in_data,
     output logic          out_valid,
-    output logic [1023:0] out_data,
-    output logic [15:0]   out_max_abs
+    output logic [1023:0] out_data
 );
 
     localparam int MAT_SIZE   = 64;
@@ -1258,9 +1174,8 @@ module ACT_FiveStage_Parallel (
     localparam int CHUNK_SIZE = 16;
     localparam int ACT_STAGES = 5;
 
-    localparam logic [1:0] ACT_USER     = 2'd0;
-    localparam logic [1:0] ACT_IDENTITY = 2'd1;
-    localparam logic [1:0] ACT_SPECIAL  = 2'd2;
+    localparam logic [1:0] ACT_USER    = 2'd0;
+    localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
     typedef logic signed [15:0] s16_t;
     typedef logic signed [19:0] s20_t;
@@ -1269,7 +1184,6 @@ module ACT_FiveStage_Parallel (
     logic [1:0]    act_q    [0:ACT_STAGES-1];
     logic [1:0]    mode_q   [0:ACT_STAGES-1];
     logic [1023:0] matrix_q [0:ACT_STAGES-1];
-    logic [15:0]   max_q    [0:ACT_STAGES-1];
     // thr_*_q only feeds stages 1..4 (each stage uses prev stage's threshold).
     // Stage 4 is the last apply_chunk consumer, so we only need indices 0..3.
     s20_t          thr_a_q  [0:ACT_STAGES-2];
@@ -1279,14 +1193,9 @@ module ACT_FiveStage_Parallel (
     logic [39:0]   thr1_pair;
     logic [39:0]   thr2_pair;
     logic [39:0]   thr3_pair;
-    logic [1039:0] chunk0_result;
-    logic [1039:0] chunk1_result;
-    logic [1039:0] chunk2_result;
-    logic [1039:0] chunk3_result;
 
     assign out_valid = valid_q[ACT_STAGES-1];
     assign out_data  = matrix_q[ACT_STAGES-1];
-    assign out_max_abs = max_q[ACT_STAGES-1];
 
     function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
         get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
@@ -1296,21 +1205,9 @@ module ACT_FiveStage_Parallel (
         ext20 = {{4{value[15]}}, value};
     endfunction
 
-    function automatic logic [15:0] abs16(input s16_t value);
-        abs16 = (value < 0) ? -value : value;
-    endfunction
-
-    function automatic logic [15:0] max_u16(
-        input logic [15:0] a,
-        input logic [15:0] b
-    );
-        max_u16 = (a > b) ? a : b;
-    endfunction
-
     function automatic logic [39:0] calc_threshold_pair(
         input logic [1023:0] matrix,
         input logic [1:0]    act_sel,
-        input logic [1:0]    mode_sel,
         input integer        chunk
     );
         integer row0;
@@ -1329,50 +1226,48 @@ module ACT_FiveStage_Parallel (
             thr_a = 20'sd0;
             thr_b = 20'sd0;
 
-            if ((mode_sel == ACT_USER) && (act_sel != 2'b00)) begin
-                case (act_sel)
-                    2'b01: begin
-                        row0 = chunk * 2;
-                        row1 = row0 + 1;
-                        for (int c = 0; c < ROW_ELEM; c++) begin
-                            sum_a += ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
-                            sum_b += ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
-                        end
-                        thr_a = sum_a >>> 3;
-                        thr_b = sum_b >>> 3;
+            case (act_sel)
+                2'b01: begin
+                    row0 = chunk * 2;
+                    row1 = row0 + 1;
+                    for (int c = 0; c < ROW_ELEM; c++) begin
+                        sum_a += ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
+                        sum_b += ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
                     end
+                    thr_a = sum_a >>> 3;
+                    thr_b = sum_b >>> 3;
+                end
 
-                    2'b10: begin
-                        col0 = chunk * 2;
-                        col1 = col0 + 1;
-                        for (int r = 0; r < ROW_ELEM; r++) begin
-                            sum_a += ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
-                            sum_b += ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
-                        end
-                        thr_a = sum_a >>> 3;
-                        thr_b = sum_b >>> 3;
+                2'b10: begin
+                    col0 = chunk * 2;
+                    col1 = col0 + 1;
+                    for (int r = 0; r < ROW_ELEM; r++) begin
+                        sum_a += ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
+                        sum_b += ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
                     end
+                    thr_a = sum_a >>> 3;
+                    thr_b = sum_b >>> 3;
+                end
 
-                    2'b11: begin
-                        base_row = (chunk / 2) * 4;
-                        base_col = (chunk % 2) * 4;
-                        for (int r = 0; r < 4; r++) begin
-                            for (int c = 0; c < 4; c++) begin
-                                sum_a += ext20(get_s16(matrix,
-                                                       ((base_row + r) * ROW_ELEM) +
-                                                       (base_col + c)));
-                            end
+                2'b11: begin
+                    base_row = (chunk / 2) * 4;
+                    base_col = (chunk % 2) * 4;
+                    for (int r = 0; r < 4; r++) begin
+                        for (int c = 0; c < 4; c++) begin
+                            sum_a += ext20(get_s16(matrix,
+                                                   ((base_row + r) * ROW_ELEM) +
+                                                   (base_col + c)));
                         end
-                        thr_a = sum_a >>> 4;
-                        thr_b = thr_a;
                     end
+                    thr_a = sum_a >>> 4;
+                    thr_b = thr_a;
+                end
 
-                    default: begin
-                        thr_a = 20'sd0;
-                        thr_b = 20'sd0;
-                    end
-                endcase
-            end
+                default: begin
+                    thr_a = 20'sd0;
+                    thr_b = 20'sd0;
+                end
+            endcase
 
             calc_threshold_pair = {thr_a, thr_b};
         end
@@ -1447,10 +1342,6 @@ module ACT_FiveStage_Parallel (
     );
         begin
             case (mode_sel)
-                ACT_IDENTITY: begin
-                    activate_value = value;
-                end
-
                 ACT_SPECIAL: begin
                     activate_value = (value < 0) ? (value >>> 2) : value;
                 end
@@ -1467,7 +1358,7 @@ module ACT_FiveStage_Parallel (
         end
     endfunction
 
-    function automatic logic [1039:0] apply_chunk_with_max(
+    function automatic logic [1023:0] apply_chunk(
         input logic [1023:0] base_matrix,
         input logic [1023:0] src_matrix,
         input logic [1:0]    act_sel,
@@ -1478,46 +1369,36 @@ module ACT_FiveStage_Parallel (
     );
         integer idx;
         s20_t  threshold;
-        s16_t  activated;
-        logic [1023:0] matrix;
-        logic [15:0]   chunk_max;
         begin
-            matrix    = base_matrix;
-            chunk_max = 16'd0;
+            apply_chunk = base_matrix;
 
             for (int lane = 0; lane < CHUNK_SIZE; lane++) begin
                 idx       = chunk_idx(act_sel, mode_sel, chunk, lane);
                 threshold = select_threshold(act_sel, lane, threshold_a, threshold_b);
-                activated = activate_value(get_s16(src_matrix, idx), act_sel,
-                                           mode_sel, threshold);
-                matrix[1023 - (idx * 16) -: 16] = activated;
-                chunk_max = max_u16(chunk_max, abs16(activated));
+                apply_chunk[1023 - (idx * 16) -: 16] =
+                    activate_value(get_s16(src_matrix, idx), act_sel, mode_sel, threshold);
             end
-
-            apply_chunk_with_max = {chunk_max, matrix};
         end
     endfunction
 
     always_comb begin
-        thr0_pair = calc_threshold_pair(in_data,     act,      act_mode,  0);
-        thr1_pair = calc_threshold_pair(matrix_q[0], act_q[0], mode_q[0], 1);
-        thr2_pair = calc_threshold_pair(matrix_q[1], act_q[1], mode_q[1], 2);
-        thr3_pair = calc_threshold_pair(matrix_q[2], act_q[2], mode_q[2], 3);
-
-        chunk0_result = apply_chunk_with_max(matrix_q[0], matrix_q[0], act_q[0], mode_q[0],
-                                             0, thr_a_q[0], thr_b_q[0]);
-        chunk1_result = apply_chunk_with_max(matrix_q[1], matrix_q[1], act_q[1], mode_q[1],
-                                             1, thr_a_q[1], thr_b_q[1]);
-        chunk2_result = apply_chunk_with_max(matrix_q[2], matrix_q[2], act_q[2], mode_q[2],
-                                             2, thr_a_q[2], thr_b_q[2]);
-        chunk3_result = apply_chunk_with_max(matrix_q[3], matrix_q[3], act_q[3], mode_q[3],
-                                             3, thr_a_q[3], thr_b_q[3]);
+        thr0_pair = calc_threshold_pair(in_data,     act,      0);
+        thr1_pair = calc_threshold_pair(matrix_q[0], act_q[0], 1);
+        thr2_pair = calc_threshold_pair(matrix_q[1], act_q[1], 2);
+        thr3_pair = calc_threshold_pair(matrix_q[2], act_q[2], 3);
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < ACT_STAGES; i++) begin
-                valid_q[i] <= 1'b0;
+                valid_q[i]  <= 1'b0;
+                act_q[i]    <= 2'd0;
+                mode_q[i]   <= ACT_USER;
+                matrix_q[i] <= 1024'd0;
+            end
+            for (int i = 0; i < ACT_STAGES - 1; i++) begin
+                thr_a_q[i] <= 20'sd0;
+                thr_b_q[i] <= 20'sd0;
             end
         end
         else begin
@@ -1525,39 +1406,38 @@ module ACT_FiveStage_Parallel (
             act_q[0]    <= act;
             mode_q[0]   <= act_mode;
             matrix_q[0] <= in_data;
-            max_q[0]    <= 16'd0;
             thr_a_q[0]  <= $signed(thr0_pair[39:20]);
             thr_b_q[0]  <= $signed(thr0_pair[19:0]);
 
             valid_q[1]  <= valid_q[0];
             act_q[1]    <= act_q[0];
             mode_q[1]   <= mode_q[0];
-            matrix_q[1] <= chunk0_result[1023:0];
-            max_q[1]    <= max_u16(max_q[0], chunk0_result[1039:1024]);
+            matrix_q[1] <= apply_chunk(matrix_q[0], matrix_q[0], act_q[0], mode_q[0],
+                                       0, thr_a_q[0], thr_b_q[0]);
             thr_a_q[1]  <= $signed(thr1_pair[39:20]);
             thr_b_q[1]  <= $signed(thr1_pair[19:0]);
 
             valid_q[2]  <= valid_q[1];
             act_q[2]    <= act_q[1];
             mode_q[2]   <= mode_q[1];
-            matrix_q[2] <= chunk1_result[1023:0];
-            max_q[2]    <= max_u16(max_q[1], chunk1_result[1039:1024]);
+            matrix_q[2] <= apply_chunk(matrix_q[1], matrix_q[1], act_q[1], mode_q[1],
+                                       1, thr_a_q[1], thr_b_q[1]);
             thr_a_q[2]  <= $signed(thr2_pair[39:20]);
             thr_b_q[2]  <= $signed(thr2_pair[19:0]);
 
             valid_q[3]  <= valid_q[2];
             act_q[3]    <= act_q[2];
             mode_q[3]   <= mode_q[2];
-            matrix_q[3] <= chunk2_result[1023:0];
-            max_q[3]    <= max_u16(max_q[2], chunk2_result[1039:1024]);
+            matrix_q[3] <= apply_chunk(matrix_q[2], matrix_q[2], act_q[2], mode_q[2],
+                                       2, thr_a_q[2], thr_b_q[2]);
             thr_a_q[3]  <= $signed(thr3_pair[39:20]);
             thr_b_q[3]  <= $signed(thr3_pair[19:0]);
 
             valid_q[4]  <= valid_q[3];
             act_q[4]    <= act_q[3];
             mode_q[4]   <= mode_q[3];
-            matrix_q[4] <= chunk3_result[1023:0];
-            max_q[4]    <= max_u16(max_q[3], chunk3_result[1039:1024]);
+            matrix_q[4] <= apply_chunk(matrix_q[3], matrix_q[3], act_q[3], mode_q[3],
+                                       3, thr_a_q[3], thr_b_q[3]);
         end
     end
 
@@ -1568,7 +1448,6 @@ module PoT_FiveStage_Parallel (
     input  logic          rst_n,
     input  logic          in_valid,
     input  logic [1023:0] in_data,
-    input  logic [15:0]   in_max_abs,
     output logic          out_valid,
     output logic [255:0]  out_data
 );
@@ -1579,12 +1458,13 @@ module PoT_FiveStage_Parallel (
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [15:0] s16_t;
 
+    logic          max_valid;
+    logic [15:0]   max_abs;
+    logic [1023:0] src_pipe_q [0:2];
     logic          quant_valid;
     logic [3:0]    quant_shift;
     logic [1023:0] quant_src;
     logic [255:0]  quant_data;
-    logic [2:0]    result_valid_q;
-    logic [255:0]  result_data_q [0:2];
     logic [3:0]    shift_next;
     logic [255:0]  quant_data_next;
     logic [255:0]  out_data_next;
@@ -1653,51 +1533,68 @@ module PoT_FiveStage_Parallel (
     endfunction
 
     always_comb begin
-        shift_next      = pot_shift(in_max_abs);
-        quant_data_next = quant_half(256'd0, in_data, shift_next, 1'b0);
+        shift_next      = pot_shift(max_abs);
+        quant_data_next = quant_half(256'd0, src_pipe_q[2], shift_next, 1'b0);
         out_data_next   = quant_half(quant_data, quant_src, quant_shift, 1'b1);
+    end
+
+    Matrix_Max_3Stage_Parallel u_matrix_max (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (in_valid),
+        .in_data   (in_data),
+        .out_valid (max_valid),
+        .out_max   (max_abs)
+    );
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int stage = 0; stage < 3; stage++) begin
+                src_pipe_q[stage] <= 1024'd0;
+            end
+        end
+        else begin
+            src_pipe_q[0] <= in_data;
+            src_pipe_q[1] <= src_pipe_q[0];
+            src_pipe_q[2] <= src_pipe_q[1];
+        end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            quant_valid   <= 1'b0;
-            result_valid_q <= 3'd0;
-            out_valid     <= 1'b0;
+            quant_valid <= 1'b0;
+            out_valid   <= 1'b0;
         end
         else begin
-            quant_valid      <= in_valid;
-            result_valid_q[0] <= quant_valid;
-            result_valid_q[1] <= result_valid_q[0];
-            result_valid_q[2] <= result_valid_q[1];
-            out_valid        <= result_valid_q[2];
+            quant_valid <= max_valid;
+            out_valid   <= quant_valid;
         end
     end
 
-    always_ff @(posedge clk) begin
-        if (in_valid) begin
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            quant_shift <= 4'd0;
+            quant_src   <= 1024'd0;
+            quant_data  <= 256'd0;
+        end
+        else if (max_valid) begin
             quant_shift <= shift_next;
-            quant_src   <= in_data;
+            quant_src   <= src_pipe_q[2];
             quant_data  <= quant_data_next;
         end
-
-        if (quant_valid) begin
-            result_data_q[0] <= out_data_next;
-        end
-        if (result_valid_q[0]) begin
-            result_data_q[1] <= result_data_q[0];
-        end
-        if (result_valid_q[1]) begin
-            result_data_q[2] <= result_data_q[1];
-        end
     end
 
-    always_ff @(posedge clk) begin
-        if (result_valid_q[2]) begin
-            out_data <= result_data_q[2];
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            out_data <= 256'd0;
+        end
+        else if (quant_valid) begin
+            out_data <= out_data_next;
         end
     end
 
 endmodule
+
 
 module Matrix_Max_3Stage_Parallel (
     input  logic          clk,

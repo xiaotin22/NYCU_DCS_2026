@@ -1,3 +1,21 @@
+typedef enum logic [2:0] {
+    IM_NONE  = 3'd0,
+    IM_NORM  = 3'd1,
+    IM_QKV   = 3'd2,
+    IM_SV    = 3'd3,
+    IM_FINAL = 3'd4
+} issue_mode_t;
+
+typedef enum logic [2:0] {
+    MT_NONE,
+    MT_NORM,
+    MT_Q,
+    MT_K,
+    MT_V,
+    MT_SCORE,
+    MT_FINAL
+} mult_tag_t;
+
 module CA #(
     parameter RAM_DEPTH = 256,
     parameter RAM_WIDTH = 256,
@@ -36,31 +54,32 @@ module CA #(
     logic [255:0]  exec_weight_v;
 
     logic          datapath_issue_valid;
-    logic [2:0]    datapath_issue_mode;
+    issue_mode_t   datapath_issue_mode;
     logic [3:0]    datapath_issue_idx;
     logic          datapath_capture_valid;
     logic [1:0]    datapath_capture_idx;
     logic          datapath_qkv_ready;
     logic          datapath_sv_ready;
     logic          datapath_result_valid;
-    logic          datapath_result_commit;
 
     CA_Control #(
-        .RAM_DEPTH (RAM_DEPTH),
-        .BURST_BIT (BURST_BIT)
+        .RAM_DEPTH (RAM_DEPTH), .BURST_BIT (BURST_BIT)
     ) u_control (
-        .clk                    (clk),
-        .rst_n                  (rst_n),
-        .mem_set                (mem_set),
-        .in_valid               (in_valid),
-        .op                     (op),
-        .act                    (act),
-        .param                  (param),
-        .rd_ready               (rd_ready),
-        .rd_valid               (rd_valid),
+        .clk(clk), .rst_n(rst_n),
+
+        // From Top Module
+        .mem_set(mem_set), .in_valid(in_valid),
+        .op(op), .act(act), .param(param),
+
+        // From RAM interface
+        .rd_ready(rd_ready), .rd_valid(rd_valid),
+
+        // Receive DataPath
         .datapath_qkv_ready     (datapath_qkv_ready),
         .datapath_sv_ready      (datapath_sv_ready),
         .datapath_result_valid  (datapath_result_valid),
+
+        // Output to DataPath
         .exec_op                (exec_op),
         .exec_act               (exec_act),
         .exec_param             (exec_param),
@@ -71,13 +90,10 @@ module CA #(
         .datapath_issue_idx     (datapath_issue_idx),
         .datapath_capture_valid (datapath_capture_valid),
         .datapath_capture_idx   (datapath_capture_idx),
-        .datapath_result_commit (datapath_result_commit),
-        .rd_en                  (rd_en),
-        .rd_addr                (rd_addr),
-        .rd_burst               (rd_burst),
-        .wr_en                  (wr_en),
-        .wr_addr                (wr_addr),
-        .wr_burst               (wr_burst)
+
+        // Output for RAM interface
+        .rd_en(rd_en), .rd_addr(rd_addr), .rd_burst(rd_burst),
+        .wr_en(wr_en), .wr_addr(wr_addr), .wr_burst(wr_burst)
     );
 
     CA_DataPath #(
@@ -85,6 +101,7 @@ module CA #(
     ) u_datapath (
         .clk                    (clk),
         .rst_n                  (rst_n),
+        // From Control Module
         .issue_valid            (datapath_issue_valid),
         .issue_mode             (datapath_issue_mode),
         .issue_idx              (datapath_issue_idx),
@@ -95,11 +112,13 @@ module CA #(
         .param                  (exec_param),
         .weight_k               (exec_weight_k),
         .weight_v               (exec_weight_v),
+        // Reading from RAM
         .rd_data                (rd_data),
-        .result_commit          (datapath_result_commit),
+        // Output to Control Module
         .qkv_ready              (datapath_qkv_ready),
         .sv_ready               (datapath_sv_ready),
         .result_valid           (datapath_result_valid),
+        // Output to Top Module
         .wr_data                (wr_data),
         .out_valid              (out_valid),
         .out_data               (out_data)
@@ -130,11 +149,10 @@ module CA_Control #(
     output logic [255:0]                    exec_weight_k,
     output logic [255:0]                    exec_weight_v,
     output logic                            datapath_issue_valid,
-    output logic [2:0]                      datapath_issue_mode,
+    output issue_mode_t                     datapath_issue_mode,
     output logic [3:0]                      datapath_issue_idx,
     output logic                            datapath_capture_valid,
     output logic [1:0]                      datapath_capture_idx,
-    output logic                            datapath_result_commit,
 
     output logic                            rd_en,
     output logic [$clog2(RAM_DEPTH)-1:0]    rd_addr,
@@ -149,15 +167,9 @@ module CA_Control #(
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
 
-    localparam logic [2:0] IM_NONE  = 3'd0;
-    localparam logic [2:0] IM_NORM  = 3'd1;
-    localparam logic [2:0] IM_QKV   = 3'd2;
-    localparam logic [2:0] IM_SV    = 3'd3;
-    localparam logic [2:0] IM_FINAL = 3'd4;
-
     typedef enum logic [3:0] {
         S_IDLE,
-        S_RUN,
+        S_FAST_RUN,
         S_ATT_PARAM,
         S_ATT_READ,
         S_ATT_ISSUE_QKV,
@@ -169,18 +181,15 @@ module CA_Control #(
     } state_t;
 
     state_t      state_q;
-    logic [1:0]  att_param_cnt_q;
+    logic        att_param_phase_q;
     logic [1:0]  rd_req_cnt_q;
-    logic [2:0]  att_rd_word_cnt_q;
+    logic [1:0]  att_rd_word_cnt_q;
     logic [7:0]  wr_cmd_cnt_q;
     logic [7:0]  out_cnt_q;
-    logic [9:0]  wr_pre_pipe_q;
+    logic [7:0]  wr_pre_pipe_q;
     logic [7:0]  att_group_base_q;
-    logic [3:0]  att_issue_cnt_q;
-    logic [2:0]  att_sv_issue_cnt_q;
-    logic [2:0]  att_final_issue_cnt_q;
-    logic [1:0]  att_final_recv_cnt_q;
-    logic [13:0] att_wr_pipe_q;
+    logic [3:0]  att_phase_cnt_q;
+    logic [11:0] att_wr_pipe_q;
     logic        att_prefetch_pending_q;
 
     logic        job_start;
@@ -188,25 +197,29 @@ module CA_Control #(
     logic        wr_pre_fire;
     logic        wr_cmd_fire;
     logic        rd_cmd_fire;
+    logic        att_read_fire;
+    logic        att_prefetch_fire;
     logic        result_last;
     logic        att_final_start;
     logic        att_wr_fire;
     logic [7:0]  att_next_group_base;
 
-    function automatic logic op_supported(input logic [1:0] op_sel);
-        op_supported = (op_sel == 2'b00) || (op_sel == 2'b01) ||
-                       (op_sel == 2'b10) || (op_sel == 2'b11);
-    endfunction
-
-    assign job_start              = (state_q == S_IDLE) && mem_set && in_valid && op_supported(op);
+    assign job_start              = (state_q == S_IDLE) && mem_set && in_valid;
     assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
-    assign datapath_result_commit = datapath_result_valid;
     assign result_last            = datapath_result_valid && (out_cnt_q == 8'd255);
-    assign wr_pre_fire            = wr_pre_pipe_q[9];
-    assign wr_cmd_fire            = (state_q == S_RUN) && wr_pre_fire;
-    assign rd_cmd_fire            = (state_q == S_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
-    assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_final_issue_cnt_q == 3'd0);
-    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[13] : att_wr_pipe_q[9];
+    assign wr_pre_fire            = wr_pre_pipe_q[7];
+    assign wr_cmd_fire            = (state_q == S_FAST_RUN) && wr_pre_fire;
+    assign rd_cmd_fire            = (state_q == S_FAST_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
+    assign att_read_fire          = (state_q == S_ATT_READ) &&
+                                    !att_prefetch_pending_q &&
+                                    (rd_req_cnt_q == 2'd0) &&
+                                    rd_ready;
+    assign att_prefetch_fire      = (state_q == S_ATT_ISSUE_SV) &&
+                                    !att_prefetch_pending_q &&
+                                    (att_group_base_q != 8'd252) &&
+                                    rd_ready;
+    assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_phase_cnt_q == 4'd0);
+    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[11] : att_wr_pipe_q[7];
     assign att_next_group_base    = att_group_base_q + 8'd4;
 
     always_comb begin
@@ -214,10 +227,10 @@ module CA_Control #(
         datapath_issue_mode    = IM_NONE;
         datapath_issue_idx     = 4'd0;
         datapath_capture_valid = 1'b0;
-        datapath_capture_idx   = att_rd_word_cnt_q[1:0];
+        datapath_capture_idx   = att_rd_word_cnt_q;
 
         case (state_q)
-            S_RUN: begin
+            S_FAST_RUN: begin
                 if (rd_valid) begin
                     datapath_issue_valid = 1'b1;
                     datapath_issue_mode  = IM_NORM;
@@ -225,28 +238,28 @@ module CA_Control #(
             end
 
             S_ATT_READ: begin
-                if (rd_valid && (att_rd_word_cnt_q < 3'd4)) begin
+                if (rd_valid) begin
                     datapath_capture_valid = 1'b1;
-                    datapath_capture_idx   = att_rd_word_cnt_q[1:0];
+                    datapath_capture_idx   = att_rd_word_cnt_q;
                 end
             end
 
             S_ATT_ISSUE_QKV: begin
                 datapath_issue_valid = 1'b1;
                 datapath_issue_mode  = IM_QKV;
-                datapath_issue_idx   = att_issue_cnt_q;
+                datapath_issue_idx   = att_phase_cnt_q;
             end
 
             S_ATT_ISSUE_SV: begin
                 datapath_issue_valid = 1'b1;
                 datapath_issue_mode  = IM_SV;
-                datapath_issue_idx   = att_sv_issue_cnt_q;
+                datapath_issue_idx   = att_phase_cnt_q;
             end
 
             S_ATT_ISSUE_FINAL: begin
                 datapath_issue_valid = 1'b1;
                 datapath_issue_mode  = IM_FINAL;
-                datapath_issue_idx   = {1'b0, att_final_issue_cnt_q};
+                datapath_issue_idx   = att_phase_cnt_q;
             end
 
             default: begin
@@ -256,39 +269,23 @@ module CA_Control #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state_q               <= S_IDLE;
-            exec_op               <= 2'b00;
-            exec_act              <= 2'b00;
-            exec_param            <= 256'd0;
-            exec_weight_k         <= 256'd0;
-            exec_weight_v         <= 256'd0;
-            att_param_cnt_q       <= 2'd0;
-            rd_req_cnt_q          <= 2'd0;
-            att_rd_word_cnt_q     <= 3'd0;
-            wr_cmd_cnt_q          <= 8'd0;
-            out_cnt_q             <= 8'd0;
-            wr_pre_pipe_q         <= 10'd0;
-            att_group_base_q      <= 8'd0;
-            att_issue_cnt_q       <= 4'd0;
-            att_sv_issue_cnt_q    <= 3'd0;
-            att_final_issue_cnt_q <= 3'd0;
-            att_final_recv_cnt_q  <= 2'd0;
-            att_wr_pipe_q         <= 14'd0;
+            state_q                <= S_IDLE;
+            rd_req_cnt_q           <= 2'd0;
+            att_rd_word_cnt_q      <= 2'd0;
+            wr_cmd_cnt_q           <= 8'd0;
+            out_cnt_q              <= 8'd0;
+            wr_pre_pipe_q          <= 8'd0;
+            att_group_base_q       <= 8'd0;
+            att_phase_cnt_q        <= 4'd0;
+            att_wr_pipe_q          <= 12'd0;
             att_prefetch_pending_q <= 1'b0;
-            rd_en                 <= 1'b0;
-            rd_addr               <= '0;
-            rd_burst              <= '0;
-            wr_en                 <= 1'b0;
-            wr_addr               <= '0;
-            wr_burst              <= '0;
+            wr_en                  <= 1'b0;
         end
         else begin
-            rd_en    <= 1'b0;
             wr_en    <= 1'b0;
-            rd_burst <= '0;
             wr_burst <= '0;
 
-            att_wr_pipe_q <= {att_wr_pipe_q[12:0], att_final_start};
+            att_wr_pipe_q <= {att_wr_pipe_q[10:0], att_final_start};
 
             if (att_wr_fire) begin
                 wr_en    <= 1'b1;
@@ -304,31 +301,28 @@ module CA_Control #(
                         exec_param <= param;
 
                         rd_req_cnt_q          <= 2'd0;
-                        att_rd_word_cnt_q     <= 3'd0;
+                        att_rd_word_cnt_q     <= 2'd0;
                         wr_cmd_cnt_q          <= 8'd0;
                         out_cnt_q             <= 8'd0;
-                        wr_pre_pipe_q         <= 10'd0;
-                        att_wr_pipe_q         <= 14'd0;
-                        att_final_recv_cnt_q  <= 2'd0;
+                        wr_pre_pipe_q         <= 8'd0;
+                        att_wr_pipe_q         <= 12'd0;
                         att_prefetch_pending_q <= 1'b0;
 
                         if (attention_start) begin
-                            att_param_cnt_q <= 2'd1;
-                            state_q         <= S_ATT_PARAM;
+                            att_param_phase_q <= 1'b0;
+                            state_q           <= S_ATT_PARAM;
                         end
                         else begin
-                            state_q <= S_RUN;
+                            state_q <= S_FAST_RUN;
                         end
                     end
                 end
 
-                S_RUN: begin
-                    wr_pre_pipe_q <= {wr_pre_pipe_q[8:0], datapath_issue_valid};
+                S_FAST_RUN: begin
+                    wr_pre_pipe_q <= {wr_pre_pipe_q[6:0], datapath_issue_valid};
 
                     if (rd_cmd_fire) begin
-                        rd_en        <= 1'b1;
                         rd_addr      <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
-                        rd_burst     <= BURST_128;
                         rd_req_cnt_q <= rd_req_cnt_q + 1'b1;
                     end
 
@@ -353,18 +347,17 @@ module CA_Control #(
 
                 S_ATT_PARAM: begin
                     if (in_valid) begin
-                        if (att_param_cnt_q == 2'd1) begin
-                            exec_weight_k   <= param;
-                            att_param_cnt_q <= 2'd2;
+                        if (!att_param_phase_q) begin
+                            exec_weight_k     <= param;
+                            att_param_phase_q <= 1'b1;
                         end
                         else begin
-                            exec_weight_v         <= param;
+                            exec_weight_v          <= param;
                             att_group_base_q       <= 8'd0;
                             rd_req_cnt_q           <= 2'd0;
-                            att_rd_word_cnt_q      <= 3'd0;
+                            att_rd_word_cnt_q      <= 2'd0;
                             out_cnt_q              <= 8'd0;
-                            att_final_recv_cnt_q   <= 2'd0;
-                            att_wr_pipe_q          <= 14'd0;
+                            att_wr_pipe_q          <= 12'd0;
                             att_prefetch_pending_q <= 1'b0;
                             state_q                <= S_ATT_READ;
                         end
@@ -372,90 +365,84 @@ module CA_Control #(
                 end
 
                 S_ATT_READ: begin
-                    if (!att_prefetch_pending_q && (rd_req_cnt_q == 2'd0) && rd_ready) begin
-                        rd_en        <= 1'b1;
+                    if (att_read_fire) begin
                         rd_addr      <= att_group_base_q[ADDR_W-1:0];
-                        rd_burst     <= BURST_4;
                         rd_req_cnt_q <= 2'd1;
                     end
 
-                    if (rd_valid && (att_rd_word_cnt_q < 3'd4)) begin
-                        if (att_rd_word_cnt_q == 3'd3) begin
-                            att_issue_cnt_q         <= 4'd0;
+                    if (rd_valid) begin
+                        if (att_rd_word_cnt_q == 2'd3) begin
+                            att_phase_cnt_q        <= 4'd0;
                             att_prefetch_pending_q <= 1'b0;
-                            state_q                 <= S_ATT_ISSUE_QKV;
+                            state_q                <= S_ATT_ISSUE_QKV;
                         end
-                        att_rd_word_cnt_q <= att_rd_word_cnt_q + 3'd1;
+                        else begin
+                            att_rd_word_cnt_q <= att_rd_word_cnt_q + 1'b1;
+                        end
                     end
                 end
 
                 S_ATT_ISSUE_QKV: begin
-                    if (att_issue_cnt_q == 4'd11) begin
+                    if (att_phase_cnt_q == 4'd11) begin
                         state_q <= S_ATT_WAIT_QKV;
                     end
                     else begin
-                        att_issue_cnt_q <= att_issue_cnt_q + 1'b1;
+                        att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
                     end
                 end
 
                 S_ATT_WAIT_QKV: begin
+                    if (att_prefetch_fire) begin
+                        rd_addr                 <= att_next_group_base[ADDR_W-1:0];
+                        att_prefetch_pending_q  <= 1'b1;
+                    end
+
                     if (datapath_qkv_ready) begin
-                        att_sv_issue_cnt_q <= 3'd0;
-                        state_q            <= S_ATT_ISSUE_SV;
+                        att_phase_cnt_q <= 4'd0;
+                        state_q         <= S_ATT_ISSUE_SV;
                     end
                 end
 
                 S_ATT_ISSUE_SV: begin
-                    if (!att_prefetch_pending_q && (att_group_base_q != 8'd252) && rd_ready) begin
-                        rd_en                    <= 1'b1;
-                        rd_addr                  <= att_next_group_base[ADDR_W-1:0];
-                        rd_burst                 <= BURST_4;
-                        att_prefetch_pending_q  <= 1'b1;
-                    end
-
-                    if (att_sv_issue_cnt_q == 3'd7) begin
+                    if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
+                        ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
                         state_q <= S_ATT_WAIT_SV;
                     end
                     else begin
-                        att_sv_issue_cnt_q <= att_sv_issue_cnt_q + 1'b1;
+                        att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
                     end
                 end
 
                 S_ATT_WAIT_SV: begin
                     if (datapath_sv_ready) begin
-                        att_final_issue_cnt_q <= 3'd0;
-                        att_final_recv_cnt_q  <= 2'd0;
-                        att_wr_pipe_q         <= 14'd0;
-                        state_q               <= S_ATT_ISSUE_FINAL;
+                        att_phase_cnt_q <= 4'd0;
+                        att_wr_pipe_q   <= 12'd0;
+                        state_q         <= S_ATT_ISSUE_FINAL;
                     end
                 end
 
                 S_ATT_ISSUE_FINAL: begin
-                    if (((exec_op == 2'b11) && (att_final_issue_cnt_q == 3'd7)) ||
-                        ((exec_op != 2'b11) && (att_final_issue_cnt_q == 3'd3))) begin
+                    if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
+                        ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
                         state_q <= S_ATT_WAIT_FINAL;
                     end
                     else begin
-                        att_final_issue_cnt_q <= att_final_issue_cnt_q + 1'b1;
+                        att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
                     end
                 end
 
                 S_ATT_WAIT_FINAL: begin
                     if (datapath_result_valid) begin
-                        if (att_final_recv_cnt_q == 2'd3) begin
+                        if (out_cnt_q[1:0] == 2'd3) begin
                             if (att_group_base_q == 8'd252) begin
                                 state_q <= S_IDLE;
                             end
                             else begin
-                                att_group_base_q     <= att_next_group_base;
-                                rd_req_cnt_q         <= att_prefetch_pending_q ? 2'd1 : 2'd0;
-                                att_rd_word_cnt_q    <= 3'd0;
-                                att_final_recv_cnt_q <= 2'd0;
-                                state_q              <= S_ATT_READ;
+                                att_group_base_q  <= att_next_group_base;
+                                rd_req_cnt_q      <= att_prefetch_pending_q ? 2'd1 : 2'd0;
+                                att_rd_word_cnt_q <= 2'd0;
+                                state_q           <= S_ATT_READ;
                             end
-                        end
-                        else begin
-                            att_final_recv_cnt_q <= att_final_recv_cnt_q + 1'b1;
                         end
 
                         if (out_cnt_q != 8'd255) begin
@@ -471,6 +458,27 @@ module CA_Control #(
         end
     end
 
+    logic [2:0] selected_burst;
+    assign selected_burst = (exec_op[1]) ? BURST_128 :BURST_4;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            rd_en <= 1'b0;
+        end
+        else begin
+            rd_en    <= 1'b0;
+            rd_burst <= '0;
+            if (rd_cmd_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_128;
+            end
+            else if (att_read_fire || att_prefetch_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_4;
+            end
+        end
+    end
+
 endmodule
 
 module CA_DataPath #(
@@ -479,7 +487,7 @@ module CA_DataPath #(
     input  logic                 clk,
     input  logic                 rst_n,
     input  logic                 issue_valid,
-    input  logic [2:0]           issue_mode,
+    input  issue_mode_t          issue_mode,
     input  logic [3:0]           issue_idx,
     input  logic                 capture_valid,
     input  logic [1:0]           capture_idx,
@@ -489,7 +497,6 @@ module CA_DataPath #(
     input  logic [255:0]         weight_k,
     input  logic [255:0]         weight_v,
     input  logic [RAM_WIDTH-1:0] rd_data,
-    input  logic                 result_commit,
 
     output logic                 qkv_ready,
     output logic                 sv_ready,
@@ -499,25 +506,8 @@ module CA_DataPath #(
     output logic [31:0]          out_data
 );
 
-    localparam logic [2:0] IM_NORM  = 3'd1;
-    localparam logic [2:0] IM_QKV   = 3'd2;
-    localparam logic [2:0] IM_SV    = 3'd3;
-    localparam logic [2:0] IM_FINAL = 3'd4;
-
     localparam logic [1:0] ACT_USER    = 2'd0;
-    localparam logic [1:0] ACT_BYPASS  = 2'd1;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
-
-    typedef enum logic [2:0] {
-        MT_NONE,
-        MT_NORM,
-        MT_Q,
-        MT_K,
-        MT_V,
-        MT_SCORE,
-        MT_VALIGN,
-        MT_FINAL
-    } mult_tag_t;
 
     typedef enum logic [2:0] {
         PT_NONE,
@@ -529,37 +519,28 @@ module CA_DataPath #(
         PT_FINAL
     } pipe_tag_t;
 
-    typedef logic signed [3:0]  s4_t;
-    typedef logic signed [15:0] s16_t;
+    localparam int SCORE_ELEM_W   = 11;
+    localparam int SCORE_PACK_W   = SCORE_ELEM_W * 64;
+    localparam int MHA_OUT_ELEM_W = 15;
+    localparam int MHA_OUT_PACK_W = MHA_OUT_ELEM_W * 64;
 
+    // Attention scores are activated before buffering: SHA fits in signed 11 bits.
+    // MHA head0 FINAL partial output can reach -16384, so it keeps 15-bit lanes.
     logic [255:0]  x_buf_q        [0:3];
     logic [255:0]  q_buf_q        [0:3];
     logic [255:0]  k_buf_q        [0:3];
     logic [255:0]  v_buf_q        [0:3];
-    logic [1023:0] score_buf_q    [0:7];
-    logic [1023:0] mha_out0_buf_q [0:3];
-    logic [255:0]  valign_buf_q   [0:3];
+    logic [SCORE_PACK_W-1:0]   score_buf_q    [0:7];
+    logic [MHA_OUT_PACK_W-1:0] mha_out0_buf_q [0:3];
     logic [3:0]    q_ready_q;
     logic [3:0]    k_ready_q;
     logic [3:0]    v_ready_q;
     logic [7:0]    score_ready_q;
-    logic [3:0]    valign_ready_q;
 
-    logic          mult_issue_valid;
-    logic [1:0]    mult_issue_op;
-    logic          mult_issue_b_transpose;
-    logic          mult_issue_a_wide;
-    logic          mult_issue_head_mask;
-    logic          mult_issue_head_sel;
-    logic [255:0]  mult_issue_A;
-    logic [1023:0] mult_issue_A_wide;
-    logic [255:0]  mult_issue_B;
-    mult_tag_t     mult_issue_tag;
-    logic [2:0]    mult_issue_idx;
     logic          mult_valid;
     logic [1023:0] mult_data;
-    mult_tag_t     mult_tag_q [0:7];
-    logic [2:0]    mult_idx_q [0:7];
+    mult_tag_t     mult_tag_out;
+    logic [2:0]    mult_idx_out;
 
     logic          act_in_valid;
     logic [1:0]    act_in_mode;
@@ -568,8 +549,8 @@ module CA_DataPath #(
     logic [2:0]    act_in_idx;
     logic          act_valid;
     logic [1023:0] act_data;
-    pipe_tag_t     act_tag_q [0:1];
-    logic [2:0]    act_idx_q [0:1];
+    pipe_tag_t     act_tag_q [0:4];
+    logic [2:0]    act_idx_q [0:4];
 
     logic          pot_in_valid;
     logic [1023:0] pot_in_data;
@@ -584,177 +565,86 @@ module CA_DataPath #(
     logic [1023:0] mha_comb_data;
     logic [2:0]    mha_comb_idx;
 
+    logic                 issue_valid_q;
+    issue_mode_t          issue_mode_q;
+    logic [3:0]           issue_idx_q;
+    logic                 capture_valid_q;
+    logic [1:0]           capture_idx_q;
+    logic [RAM_WIDTH-1:0] rd_data_q;
+
     assign qkv_ready = (&q_ready_q) && (&k_ready_q) && (&v_ready_q);
-    assign sv_ready  = (op == 2'b11) ? (&score_ready_q) :
-                       ((&score_ready_q[3:0]) && (&valign_ready_q));
+    assign sv_ready  = (op == 2'b11) ? (&score_ready_q) : (&score_ready_q[3:0]);
     assign result_valid = pot_valid &&
                           ((pot_tag_q[4] == PT_NORM) ||
                            (pot_tag_q[4] == PT_FINAL));
-
-    function automatic logic [255:0] identity_matrix();
-        begin
-            identity_matrix = 256'd0;
-            for (int i = 0; i < 8; i++) begin
-                identity_matrix[255 - (((i * 8) + i) * 4) -: 4] = 4'sd1;
-            end
-        end
-    endfunction
-
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
-    endfunction
-
-    function automatic s4_t clamp_s4(input s16_t value);
-        begin
-            if (value > 16'sd7) begin
-                clamp_s4 = 4'sd7;
-            end
-            else if (value < -16'sd8) begin
-                clamp_s4 = -4'sd8;
-            end
-            else begin
-                clamp_s4 = value[3:0];
-            end
-        end
-    endfunction
-
-    function automatic logic [255:0] pack_s4(input logic [1023:0] src_data);
-        begin
-            pack_s4 = 256'd0;
-            for (int i = 0; i < 64; i++) begin
-                pack_s4[255 - (i * 4) -: 4] = clamp_s4(get_i16(src_data, i));
-            end
-        end
-    endfunction
 
     function automatic logic [1023:0] combine_mha_heads(
         input logic [1023:0] head0,
         input logic [1023:0] head1
     );
+        logic [1023:0] result;
         begin
-            combine_mha_heads = 1024'd0;
+            result = 1024'd0;
+            for (int r = 0; r < 8; r++) begin
+                result[1023 -  r*128       -: 64] = head0[1023 -  r*128       -: 64];
+                result[1023 - (r*128 + 64) -: 64] = head1[1023 - (r*128 + 64) -: 64];
+            end
+            combine_mha_heads = result;
+        end
+    endfunction
+
+    function automatic logic [SCORE_PACK_W-1:0] pack_score(input logic [1023:0] src);
+        begin
             for (int i = 0; i < 64; i++) begin
-                combine_mha_heads[1023 - (i * 16) -: 16] =
-                    ((i % 8) < 4) ? head0[1023 - (i * 16) -: 16] :
-                                    head1[1023 - (i * 16) -: 16];
+                pack_score[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W] =
+                    src[1023 - (i * 16) - (16 - SCORE_ELEM_W) -: SCORE_ELEM_W];
             end
         end
     endfunction
 
-    always_comb begin
-        mult_issue_valid       = 1'b0;
-        mult_issue_op          = op;
-        mult_issue_b_transpose = 1'b0;
-        mult_issue_a_wide      = 1'b0;
-        mult_issue_head_mask   = 1'b0;
-        mult_issue_head_sel    = 1'b0;
-        mult_issue_A           = 256'd0;
-        mult_issue_A_wide      = 1024'd0;
-        mult_issue_B           = 256'd0;
-        mult_issue_tag         = MT_NONE;
-        mult_issue_idx         = 3'd0;
-
-        if (issue_valid) begin
-            mult_issue_valid = 1'b1;
-
-            case (issue_mode)
-                IM_NORM: begin
-                    mult_issue_A   = rd_data[255:0];
-                    mult_issue_B   = param;
-                    mult_issue_tag = MT_NORM;
-                end
-
-                IM_QKV: begin
-                    case (issue_idx)
-                        4'd0, 4'd1, 4'd2:    mult_issue_idx = 3'd0;
-                        4'd3, 4'd4, 4'd5:    mult_issue_idx = 3'd1;
-                        4'd6, 4'd7, 4'd8:    mult_issue_idx = 3'd2;
-                        default:             mult_issue_idx = 3'd3;
-                    endcase
-                    mult_issue_A   = x_buf_q[mult_issue_idx[1:0]];
-
-                    case (issue_idx)
-                        4'd0, 4'd3, 4'd6, 4'd9: begin
-                            mult_issue_B   = param;
-                            mult_issue_tag = MT_Q;
-                        end
-                        4'd1, 4'd4, 4'd7, 4'd10: begin
-                            mult_issue_B   = weight_k;
-                            mult_issue_tag = MT_K;
-                        end
-                        default: begin
-                            mult_issue_B   = weight_v;
-                            mult_issue_tag = MT_V;
-                        end
-                    endcase
-                end
-
-                IM_SV: begin
-                    if (op == 2'b11) begin
-                        mult_issue_idx         = {issue_idx[2], issue_idx[1:0]};
-                        mult_issue_A           = q_buf_q[issue_idx[1:0]];
-                        mult_issue_B           = k_buf_q[issue_idx[1:0]];
-                        mult_issue_b_transpose = 1'b1;
-                        mult_issue_head_mask   = 1'b1;
-                        mult_issue_head_sel    = issue_idx[2];
-                        mult_issue_tag         = MT_SCORE;
-                    end
-                    else begin
-                        mult_issue_idx = {1'b0, issue_idx[2:1]};
-
-                        if (!issue_idx[0]) begin
-                            mult_issue_A           = q_buf_q[issue_idx[2:1]];
-                            mult_issue_B           = k_buf_q[issue_idx[2:1]];
-                            mult_issue_b_transpose = 1'b1;
-                            mult_issue_tag         = MT_SCORE;
-                        end
-                        else begin
-                            mult_issue_A   = v_buf_q[issue_idx[2:1]];
-                            mult_issue_B   = identity_matrix();
-                            mult_issue_tag = MT_VALIGN;
-                        end
-                    end
-                end
-
-                IM_FINAL: begin
-                    mult_issue_idx    = (op == 2'b11) ?
-                                        {issue_idx[2], issue_idx[1:0]} :
-                                        {1'b0, issue_idx[1:0]};
-                    mult_issue_a_wide = 1'b1;
-                    mult_issue_A_wide = score_buf_q[mult_issue_idx];
-                    mult_issue_B      = (op == 2'b11) ?
-                                        v_buf_q[issue_idx[1:0]] :
-                                        valign_buf_q[issue_idx[1:0]];
-                    mult_issue_tag    = MT_FINAL;
-                end
-
-                default: begin
-                    mult_issue_valid = 1'b0;
-                end
-            endcase
+    function automatic logic [MHA_OUT_PACK_W-1:0] pack_mha_out(input logic [1023:0] src);
+        begin
+            for (int i = 0; i < 64; i++) begin
+                pack_mha_out[MHA_OUT_PACK_W-1 - (i * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W] =
+                    src[1023 - (i * 16) - (16 - MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
+            end
         end
-    end
+    endfunction
+
+    function automatic logic [1023:0] unpack_mha_out(input logic [MHA_OUT_PACK_W-1:0] src);
+        logic [MHA_OUT_ELEM_W-1:0] lane;
+        begin
+            unpack_mha_out = 1024'd0;
+            for (int i = 0; i < 64; i++) begin
+                lane = src[MHA_OUT_PACK_W-1 - (i * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
+                unpack_mha_out[1023 - (i * 16) -: 16] =
+                    {{(16-MHA_OUT_ELEM_W){lane[MHA_OUT_ELEM_W-1]}}, lane};
+            end
+        end
+    endfunction
 
     assign mha_comb_valid = mult_valid && (op == 2'b11) &&
-                            (mult_tag_q[7] == MT_FINAL) && mult_idx_q[7][2];
-    assign mha_comb_idx   = {1'b0, mult_idx_q[7][1:0]};
-    assign mha_comb_data  = combine_mha_heads(mha_out0_buf_q[mult_idx_q[7][1:0]], mult_data);
+                            (mult_tag_out == MT_FINAL) && mult_idx_out[2];
+    assign mha_comb_idx   = {1'b0, mult_idx_out[1:0]};
+    assign mha_comb_data  = combine_mha_heads(unpack_mha_out(mha_out0_buf_q[mult_idx_out[1:0]]),
+                                              mult_data);
 
     assign act_in_valid = mha_comb_valid ||
                           (mult_valid &&
-                           ((mult_tag_q[7] == MT_NORM) ||
-                            (mult_tag_q[7] == MT_SCORE) ||
-                            ((mult_tag_q[7] == MT_FINAL) && (op != 2'b11))));
+                           ((mult_tag_out == MT_NORM) ||
+                            (mult_tag_out == MT_SCORE) ||
+                            ((mult_tag_out == MT_FINAL) && (op != 2'b11))));
     assign act_in_data  = mha_comb_valid ? mha_comb_data : mult_data;
-    assign act_in_idx   = ((mult_tag_q[7] == MT_FINAL) || mha_comb_valid ||
-                           (mult_tag_q[7] == MT_SCORE)) ?
-                          (mha_comb_valid ? mha_comb_idx : mult_idx_q[7]) : 3'd0;
+    assign act_in_idx   = mha_comb_valid                       ? mha_comb_idx :
+                          ((mult_tag_out == MT_FINAL) ||
+                           (mult_tag_out == MT_SCORE))         ? mult_idx_out :
+                                                                 3'd0;
 
     always_comb begin
         act_in_tag  = PT_NONE;
         act_in_mode = ACT_USER;
 
-        case (mult_tag_q[7])
+        case (mult_tag_out)
             MT_NORM: begin
                 act_in_tag  = PT_NORM;
                 act_in_mode = ACT_USER;
@@ -772,53 +662,72 @@ module CA_DataPath #(
         endcase
     end
 
-    assign pot_in_valid = (act_valid &&
-                           ((act_tag_q[1] == PT_NORM) ||
-                            (act_tag_q[1] == PT_FINAL))) ||
-                          (mult_valid && ((mult_tag_q[7] == MT_Q) ||
-                                          (mult_tag_q[7] == MT_K) ||
-                                          (mult_tag_q[7] == MT_V)));
-    assign pot_in_data  = (act_valid &&
-                           ((act_tag_q[1] == PT_NORM) ||
-                            (act_tag_q[1] == PT_FINAL))) ? act_data : mult_data;
-    assign pot_in_idx   = (act_valid &&
-                           ((act_tag_q[1] == PT_NORM) ||
-                            (act_tag_q[1] == PT_FINAL))) ? act_idx_q[1] : mult_idx_q[7];
+    logic use_act_for_pot;
+    assign use_act_for_pot = act_valid &&
+                             ((act_tag_q[4] == PT_NORM) || (act_tag_q[4] == PT_FINAL));
+
+    assign pot_in_valid = use_act_for_pot ||
+                          (mult_valid && ((mult_tag_out == MT_Q) ||
+                                          (mult_tag_out == MT_K) ||
+                                          (mult_tag_out == MT_V)));
+    assign pot_in_data  = use_act_for_pot ? act_data       : mult_data;
+    assign pot_in_idx   = use_act_for_pot ? act_idx_q[4]   : mult_idx_out;
 
     always_comb begin
-        pot_in_tag = PT_NONE;
-
-        if (act_valid && ((act_tag_q[1] == PT_NORM) ||
-                          (act_tag_q[1] == PT_FINAL))) begin
-            pot_in_tag = act_tag_q[1];
+        if (use_act_for_pot) begin
+            pot_in_tag = act_tag_q[4];
         end
         else begin
-            case (mult_tag_q[7])
-                MT_Q: pot_in_tag = PT_Q;
-                MT_K: pot_in_tag = PT_K;
-                MT_V: pot_in_tag = PT_V;
+            case (mult_tag_out)
+                MT_Q:    pot_in_tag = PT_Q;
+                MT_K:    pot_in_tag = PT_K;
+                MT_V:    pot_in_tag = PT_V;
                 default: pot_in_tag = PT_NONE;
             endcase
         end
     end
 
-    Mult_8Stage_Parallel u_mult (
-        .clk            (clk),
-        .rst_n          (rst_n),
-        .op             (mult_issue_op),
-        .b_transpose    (mult_issue_b_transpose),
-        .a_wide         (mult_issue_a_wide),
-        .head_mask      (mult_issue_head_mask),
-        .head_sel       (mult_issue_head_sel),
-        .in_valid       (mult_issue_valid),
-        .in_data_A      (mult_issue_A),
-        .in_data_A_wide (mult_issue_A_wide),
-        .in_data_B      (mult_issue_B),
-        .out_valid      (mult_valid),
-        .out_data       (mult_data)
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            issue_valid_q   <= 1'b0;
+            capture_valid_q <= 1'b0;
+        end
+        else begin
+            issue_valid_q   <= issue_valid;
+            issue_mode_q    <= issue_valid ? issue_mode : IM_NONE;
+            issue_idx_q     <= issue_valid ? issue_idx : 4'd0;
+            capture_valid_q <= capture_valid;
+            capture_idx_q   <= capture_idx;
+            rd_data_q       <= rd_data;
+        end
+    end
+
+    Multiple_Processor #(
+        .SCORE_ELEM_W (SCORE_ELEM_W),
+        .SCORE_PACK_W (SCORE_PACK_W)
+    ) u_mult_proc (
+        .clk          (clk),
+        .rst_n        (rst_n),
+        .issue_valid  (issue_valid_q),
+        .issue_mode   (issue_mode_q),
+        .issue_idx    (issue_idx_q),
+        .op           (op),
+        .param        (param),
+        .weight_k     (weight_k),
+        .weight_v     (weight_v),
+        .rd_data      (rd_data_q),
+        .x_buf        (x_buf_q),
+        .q_buf        (q_buf_q),
+        .k_buf        (k_buf_q),
+        .v_buf        (v_buf_q),
+        .score_buf    (score_buf_q),
+        .mult_valid   (mult_valid),
+        .mult_data    (mult_data),
+        .mult_tag_out (mult_tag_out),
+        .mult_idx_out (mult_idx_out)
     );
 
-    ACT_TwoStage_Parallel u_act (
+    ACT_FiveStage_Parallel u_act (
         .clk       (clk),
         .rst_n     (rst_n),
         .in_valid  (act_in_valid),
@@ -840,66 +749,33 @@ module CA_DataPath #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            q_ready_q      <= 4'd0;
-            k_ready_q      <= 4'd0;
-            v_ready_q      <= 4'd0;
-            score_ready_q  <= 8'd0;
-            valign_ready_q <= 4'd0;
-            out_valid      <= 1'b0;
-            wr_data        <= '0;
-            out_data       <= 32'd0;
-
-            for (int i = 0; i < 4; i++) begin
-                x_buf_q[i]        <= 256'd0;
-                q_buf_q[i]        <= 256'd0;
-                k_buf_q[i]        <= 256'd0;
-                v_buf_q[i]        <= 256'd0;
-                mha_out0_buf_q[i] <= 1024'd0;
-                valign_buf_q[i]   <= 256'd0;
-            end
-
-            for (int i = 0; i < 8; i++) begin
-                score_buf_q[i] <= 1024'd0;
-                mult_tag_q[i]  <= MT_NONE;
-                mult_idx_q[i]  <= 3'd0;
-            end
-
-            for (int i = 0; i < 2; i++) begin
-                act_tag_q[i] <= PT_NONE;
-                act_idx_q[i] <= 3'd0;
-            end
-
-            for (int i = 0; i < 5; i++) begin
-                pot_tag_q[i] <= PT_NONE;
-                pot_idx_q[i] <= 3'd0;
-            end
+            q_ready_q     <= 4'd0;
+            k_ready_q     <= 4'd0;
+            v_ready_q     <= 4'd0;
+            score_ready_q <= 8'd0;
+            out_valid     <= 1'b0;
+            out_data      <= 32'd0;
         end
         else begin
-            out_valid <= result_commit;
+            out_valid <= result_valid;
 
-            if (capture_valid && (capture_idx == 2'd0)) begin
-                q_ready_q      <= 4'd0;
-                k_ready_q      <= 4'd0;
-                v_ready_q      <= 4'd0;
-                score_ready_q  <= 8'd0;
-                valign_ready_q <= 4'd0;
+            if (capture_valid_q && (capture_idx_q == 2'd0)) begin
+                q_ready_q     <= 4'd0;
+                k_ready_q     <= 4'd0;
+                v_ready_q     <= 4'd0;
+                score_ready_q <= 8'd0;
             end
 
-            if (capture_valid) begin
-                x_buf_q[capture_idx] <= rd_data[255:0];
-            end
-
-            mult_tag_q[0] <= mult_issue_valid ? mult_issue_tag : MT_NONE;
-            mult_idx_q[0] <= mult_issue_idx;
-            for (int i = 1; i < 8; i++) begin
-                mult_tag_q[i] <= mult_tag_q[i - 1];
-                mult_idx_q[i] <= mult_idx_q[i - 1];
+            if (capture_valid_q) begin
+                x_buf_q[capture_idx_q] <= rd_data_q[255:0];
             end
 
             act_tag_q[0] <= act_in_valid ? act_in_tag : PT_NONE;
             act_idx_q[0] <= act_in_idx;
-            act_tag_q[1] <= act_tag_q[0];
-            act_idx_q[1] <= act_idx_q[0];
+            for (int i = 1; i < 5; i++) begin
+                act_tag_q[i] <= act_tag_q[i - 1];
+                act_idx_q[i] <= act_idx_q[i - 1];
+            end
 
             pot_tag_q[0] <= pot_in_valid ? pot_in_tag : PT_NONE;
             pot_idx_q[0] <= pot_in_idx;
@@ -908,25 +784,14 @@ module CA_DataPath #(
                 pot_idx_q[i] <= pot_idx_q[i - 1];
             end
 
-            if (act_valid && (act_tag_q[1] == PT_SCORE)) begin
-                score_buf_q[act_idx_q[1]] <= act_data;
-                score_ready_q[act_idx_q[1]] <= 1'b1;
+            if (act_valid && (act_tag_q[4] == PT_SCORE)) begin
+                score_buf_q[act_idx_q[4]] <= pack_score(act_data);
+                score_ready_q[act_idx_q[4]] <= 1'b1;
             end
 
-            if (mult_valid) begin
-                case (mult_tag_q[7])
-                    MT_VALIGN: begin
-                        valign_buf_q[mult_idx_q[7][1:0]] <= pack_s4(mult_data);
-                        valign_ready_q[mult_idx_q[7][1:0]] <= 1'b1;
-                    end
-                    MT_FINAL: begin
-                        if ((op == 2'b11) && !mult_idx_q[7][2]) begin
-                            mha_out0_buf_q[mult_idx_q[7][1:0]] <= mult_data;
-                        end
-                    end
-                    default: begin
-                    end
-                endcase
+            if (mult_valid && (mult_tag_out == MT_FINAL) &&
+                (op == 2'b11) && !mult_idx_out[2]) begin
+                mha_out0_buf_q[mult_idx_out[1:0]] <= pack_mha_out(mult_data);
             end
 
             if (pot_valid) begin
@@ -948,7 +813,7 @@ module CA_DataPath #(
                 endcase
             end
 
-            if (result_commit) begin
+            if (result_valid) begin
                 wr_data  <= pot_data;
                 out_data <= pot_data[31:0];
             end
@@ -957,7 +822,173 @@ module CA_DataPath #(
 
 endmodule
 
-module Mult_8Stage_Parallel (
+module Multiple_Processor #(
+    parameter int SCORE_ELEM_W = 11,
+    parameter int SCORE_PACK_W = SCORE_ELEM_W * 64
+)(
+    input  logic           clk,
+    input  logic           rst_n,
+
+    input  logic           issue_valid,
+    input  issue_mode_t    issue_mode,
+    input  logic [3:0]     issue_idx,
+
+    input  logic [1:0]     op,
+    input  logic [255:0]   param,
+    input  logic [255:0]   weight_k,
+    input  logic [255:0]   weight_v,
+    input  logic [255:0]   rd_data,
+
+    input  logic [255:0]   x_buf       [0:3],
+    input  logic [255:0]   q_buf       [0:3],
+    input  logic [255:0]   k_buf       [0:3],
+    input  logic [255:0]   v_buf       [0:3],
+    input  logic [SCORE_PACK_W-1:0] score_buf [0:7],
+
+    output logic           mult_valid,
+    output logic [1023:0]  mult_data,
+    output mult_tag_t      mult_tag_out,
+    output logic [2:0]     mult_idx_out
+);
+
+    localparam int MULT_STAGES = 2;
+
+    logic          mult_issue_valid;
+    logic          mult_issue_b_transpose;
+    logic          mult_issue_a_wide;
+    logic          mult_issue_head_mask;
+    logic          mult_issue_head_sel;
+    logic [255:0]  mult_issue_A;
+    logic [1023:0] mult_issue_A_wide;
+    logic [255:0]  mult_issue_B;
+    mult_tag_t     mult_issue_tag;
+    logic [2:0]    mult_issue_idx;
+
+    mult_tag_t  mult_tag_q [0:MULT_STAGES-1];
+    logic [2:0] mult_idx_q [0:MULT_STAGES-1];
+
+    function automatic logic [1023:0] unpack_score(input logic [SCORE_PACK_W-1:0] src);
+        logic [SCORE_ELEM_W-1:0] lane;
+        begin
+            unpack_score = 1024'd0;
+            for (int i = 0; i < 64; i++) begin
+                lane = src[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W];
+                unpack_score[1023 - (i * 16) -: 16] =
+                    {{(16-SCORE_ELEM_W){lane[SCORE_ELEM_W-1]}}, lane};
+            end
+        end
+    endfunction
+
+    always_comb begin
+        mult_issue_valid       = 1'b0;
+        mult_issue_b_transpose = 1'b0;
+        mult_issue_a_wide      = 1'b0;
+        mult_issue_head_mask   = 1'b0;
+        mult_issue_head_sel    = 1'b0;
+        mult_issue_A           = 256'd0;
+        mult_issue_A_wide      = 1024'd0;
+        mult_issue_B           = 256'd0;
+        mult_issue_tag         = MT_NONE;
+        mult_issue_idx         = 3'd0;
+
+        if (issue_valid) begin
+            mult_issue_valid = 1'b1;
+
+            case (issue_mode)
+                IM_NORM: begin
+                    mult_issue_A   = rd_data;
+                    mult_issue_B   = param;
+                    mult_issue_tag = MT_NORM;
+                end
+
+                IM_QKV: begin
+                    case (issue_idx)
+                        4'd0, 4'd1, 4'd2:    mult_issue_idx = 3'd0;
+                        4'd3, 4'd4, 4'd5:    mult_issue_idx = 3'd1;
+                        4'd6, 4'd7, 4'd8:    mult_issue_idx = 3'd2;
+                        default:             mult_issue_idx = 3'd3;
+                    endcase
+                    mult_issue_A = x_buf[mult_issue_idx[1:0]];
+
+                    case (issue_idx)
+                        4'd0, 4'd3, 4'd6, 4'd9: begin
+                            mult_issue_B   = param;
+                            mult_issue_tag = MT_Q;
+                        end
+                        4'd1, 4'd4, 4'd7, 4'd10: begin
+                            mult_issue_B   = weight_k;
+                            mult_issue_tag = MT_K;
+                        end
+                        default: begin
+                            mult_issue_B   = weight_v;
+                            mult_issue_tag = MT_V;
+                        end
+                    endcase
+                end
+
+                IM_SV: begin
+                    if (op == 2'b11) begin
+                        mult_issue_idx       = {issue_idx[2], issue_idx[1:0]};
+                        mult_issue_head_mask = 1'b1;
+                        mult_issue_head_sel  = issue_idx[2];
+                    end
+                    else begin
+                        mult_issue_idx = {1'b0, issue_idx[1:0]};
+                    end
+                    mult_issue_A           = q_buf[issue_idx[1:0]];
+                    mult_issue_B           = k_buf[issue_idx[1:0]];
+                    mult_issue_b_transpose = 1'b1;
+                    mult_issue_tag         = MT_SCORE;
+                end
+
+                IM_FINAL: begin
+                    mult_issue_idx    = (op == 2'b11) ?
+                                        {issue_idx[2], issue_idx[1:0]} :
+                                        {1'b0, issue_idx[1:0]};
+                    mult_issue_a_wide = 1'b1;
+                    mult_issue_A_wide = unpack_score(score_buf[mult_issue_idx]);
+                    mult_issue_B      = v_buf[issue_idx[1:0]];
+                    mult_issue_tag    = MT_FINAL;
+                end
+
+                default: begin
+                    mult_issue_valid = 1'b0;
+                end
+            endcase
+        end
+    end
+
+    Mult_2Stage_Parallel u_mult (
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .op             (op),
+        .b_transpose    (mult_issue_b_transpose),
+        .a_wide         (mult_issue_a_wide),
+        .head_mask      (mult_issue_head_mask),
+        .head_sel       (mult_issue_head_sel),
+        .in_valid       (mult_issue_valid),
+        .in_data_A      (mult_issue_A),
+        .in_data_A_wide (mult_issue_A_wide),
+        .in_data_B      (mult_issue_B),
+        .out_valid      (mult_valid),
+        .out_data       (mult_data)
+    );
+
+    always_ff @(posedge clk) begin
+        mult_tag_q[0] <= mult_issue_valid ? mult_issue_tag : MT_NONE;
+        mult_idx_q[0] <= mult_issue_idx;
+        for (int i = 1; i < MULT_STAGES; i++) begin
+            mult_tag_q[i] <= mult_tag_q[i - 1];
+            mult_idx_q[i] <= mult_idx_q[i - 1];
+        end
+    end
+
+    assign mult_tag_out = mult_tag_q[MULT_STAGES-1];
+    assign mult_idx_out = mult_idx_q[MULT_STAGES-1];
+
+endmodule
+
+module Mult_2Stage_Parallel (
     input  logic                 clk,
     input  logic                 rst_n,
     input  logic [1:0]           op,
@@ -973,7 +1004,6 @@ module Mult_8Stage_Parallel (
     output logic [1023:0]        out_data
 );
 
-    localparam int STAGES   = 8;
     localparam int ROW_ELEM = 8;
     localparam int MAT_SIZE = 64;
     localparam int DOT_SIZE = 9;
@@ -981,23 +1011,12 @@ module Mult_8Stage_Parallel (
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [15:0] s16_t;
 
-    logic          valid_q      [0:STAGES-1];
-    logic [1:0]    op_q         [0:STAGES-1];
-    logic          b_trans_q    [0:STAGES-1];
-    logic          a_wide_q     [0:STAGES-1];
-    logic          head_mask_q  [0:STAGES-1];
-    logic          head_sel_q   [0:STAGES-1];
-    logic [255:0]  mat_A_q      [0:STAGES-1];
-    logic [1023:0] mat_A_wide_q [0:STAGES-1];
-    logic [255:0]  mat_B_q      [0:STAGES-1];
-    s16_t          data_q       [0:STAGES-1][0:MAT_SIZE-1];
-
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
     endfunction
 
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic s4_t get_pad_s4(input logic [255:0] vec, input integer row, input integer col);
@@ -1016,7 +1035,7 @@ module Mult_8Stage_Parallel (
         input logic          a_wide_sel,
         input logic          head_mask_sel,
         input logic          head_sel_sel,
-        input integer        stage,
+        input integer        row_idx,
         input integer        lane,
         input integer        tap
     );
@@ -1025,7 +1044,7 @@ module Mult_8Stage_Parallel (
         integer col;
         begin
             if (op_sel == 2'b01) begin
-                idx   = (stage * ROW_ELEM) + lane;
+                idx   = (row_idx * ROW_ELEM) + lane;
                 row   = idx / ROW_ELEM;
                 col   = idx % ROW_ELEM;
                 sel_a = get_pad_s4(mat_A, row + (tap / 3) - 1, col + (tap % 3) - 1);
@@ -1038,10 +1057,10 @@ module Mult_8Stage_Parallel (
                 sel_a = 16'sd0;
             end
             else if (a_wide_sel) begin
-                sel_a = get_i16(mat_A_wide, (stage * ROW_ELEM) + tap);
+                sel_a = get_s16(mat_A_wide, (row_idx * ROW_ELEM) + tap);
             end
             else begin
-                sel_a = get_s4(mat_A, (stage * ROW_ELEM) + tap);
+                sel_a = get_s4(mat_A, (row_idx * ROW_ELEM) + tap);
             end
         end
     endfunction
@@ -1075,108 +1094,71 @@ module Mult_8Stage_Parallel (
         end
     endfunction
 
-    genvar st;
-    generate
-        for (st = 0; st < STAGES; st++) begin : g_stage
-            localparam int PREV_STAGE = (st == 0) ? 0 : st - 1;
+    // Stage 1 = all 64*9 = 576 partial products combinational, then register.
+    // Stage 2 = per-lane 9-input add tree combinational, then register.
+    logic stage1_valid_q;
+    logic stage2_valid_q;
+    s16_t prod_q   [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s16_t sum_q    [0:MAT_SIZE-1];
 
-            logic [255:0]  stage_A;
-            logic [1023:0] stage_A_wide;
-            logic [255:0]  stage_B;
-            logic          stage_valid;
-            logic [1:0]    stage_op;
-            logic          stage_b_trans;
-            logic          stage_a_wide;
-            logic          stage_head_mask;
-            logic          stage_head_sel;
-            s16_t          data_next [0:MAT_SIZE-1];
-            s16_t          mul_a [0:ROW_ELEM-1][0:DOT_SIZE-1];
-            s4_t           mul_b [0:ROW_ELEM-1][0:DOT_SIZE-1];
-            s16_t          prod  [0:ROW_ELEM-1][0:DOT_SIZE-1];
-            s16_t          value;
-            integer        idx;
+    s16_t prod_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s16_t sum_next  [0:MAT_SIZE-1];
 
-            always_comb begin
-                stage_valid     = (st == 0) ? in_valid       : valid_q[PREV_STAGE];
-                stage_op        = (st == 0) ? op             : op_q[PREV_STAGE];
-                stage_b_trans   = (st == 0) ? b_transpose    : b_trans_q[PREV_STAGE];
-                stage_a_wide    = (st == 0) ? a_wide         : a_wide_q[PREV_STAGE];
-                stage_head_mask = (st == 0) ? head_mask      : head_mask_q[PREV_STAGE];
-                stage_head_sel  = (st == 0) ? head_sel       : head_sel_q[PREV_STAGE];
-                stage_A         = (st == 0) ? in_data_A      : mat_A_q[PREV_STAGE];
-                stage_A_wide    = (st == 0) ? in_data_A_wide : mat_A_wide_q[PREV_STAGE];
-                stage_B         = (st == 0) ? in_data_B      : mat_B_q[PREV_STAGE];
-
-                for (int i = 0; i < MAT_SIZE; i++) begin
-                    data_next[i] = (st == 0) ? 16'sd0 : data_q[PREV_STAGE][i];
-                end
-
-                for (int lane = 0; lane < ROW_ELEM; lane++) begin
-                    for (int tap = 0; tap < DOT_SIZE; tap++) begin
-                        mul_a[lane][tap] = sel_a(stage_A, stage_A_wide, stage_op,
-                                                 stage_a_wide, stage_head_mask,
-                                                 stage_head_sel, st, lane, tap);
-                        mul_b[lane][tap] = sel_b(stage_B, stage_op, stage_b_trans,
-                                                 stage_head_mask, stage_head_sel,
-                                                 lane, tap);
-                        prod[lane][tap]  = $signed(mul_a[lane][tap]) * $signed(mul_b[lane][tap]);
-                    end
-
-                    idx   = (st * ROW_ELEM) + lane;
-                    value = ((prod[lane][0] + prod[lane][1]) + (prod[lane][2] + prod[lane][3])) +
-                            ((prod[lane][4] + prod[lane][5]) + (prod[lane][6] + prod[lane][7]) +
-                             prod[lane][8]);
-
-                    data_next[idx] = value;
-                end
-            end
-
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    valid_q[st]      <= 1'b0;
-                    op_q[st]         <= 2'b00;
-                    b_trans_q[st]    <= 1'b0;
-                    a_wide_q[st]     <= 1'b0;
-                    head_mask_q[st]  <= 1'b0;
-                    head_sel_q[st]   <= 1'b0;
-                    mat_A_q[st]      <= 256'd0;
-                    mat_A_wide_q[st] <= 1024'd0;
-                    mat_B_q[st]      <= 256'd0;
-                    for (int i = 0; i < MAT_SIZE; i++) begin
-                        data_q[st][i] <= 16'sd0;
-                    end
-                end
-                else begin
-                    valid_q[st]      <= stage_valid;
-                    op_q[st]         <= stage_op;
-                    b_trans_q[st]    <= stage_b_trans;
-                    a_wide_q[st]     <= stage_a_wide;
-                    head_mask_q[st]  <= stage_head_mask;
-                    head_sel_q[st]   <= stage_head_sel;
-                    mat_A_q[st]      <= stage_A;
-                    mat_A_wide_q[st] <= stage_A_wide;
-                    mat_B_q[st]      <= stage_B;
-
-                    for (int i = 0; i < MAT_SIZE; i++) begin
-                        data_q[st][i] <= data_next[i];
-                    end
+    always_comb begin
+        for (int row = 0; row < ROW_ELEM; row++) begin
+            for (int lane = 0; lane < ROW_ELEM; lane++) begin
+                for (int tap = 0; tap < DOT_SIZE; tap++) begin
+                    prod_next[(row * ROW_ELEM) + lane][tap] =
+                        $signed(sel_a(in_data_A, in_data_A_wide, op,
+                                      a_wide, head_mask, head_sel,
+                                      row, lane, tap)) *
+                        $signed(sel_b(in_data_B, op, b_transpose,
+                                      head_mask, head_sel,
+                                      lane, tap));
                 end
             end
         end
-    endgenerate
+    end
 
-    assign out_valid = valid_q[STAGES-1];
+    always_comb begin
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            sum_next[i] = ((prod_q[i][0] + prod_q[i][1]) + (prod_q[i][2] + prod_q[i][3])) +
+                          ((prod_q[i][4] + prod_q[i][5]) + (prod_q[i][6] + prod_q[i][7]) +
+                           prod_q[i][8]);
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            stage1_valid_q <= 1'b0;
+            stage2_valid_q <= 1'b0;
+        end
+        else begin
+            stage1_valid_q <= in_valid;
+            stage2_valid_q <= stage1_valid_q;
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                for (int t = 0; t < DOT_SIZE; t++) begin
+                    prod_q[i][t] <= prod_next[i][t];
+                end
+            end
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                sum_q[i] <= sum_next[i];
+            end
+        end
+    end
+
+    assign out_valid = stage2_valid_q;
 
     always_comb begin
         out_data = 1024'd0;
         for (int i = 0; i < MAT_SIZE; i++) begin
-            out_data[1023 - (i * 16) -: 16] = data_q[STAGES-1][i];
+            out_data[1023 - (i * 16) -: 16] = sum_q[i];
         end
     end
 
 endmodule
 
-module ACT_TwoStage_Parallel (
+module ACT_FiveStage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
@@ -1187,187 +1169,275 @@ module ACT_TwoStage_Parallel (
     output logic [1023:0] out_data
 );
 
-    localparam int MAT_SIZE  = 64;
-    localparam int ROW_ELEM  = 8;
-    localparam int HALF_SIZE = MAT_SIZE / 2;
+    localparam int MAT_SIZE   = 64;
+    localparam int ROW_ELEM   = 8;
+    localparam int CHUNK_SIZE = 16;
+    localparam int ACT_STAGES = 5;
 
     localparam logic [1:0] ACT_USER    = 2'd0;
-    localparam logic [1:0] ACT_BYPASS  = 2'd1;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
     typedef logic signed [15:0] s16_t;
     typedef logic signed [19:0] s20_t;
 
-    logic          st1_valid;
-    logic [1:0]    st1_act_q;
-    logic [1:0]    st1_mode_q;
-    logic [1023:0] st1_src;
-    logic [1023:0] st1_matrix;
-    logic [1023:0] st0_matrix_next;
-    logic [1023:0] st1_matrix_next;
+    logic          valid_q  [0:ACT_STAGES-1];
+    logic [1:0]    act_q    [0:ACT_STAGES-1];
+    logic [1:0]    mode_q   [0:ACT_STAGES-1];
+    logic [1023:0] matrix_q [0:ACT_STAGES-1];
+    // thr_*_q only feeds stages 1..4 (each stage uses prev stage's threshold).
+    // Stage 4 is the last apply_chunk consumer, so we only need indices 0..3.
+    s20_t          thr_a_q  [0:ACT_STAGES-2];
+    s20_t          thr_b_q  [0:ACT_STAGES-2];
 
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    logic [39:0]   thr0_pair;
+    logic [39:0]   thr1_pair;
+    logic [39:0]   thr2_pair;
+    logic [39:0]   thr3_pair;
+
+    assign out_valid = valid_q[ACT_STAGES-1];
+    assign out_data  = matrix_q[ACT_STAGES-1];
+
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic s20_t ext20(input s16_t value);
         ext20 = {{4{value[15]}}, value};
     endfunction
 
-    function automatic integer lane_idx(input logic [1:0] act_sel, input logic phase, input integer lane);
-        integer block;
-        integer local_idx;
+    function automatic logic [39:0] calc_threshold_pair(
+        input logic [1023:0] matrix,
+        input logic [1:0]    act_sel,
+        input integer        chunk
+    );
+        integer row0;
+        integer row1;
+        integer col0;
+        integer col1;
+        integer base_row;
+        integer base_col;
+        s20_t  sum_a;
+        s20_t  sum_b;
+        s20_t  thr_a;
+        s20_t  thr_b;
+        begin
+            sum_a = 20'sd0;
+            sum_b = 20'sd0;
+            thr_a = 20'sd0;
+            thr_b = 20'sd0;
+
+            case (act_sel)
+                2'b01: begin
+                    row0 = chunk * 2;
+                    row1 = row0 + 1;
+                    for (int c = 0; c < ROW_ELEM; c++) begin
+                        sum_a += ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
+                        sum_b += ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
+                    end
+                    thr_a = sum_a >>> 3;
+                    thr_b = sum_b >>> 3;
+                end
+
+                2'b10: begin
+                    col0 = chunk * 2;
+                    col1 = col0 + 1;
+                    for (int r = 0; r < ROW_ELEM; r++) begin
+                        sum_a += ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
+                        sum_b += ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
+                    end
+                    thr_a = sum_a >>> 3;
+                    thr_b = sum_b >>> 3;
+                end
+
+                2'b11: begin
+                    base_row = (chunk / 2) * 4;
+                    base_col = (chunk % 2) * 4;
+                    for (int r = 0; r < 4; r++) begin
+                        for (int c = 0; c < 4; c++) begin
+                            sum_a += ext20(get_s16(matrix,
+                                                   ((base_row + r) * ROW_ELEM) +
+                                                   (base_col + c)));
+                        end
+                    end
+                    thr_a = sum_a >>> 4;
+                    thr_b = thr_a;
+                end
+
+                default: begin
+                    thr_a = 20'sd0;
+                    thr_b = 20'sd0;
+                end
+            endcase
+
+            calc_threshold_pair = {thr_a, thr_b};
+        end
+    endfunction
+
+    function automatic integer chunk_idx(
+        input logic [1:0] act_sel,
+        input logic [1:0] mode_sel,
+        input integer     chunk,
+        input integer     lane
+    );
+        integer row;
+        integer col;
+        begin
+            if (mode_sel != ACT_USER) begin
+                chunk_idx = (chunk * CHUNK_SIZE) + lane;
+            end
+            else begin
+                case (act_sel)
+                    2'b10: begin
+                        row       = lane / 2;
+                        col       = (chunk * 2) + (lane % 2);
+                        chunk_idx = (row * ROW_ELEM) + col;
+                    end
+
+                    2'b11: begin
+                        row       = ((chunk / 2) * 4) + (lane / 4);
+                        col       = ((chunk % 2) * 4) + (lane % 4);
+                        chunk_idx = (row * ROW_ELEM) + col;
+                    end
+
+                    default: begin
+                        chunk_idx = (chunk * CHUNK_SIZE) + lane;
+                    end
+                endcase
+            end
+        end
+    endfunction
+
+    function automatic s20_t select_threshold(
+        input logic [1:0] act_sel,
+        input integer     lane,
+        input s20_t       threshold_a,
+        input s20_t       threshold_b
+    );
         begin
             case (act_sel)
+                2'b01: begin
+                    select_threshold = (lane < ROW_ELEM) ? threshold_a : threshold_b;
+                end
+
                 2'b10: begin
-                    lane_idx = ((lane % ROW_ELEM) * ROW_ELEM) + (phase ? 4 : 0) + (lane / ROW_ELEM);
+                    select_threshold = ((lane % 2) == 0) ? threshold_a : threshold_b;
                 end
+
                 2'b11: begin
-                    block     = (phase ? 2 : 0) + (lane / 16);
-                    local_idx = lane % 16;
-                    lane_idx  = (((block / 2) * 4) + (local_idx / 4)) * ROW_ELEM +
-                                (((block % 2) * 4) + (local_idx % 4));
+                    select_threshold = threshold_a;
                 end
+
                 default: begin
-                    lane_idx = (phase ? HALF_SIZE : 0) + lane;
+                    select_threshold = 20'sd0;
                 end
             endcase
         end
     endfunction
 
-    function automatic integer lane_group(input logic [1:0] act_sel, input integer lane);
-        lane_group = (act_sel == 2'b11) ? (lane / 16) : (lane / ROW_ELEM);
-    endfunction
-
-    function automatic s20_t group_sum(
-        input logic [1023:0] matrix,
-        input logic [1:0]    act_sel,
-        input logic          phase,
-        input integer        group
-    );
-        integer lane;
-        integer group_size;
-        begin
-            group_sum  = 20'sd0;
-            group_size = (act_sel == 2'b11) ? 16 : ROW_ELEM;
-
-            if ((act_sel != 2'b00) && !((act_sel == 2'b11) && (group > 1))) begin
-                for (int i = 0; i < 16; i++) begin
-                    if (i < group_size) begin
-                        lane = (group * group_size) + i;
-                        group_sum += ext20(get_i16(matrix, lane_idx(act_sel, phase, lane)));
-                    end
-                end
-            end
-        end
-    endfunction
-
-    function automatic s16_t activate_user(input s16_t value, input logic [1:0] act_sel, input s20_t threshold);
-        begin
-            if (act_sel == 2'b00) begin
-                activate_user = (value < 0) ? 16'sd0 : value;
-            end
-            else begin
-                activate_user = (ext20(value) < threshold) ? (value >>> 3) : value;
-            end
-        end
-    endfunction
-
-    function automatic s16_t activate_mode(
-        input s16_t        value,
-        input logic [1:0]  act_sel,
-        input logic [1:0]  mode_sel,
-        input s20_t        threshold
+    function automatic s16_t activate_value(
+        input s16_t       value,
+        input logic [1:0] act_sel,
+        input logic [1:0] mode_sel,
+        input s20_t       threshold
     );
         begin
             case (mode_sel)
-                ACT_BYPASS: begin
-                    activate_mode = value;
-                end
                 ACT_SPECIAL: begin
-                    activate_mode = (value < 0) ? (value >>> 2) : value;
+                    activate_value = (value < 0) ? (value >>> 2) : value;
                 end
+
                 default: begin
-                    activate_mode = activate_user(value, act_sel, threshold);
+                    if (act_sel == 2'b00) begin
+                        activate_value = (value < 0) ? 16'sd0 : value;
+                    end
+                    else begin
+                        activate_value = (ext20(value) < threshold) ? (value >>> 3) : value;
+                    end
                 end
             endcase
         end
     endfunction
 
-    function automatic logic [1023:0] run_half(
+    function automatic logic [1023:0] apply_chunk(
         input logic [1023:0] base_matrix,
         input logic [1023:0] src_matrix,
         input logic [1:0]    act_sel,
         input logic [1:0]    mode_sel,
-        input logic          phase
+        input integer        chunk,
+        input s20_t          threshold_a,
+        input s20_t          threshold_b
     );
         integer idx;
-        integer group;
-        s20_t  sum [0:3];
         s20_t  threshold;
         begin
-            run_half = base_matrix;
+            apply_chunk = base_matrix;
 
-            if (mode_sel == ACT_USER) begin
-                for (group = 0; group < 4; group++) begin
-                    sum[group] = group_sum(src_matrix, act_sel, phase, group);
-                end
-
-                for (int lane = 0; lane < HALF_SIZE; lane++) begin
-                    idx       = lane_idx(act_sel, phase, lane);
-                    group     = lane_group(act_sel, lane);
-                    threshold = (act_sel == 2'b11) ? (sum[group] >>> 4) : (sum[group] >>> 3);
-                    run_half[1023 - (idx * 16) -: 16] =
-                        activate_mode(get_i16(src_matrix, idx), act_sel, mode_sel, threshold);
-                end
-            end
-            else begin
-                for (int lane = 0; lane < HALF_SIZE; lane++) begin
-                    idx = (phase ? HALF_SIZE : 0) + lane;
-                    run_half[1023 - (idx * 16) -: 16] =
-                        activate_mode(get_i16(src_matrix, idx), act_sel, mode_sel, 20'sd0);
-                end
+            for (int lane = 0; lane < CHUNK_SIZE; lane++) begin
+                idx       = chunk_idx(act_sel, mode_sel, chunk, lane);
+                threshold = select_threshold(act_sel, lane, threshold_a, threshold_b);
+                apply_chunk[1023 - (idx * 16) -: 16] =
+                    activate_value(get_s16(src_matrix, idx), act_sel, mode_sel, threshold);
             end
         end
     endfunction
 
     always_comb begin
-        st0_matrix_next = run_half(in_data, in_data, act, act_mode, 1'b0);
-        st1_matrix_next = run_half(st1_matrix, st1_src, st1_act_q, st1_mode_q, 1'b1);
+        thr0_pair = calc_threshold_pair(in_data,     act,      0);
+        thr1_pair = calc_threshold_pair(matrix_q[0], act_q[0], 1);
+        thr2_pair = calc_threshold_pair(matrix_q[1], act_q[1], 2);
+        thr3_pair = calc_threshold_pair(matrix_q[2], act_q[2], 3);
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            st1_valid <= 1'b0;
-            out_valid <= 1'b0;
+            for (int i = 0; i < ACT_STAGES; i++) begin
+                valid_q[i]  <= 1'b0;
+                act_q[i]    <= 2'd0;
+                mode_q[i]   <= ACT_USER;
+                matrix_q[i] <= 1024'd0;
+            end
+            for (int i = 0; i < ACT_STAGES - 1; i++) begin
+                thr_a_q[i] <= 20'sd0;
+                thr_b_q[i] <= 20'sd0;
+            end
         end
         else begin
-            st1_valid <= in_valid;
-            out_valid <= st1_valid;
-        end
-    end
+            valid_q[0]  <= in_valid;
+            act_q[0]    <= act;
+            mode_q[0]   <= act_mode;
+            matrix_q[0] <= in_data;
+            thr_a_q[0]  <= $signed(thr0_pair[39:20]);
+            thr_b_q[0]  <= $signed(thr0_pair[19:0]);
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            st1_act_q  <= 2'd0;
-            st1_mode_q <= ACT_USER;
-            st1_src    <= 1024'd0;
-            st1_matrix <= 1024'd0;
-        end
-        else if (in_valid) begin
-            st1_act_q  <= act;
-            st1_mode_q <= act_mode;
-            st1_src    <= in_data;
-            st1_matrix <= st0_matrix_next;
-        end
-    end
+            valid_q[1]  <= valid_q[0];
+            act_q[1]    <= act_q[0];
+            mode_q[1]   <= mode_q[0];
+            matrix_q[1] <= apply_chunk(matrix_q[0], matrix_q[0], act_q[0], mode_q[0],
+                                       0, thr_a_q[0], thr_b_q[0]);
+            thr_a_q[1]  <= $signed(thr1_pair[39:20]);
+            thr_b_q[1]  <= $signed(thr1_pair[19:0]);
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            out_data <= 1024'd0;
-        end
-        else if (st1_valid) begin
-            out_data <= st1_matrix_next;
+            valid_q[2]  <= valid_q[1];
+            act_q[2]    <= act_q[1];
+            mode_q[2]   <= mode_q[1];
+            matrix_q[2] <= apply_chunk(matrix_q[1], matrix_q[1], act_q[1], mode_q[1],
+                                       1, thr_a_q[1], thr_b_q[1]);
+            thr_a_q[2]  <= $signed(thr2_pair[39:20]);
+            thr_b_q[2]  <= $signed(thr2_pair[19:0]);
+
+            valid_q[3]  <= valid_q[2];
+            act_q[3]    <= act_q[2];
+            mode_q[3]   <= mode_q[2];
+            matrix_q[3] <= apply_chunk(matrix_q[2], matrix_q[2], act_q[2], mode_q[2],
+                                       2, thr_a_q[2], thr_b_q[2]);
+            thr_a_q[3]  <= $signed(thr3_pair[39:20]);
+            thr_b_q[3]  <= $signed(thr3_pair[19:0]);
+
+            valid_q[4]  <= valid_q[3];
+            act_q[4]    <= act_q[3];
+            mode_q[4]   <= mode_q[3];
+            matrix_q[4] <= apply_chunk(matrix_q[3], matrix_q[3], act_q[3], mode_q[3],
+                                       3, thr_a_q[3], thr_b_q[3]);
         end
     end
 
@@ -1399,19 +1469,32 @@ module PoT_FiveStage_Parallel (
     logic [255:0]  quant_data_next;
     logic [255:0]  out_data_next;
 
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic logic [3:0] pot_shift(input logic [15:0] max_abs);
         logic [3:0] msb;
         begin
-            msb = 4'd0;
-            for (int b = 0; b < 16; b++) begin
-                if (max_abs[b]) begin
-                    msb = b[3:0];
-                end
-            end
+            casez (max_abs)
+                16'b1???????????????: msb = 4'd15;
+                16'b01??????????????: msb = 4'd14;
+                16'b001?????????????: msb = 4'd13;
+                16'b0001????????????: msb = 4'd12;
+                16'b00001???????????: msb = 4'd11;
+                16'b000001??????????: msb = 4'd10;
+                16'b0000001?????????: msb = 4'd9;
+                16'b00000001????????: msb = 4'd8;
+                16'b000000001???????: msb = 4'd7;
+                16'b0000000001??????: msb = 4'd6;
+                16'b00000000001?????: msb = 4'd5;
+                16'b000000000001????: msb = 4'd4;
+                16'b0000000000001???: msb = 4'd3;
+                16'b00000000000001??: msb = 4'd2;
+                16'b000000000000001?: msb = 4'd1;
+                16'b0000000000000001: msb = 4'd0;
+                default:              msb = 4'd0;
+            endcase
             pot_shift = (msb > 4'd2) ? (msb - 4'd2) : 4'd0;
         end
     endfunction
@@ -1443,7 +1526,7 @@ module PoT_FiveStage_Parallel (
 
             for (int lane = 0; lane < HALF_SIZE; lane++) begin
                 idx    = (phase ? HALF_SIZE : 0) + lane;
-                scaled = get_i16(src_data, idx) >>> shift;
+                scaled = get_s16(src_data, idx) >>> shift;
                 quant_half[255 - (idx * 4) -: 4] = clamp_s4(scaled);
             end
         end
@@ -1535,8 +1618,8 @@ module Matrix_Max_3Stage_Parallel (
     logic [15:0]   max4_q     [0:MAX4_COUNT-1];
     logic [15:0]   out_max_next;
 
-    function automatic s16_t get_i16(input logic [1023:0] vec, input integer idx);
-        get_i16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
     function automatic logic [15:0] abs16(input s16_t value);
@@ -1563,10 +1646,10 @@ module Matrix_Max_3Stage_Parallel (
         input integer        base_idx
     );
         begin
-            max4_abs = max4_u16(abs16(get_i16(matrix, base_idx + 0)),
-                                abs16(get_i16(matrix, base_idx + 1)),
-                                abs16(get_i16(matrix, base_idx + 2)),
-                                abs16(get_i16(matrix, base_idx + 3)));
+            max4_abs = max4_u16(abs16(get_s16(matrix, base_idx + 0)),
+                                abs16(get_s16(matrix, base_idx + 1)),
+                                abs16(get_s16(matrix, base_idx + 2)),
+                                abs16(get_s16(matrix, base_idx + 3)));
         end
     endfunction
 
@@ -1634,3 +1717,63 @@ module Matrix_Max_3Stage_Parallel (
     end
 
 endmodule
+
+/*
+  Point                                                   Incr       Path
+  --------------------------------------------------------------------------
+  clock clk (rise edge)                                   0.00       0.00
+  clock network delay (ideal)                             0.00       0.00
+  u_datapath_issue_mode_q_reg_2_/CK (DFFHQX4)             0.00 #     0.00 r
+  u_datapath_issue_mode_q_reg_2_/Q (DFFHQX4)              0.32       0.32 r
+  U1116/Y (INVX4)                                         0.06       0.37 f
+  U954/Y (NAND3X4)                                        0.11       0.49 r
+  U994/Y (NOR2X4)                                         0.08       0.57 f
+  U993/Y (CLKINVX8)                                       0.09       0.66 r
+  U260/Y (INVX4)                                          0.06       0.72 f
+  U72/Y (NAND2X2)                                         0.11       0.83 r
+  U32/Y (INVX2)                                           0.07       0.90 f
+  U1199/Y (INVX4)                                         0.17       1.07 r
+  U972/Y (INVX8)                                          0.20       1.27 f
+  U4583/Y (AOI22XL)                                       0.19       1.46 r
+  U4585/Y (NAND2XL)                                       0.09       1.55 f
+  U353/Y (AOI21XL)                                        0.16       1.71 r
+  U652/Y (NAND4X1)                                        0.31       2.02 f
+  u_datapath_u_mult_proc_u_mult/in_data_B[248] (Mult_2Stage_Parallel)
+                                                          0.00       2.02 f
+  u_datapath_u_mult_proc_u_mult/U3019/Y (NAND2X4)         0.29       2.31 r
+  u_datapath_u_mult_proc_u_mult/U3206/Y (NAND3X4)         0.44       2.75 f
+  u_datapath_u_mult_proc_u_mult/U100/Y (INVX2)            0.62       3.37 r
+  u_datapath_u_mult_proc_u_mult/U1059/Y (INVX2)           0.41       3.78 f
+  u_datapath_u_mult_proc_u_mult/U14896/Y (OAI32XL)        0.38       4.16 r
+  u_datapath_u_mult_proc_u_mult/U17007/S (ADDHXL)         0.45       4.61 f
+  u_datapath_u_mult_proc_u_mult/U17008/CO (ADDFX1)        0.51       5.13 f
+  u_datapath_u_mult_proc_u_mult/U19366/CO (ADDFX1)        0.34       5.46 f
+  u_datapath_u_mult_proc_u_mult/U21869/CO (ADDFX1)        0.34       5.80 f
+  u_datapath_u_mult_proc_u_mult/U24286/CO (ADDFX1)        0.34       6.13 f
+  u_datapath_u_mult_proc_u_mult/U40361/CO (ADDFX1)        0.32       6.45 f
+  u_datapath_u_mult_proc_u_mult/U1320/CO (ADDFHX1)        0.29       6.75 f
+  u_datapath_u_mult_proc_u_mult/U51755/CO (ADDFX1)        0.32       7.07 f
+  u_datapath_u_mult_proc_u_mult/U51752/CO (ADDFX1)        0.34       7.40 f
+  u_datapath_u_mult_proc_u_mult/U51749/CO (ADDFX1)        0.34       7.74 f
+  u_datapath_u_mult_proc_u_mult/U51746/CO (ADDFX1)        0.34       8.08 f
+  u_datapath_u_mult_proc_u_mult/U51743/CO (ADDFX1)        0.32       8.39 f
+  u_datapath_u_mult_proc_u_mult/U1242/CO (ADDFHX1)        0.29       8.68 f
+  u_datapath_u_mult_proc_u_mult/U306/Y (XOR2XL)           0.35       9.03 r
+  u_datapath_u_mult_proc_u_mult/U40362/Y (XOR2X1)         0.26       9.29 f
+  u_datapath_u_mult_proc_u_mult/U40364/Y (OAI2BB1XL)      0.21       9.50 f
+  u_datapath_u_mult_proc_u_mult/prod_q_reg_4__1__15_/D (DFFHQX1)
+                                                          0.00       9.50 f
+  data arrival time                                                  9.50
+
+  clock clk (rise edge)                                  10.00      10.00
+  clock network delay (ideal)                             0.00      10.00
+  clock uncertainty                                      -0.10       9.90
+  u_datapath_u_mult_proc_u_mult/prod_q_reg_4__1__15_/CK (DFFHQX1)
+                                                          0.00       9.90 r
+  library setup time                                     -0.40       9.50
+  data required time                                                 9.50
+  --------------------------------------------------------------------------
+  data required time                                                 9.50
+  data arrival time                                                 -9.50
+  --------------------------------------------------------------------------
+  slack (MET)                                                        0.00
