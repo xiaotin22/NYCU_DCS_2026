@@ -270,6 +270,7 @@ module CA_Control #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state_q                <= S_IDLE;
+            att_param_phase_q      <= 1'b0;
             rd_req_cnt_q           <= 2'd0;
             att_rd_word_cnt_q      <= 2'd0;
             wr_cmd_cnt_q           <= 8'd0;
@@ -280,6 +281,7 @@ module CA_Control #(
             att_wr_pipe_q          <= 12'd0;
             att_prefetch_pending_q <= 1'b0;
             wr_en                  <= 1'b0;
+            wr_burst               <= '0;
         end
         else begin
             wr_en    <= 1'b0;
@@ -392,11 +394,6 @@ module CA_Control #(
                 end
 
                 S_ATT_WAIT_QKV: begin
-                    if (att_prefetch_fire) begin
-                        rd_addr                 <= att_next_group_base[ADDR_W-1:0];
-                        att_prefetch_pending_q  <= 1'b1;
-                    end
-
                     if (datapath_qkv_ready) begin
                         att_phase_cnt_q <= 4'd0;
                         state_q         <= S_ATT_ISSUE_SV;
@@ -404,6 +401,11 @@ module CA_Control #(
                 end
 
                 S_ATT_ISSUE_SV: begin
+                    if (att_prefetch_fire) begin
+                        rd_addr                <= att_next_group_base[ADDR_W-1:0];
+                        att_prefetch_pending_q <= 1'b1;
+                    end
+
                     if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
                         ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
                         state_q <= S_ATT_WAIT_SV;
@@ -457,9 +459,6 @@ module CA_Control #(
             endcase
         end
     end
-
-    logic [2:0] selected_burst;
-    assign selected_burst = (exec_op[1]) ? BURST_128 :BURST_4;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
