@@ -214,7 +214,7 @@ module CA_Control #(
                                     !att_prefetch_pending_q &&
                                     (rd_req_cnt_q == 2'd0) &&
                                     rd_ready;
-    assign att_prefetch_fire      = (state_q == S_ATT_ISSUE_SV) &&
+    assign att_prefetch_fire      = (state_q == S_ATT_WAIT_QKV) &&
                                     !att_prefetch_pending_q &&
                                     (att_group_base_q != 8'd252) &&
                                     rd_ready;
@@ -394,6 +394,11 @@ module CA_Control #(
                 end
 
                 S_ATT_WAIT_QKV: begin
+                    if (att_prefetch_fire) begin
+                        rd_addr                <= att_next_group_base[ADDR_W-1:0];
+                        att_prefetch_pending_q <= 1'b1;
+                    end
+
                     if (datapath_qkv_ready) begin
                         att_phase_cnt_q <= 4'd0;
                         state_q         <= S_ATT_ISSUE_SV;
@@ -401,11 +406,6 @@ module CA_Control #(
                 end
 
                 S_ATT_ISSUE_SV: begin
-                    if (att_prefetch_fire) begin
-                        rd_addr                <= att_next_group_base[ADDR_W-1:0];
-                        att_prefetch_pending_q <= 1'b1;
-                    end
-
                     if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
                         ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
                         state_q <= S_ATT_WAIT_SV;

@@ -12,6 +12,23 @@
 `define BURST_BIT        3
 `define PRINT_LATENCY    1
 
+// ============================================================
+// TESTBED RAM interface hierarchy
+// Change these names according to your TESTBED.sv
+// ============================================================
+`define TB_RD_EN      $root.TESTBED.rd_en
+`define TB_RD_ADDR    $root.TESTBED.rd_addr
+`define TB_RD_BURST   $root.TESTBED.rd_burst
+
+`define TB_WR_EN      $root.TESTBED.wr_en
+`define TB_WR_ADDR    $root.TESTBED.wr_addr
+`define TB_WR_BURST   $root.TESTBED.wr_burst
+`define TB_WR_DATA    $root.TESTBED.wr_data
+
+`define TB_WR_READY   $root.TESTBED.wr_ready
+`define TB_WR_VALID   $root.TESTBED.wr_valid
+
+
 module PATTERN(
     output logic clk,
     output logic rst_n,
@@ -53,6 +70,22 @@ int set_idx;
 int total_latency;
 
 // ============================================================
+// Static drivers for force/procedural RAM preload.
+// VCS does not allow automatic task variables on RHS of force,
+// so force TESTBED signals to these module-level drivers only.
+// ============================================================
+logic         tb_rd_en_drv;
+logic [7:0]   tb_rd_addr_drv;
+logic [2:0]   tb_rd_burst_drv;
+
+logic         tb_wr_en_drv;
+logic [7:0]   tb_wr_addr_drv;
+logic [2:0]   tb_wr_burst_drv;
+logic [255:0] tb_wr_data_drv;
+
+logic [255:0] dut_ram_word [0:`RAM_DEPTH-1];
+
+// ============================================================
 // Clock
 // ============================================================
 initial clk = 1'b0;
@@ -66,14 +99,47 @@ initial begin
     seed = `SEED;
     dummy_rand = $urandom(seed);
     total_latency = 0;
+
     reset_task();
 
+    // Correct RAM files: pat00_data.txt ~ pat04_data.txt
     for (ram_idx = 0; ram_idx < `RAM_NUMBER; ram_idx = ram_idx + 1) begin
-        new_ram_task(ram_idx);
+        // Load original RAM file into PATTERN golden model once.
+        // During the same RAM pattern, golden_ram will be updated after each op set.
+        load_golden_ram_from_file_task(ram_idx);
+
+        @(negedge clk);
+        mem_set  = 1'b0;
+        in_valid = 1'b0;
+        op       = 2'd0;
+        act      = 2'd0;
+        param    = 256'd0;
+
+        repeat (2) @(negedge clk);
 
         for (set_idx = 0; set_idx < `OP_SET_NUMBER; set_idx = set_idx + 1) begin
+            // Important:
+            // Before every op set, sync current golden_ram into real DUT RAM.
+            // set_idx=0: original patXX file data.
+            // set_idx>0: previous op set result.
+            preload_dut_ram_from_current_golden_task(ram_idx, set_idx);
+
+            // For each new RAM pattern, mem_set rises only after RAM is ready.
+            if (set_idx == 0) begin
+                @(negedge clk);
+                mem_set = 1'b1;
+                repeat (3) @(negedge clk);
+            end
+            else begin
+                repeat ($urandom_range(1, 3)) @(negedge clk);
+            end
+
             random_op_set_task(set_idx);
+
+            // build_golden_task uses current golden_ram as input,
+            // then updates golden_ram to this op set output.
             build_golden_task(cur_op, cur_act);
+
             send_op_set_task(cur_op, cur_act);
             check_all_outputs_task(ram_idx, set_idx);
 
@@ -92,9 +158,9 @@ initial begin
 
     YOU_PASS_TASK();
     $display ("----------------------------------------------------------------------------------------------------------------------");
-    $display ("                                                  Congratulations!                						             ");
-    $display ("                                           You have passed all patterns!          						             ");
-    $display ("                                Cycle Time = %.1f ns , execution cycles = %6d cycles        						         ", `CYCLE_TIME ,total_latency);
+    $display ("                                                  Congratulations!                 					             ");
+    $display ("                                           You have passed all patterns!          					             ");
+    $display ("                                Cycle Time = %.1f ns , execution cycles = %6d cycles        					         ", `CYCLE_TIME ,total_latency);
     $display ("----------------------------------------------------------------------------------------------------------------------");
     $finish;
 end
@@ -126,6 +192,7 @@ begin
         $display(" out_valid = %b", out_valid);
         $display(" out_data  = %h", out_data);
         $display("============================================================");
+        repeat (3) @(negedge clk);
         $finish;
     end
 
@@ -137,10 +204,20 @@ endtask
 
 // ============================================================
 // New RAM pattern
+// Kept for compatibility; main flow does not call this task now.
+// RAM file index is pat00~pat04.
 // ============================================================
 task automatic new_ram_task(input int rid);
 begin
+    @(negedge clk);
+    mem_set  = 1'b0;
+    in_valid = 1'b0;
+    op       = 2'd0;
+    act      = 2'd0;
+    param    = 256'd0;
+
     load_golden_ram_from_file_task(rid);
+    preload_dut_ram_from_current_golden_task(rid, 0);
 
     @(negedge clk);
     mem_set = 1'b1;
@@ -148,7 +225,7 @@ begin
     repeat ($urandom_range(2, 5)) @(negedge clk);
 
     if (`DEBUG_EN) begin
-        $display("[RAM %0d] mem_set = 1", rid);
+        $display("[RAM %0d] mem_set = 1 after DUT RAM preload", rid);
     end
 end
 endtask
@@ -182,6 +259,167 @@ begin
     if (`DEBUG_EN) begin
         $display("[LOAD] %s", file_name);
         $display("[LOAD] first word = %h", ram_word[0]);
+    end
+end
+endtask
+
+
+// ============================================================
+// Sync current PATTERN golden RAM into real DUT RAM
+//
+// 256 words = two burst writes
+// wr_burst = 7 => 2^7 = 128 words per burst
+//
+// This task is called before EVERY op set.
+// Therefore DUT RAM input for op set N matches golden_ram, which is
+// already updated by op set N-1.
+// ============================================================
+task automatic preload_dut_ram_from_current_golden_task(input int rid, input int sid);
+    int a;
+begin
+    for (a = 0; a < `RAM_DEPTH; a = a + 1) begin
+        dut_ram_word[a] = pack_mtx4(golden_ram[a]);
+    end
+
+    if (`DEBUG_EN) begin
+        $display("[DUT RAM SYNC] PATTERN=%0d OP_SET=%0d word0=%h",
+                 rid, sid, dut_ram_word[0]);
+    end
+
+    preload_dut_ram_by_burst_write_task(rid, sid);
+end
+endtask
+
+
+task automatic preload_dut_ram_by_burst_write_task(input int rid, input int sid);
+begin
+    // Initialize module-level static drivers.
+    tb_rd_en_drv    = 1'b0;
+    tb_rd_addr_drv  = 8'd0;
+    tb_rd_burst_drv = 3'd0;
+
+    tb_wr_en_drv    = 1'b0;
+    tb_wr_addr_drv  = 8'd0;
+    tb_wr_burst_drv = 3'd0;
+    tb_wr_data_drv  = 256'd0;
+
+    // Take over CA -> RAM interface temporarily.
+    // Because force RHS is static driver signal, this avoids VCS
+    // automatic-variable force errors.
+    force `TB_RD_EN    = tb_rd_en_drv;
+    force `TB_RD_ADDR  = tb_rd_addr_drv;
+    force `TB_RD_BURST = tb_rd_burst_drv;
+
+    force `TB_WR_EN    = tb_wr_en_drv;
+    force `TB_WR_ADDR  = tb_wr_addr_drv;
+    force `TB_WR_BURST = tb_wr_burst_drv;
+    force `TB_WR_DATA  = tb_wr_data_drv;
+
+    repeat (2) @(posedge clk);
+
+    // word 0 ~ 127
+    ram_burst_write_128_task(8'd0);
+
+    // word 128 ~ 255
+    ram_burst_write_128_task(8'd128);
+
+    tb_wr_en_drv    = 1'b0;
+    tb_wr_addr_drv  = 8'd0;
+    tb_wr_burst_drv = 3'd0;
+    tb_wr_data_drv  = 256'd0;
+
+    repeat (2) @(posedge clk);
+
+    // Release RAM interface back to CA.
+    release `TB_RD_EN;
+    release `TB_RD_ADDR;
+    release `TB_RD_BURST;
+
+    release `TB_WR_EN;
+    release `TB_WR_ADDR;
+    release `TB_WR_BURST;
+    release `TB_WR_DATA;
+
+    repeat (2) @(posedge clk);
+
+    if (`DEBUG_EN) begin
+        $display("[DUT RAM SYNC DONE] PATTERN=%0d OP_SET=%0d", rid, sid);
+    end
+end
+endtask
+
+
+task automatic ram_burst_write_128_task(input logic [7:0] start_addr);
+    int wait_cnt;
+    int i;
+    int base_addr;
+begin
+    base_addr = start_addr;
+    wait_cnt  = 0;
+
+    // Wait until RAM can accept write command.
+    // Drive command/data at posedge; RAM itself is negedge-triggered.
+    while (`TB_WR_READY !== 1'b1) begin
+        @(posedge clk);
+        wait_cnt = wait_cnt + 1;
+
+        if (wait_cnt > MAX_WAIT) begin
+            YOU_FAIL_TASK();
+            $display("============================================================");
+            $display(" Timeout while waiting wr_ready during RAM sync.");
+            $display(" start_addr = %0d", base_addr);
+            $display("============================================================");
+            repeat (3) @(negedge clk);
+            $finish;
+        end
+    end
+
+    // Step 1: wr_ready=1, pull wr_en and give wr_addr/wr_burst.
+    // Also put first data word on wr_data.
+    @(posedge clk);
+    tb_wr_addr_drv  = start_addr;
+    tb_wr_burst_drv = 3'd7;
+    tb_wr_data_drv  = dut_ram_word[base_addr];
+    tb_wr_en_drv    = 1'b1;
+
+    @(posedge clk);
+    tb_wr_en_drv    = 1'b0;
+
+    // Step 2: hold first wr_data until wr_valid=1.
+    wait_cnt = 0;
+    while (`TB_WR_VALID !== 1'b1) begin
+        @(posedge clk);
+        wait_cnt = wait_cnt + 1;
+
+        if (wait_cnt > MAX_WAIT) begin
+            YOU_FAIL_TASK();
+            $display("============================================================");
+            $display(" Timeout while waiting wr_valid during RAM sync.");
+            $display(" start_addr = %0d", base_addr);
+            $display(" first data = %h", dut_ram_word[base_addr]);
+            $display("============================================================");
+            repeat (3) @(negedge clk);
+            $finish;
+        end
+    end
+
+    // After wr_valid=1, switch to next write data every positive edge.
+    // Data is updated at posedge and sampled by RAM at following negedge.
+    for (i = 1; i < 128; i = i + 1) begin
+        tb_wr_data_drv = dut_ram_word[base_addr + i];
+        @(posedge clk);
+    end
+
+    // Clean command/data after the burst.
+    tb_wr_addr_drv  = 8'd0;
+    tb_wr_burst_drv = 3'd0;
+    tb_wr_data_drv  = 256'd0;
+
+    repeat (2) @(posedge clk);
+
+    if (`DEBUG_EN) begin
+        $display("[BURST WRITE] start_addr=%0d end_addr=%0d done",
+                 base_addr, base_addr + 127);
     end
 end
 endtask
@@ -551,11 +789,13 @@ function automatic mtx_t post_act_func(input mtx_t in_mtx, input logic [1:0] act
     int ii;
     int jj;
     int signed sum;
+    int signed threshold;
 begin
     out_mtx = zero_mtx_func();
 
     case (act_i)
         2'b00: begin
+            // ReLU
             for (i = 0; i < N; i = i + 1) begin
                 for (j = 0; j < N; j = j + 1) begin
                     if (in_mtx[i][j] >= 0) out_mtx[i][j] = in_mtx[i][j];
@@ -565,9 +805,7 @@ begin
         end
 
         2'b01: begin
-            // RAT:
-            // threshold = row_sum / 8
-            // x < threshold <=> x * 8 < row_sum
+            // RAT: threshold = row average
             for (i = 0; i < N; i = i + 1) begin
                 sum = 0;
 
@@ -575,17 +813,27 @@ begin
                     sum = sum + in_mtx[i][j];
                 end
 
+                // Version A: signed division, truncate toward zero
+                threshold = sum >>> 3;
+
+                
+
                 for (j = 0; j < N; j = j + 1) begin
-                    if (in_mtx[i][j] * 8 < sum) out_mtx[i][j] = div_pow2_tz_func(in_mtx[i][j], 3);
-                    else                        out_mtx[i][j] = in_mtx[i][j];
+                    if (in_mtx[i][j] >= threshold) begin
+                        out_mtx[i][j] = in_mtx[i][j];
+                    end
+                    else begin
+                        // Version A: divide by 8, truncate toward zero
+                        // out_mtx[i][j] = div_pow2_tz_func(in_mtx[i][j], 3);
+                        // If your CA uses arithmetic shift:
+                        out_mtx[i][j] = in_mtx[i][j] >>> 3;
+                    end
                 end
             end
         end
 
         2'b10: begin
-            // CAT:
-            // threshold = col_sum / 8
-            // x < threshold <=> x * 8 < col_sum
+            // CAT: threshold = column average
             for (j = 0; j < N; j = j + 1) begin
                 sum = 0;
 
@@ -593,18 +841,25 @@ begin
                     sum = sum + in_mtx[i][j];
                 end
 
+                threshold = sum >>> 3;
+                // If your CA uses arithmetic shift:
+                // threshold = sum >>> 3;
+
                 for (i = 0; i < N; i = i + 1) begin
-                    if (in_mtx[i][j] * 8 < sum) out_mtx[i][j] = div_pow2_tz_func(in_mtx[i][j], 3);
-                    else                        out_mtx[i][j] = in_mtx[i][j];
+                    if (in_mtx[i][j] >= threshold) begin
+                        out_mtx[i][j] = in_mtx[i][j];
+                    end
+                    else begin
+                        out_mtx[i][j] = div_pow2_tz_func(in_mtx[i][j], 3);
+                        // If your CA uses arithmetic shift:
+                        // out_mtx[i][j] = in_mtx[i][j] >>> 3;
+                    end
                 end
             end
         end
 
         default: begin
-            // BAT:
-            // block size = 4x4
-            // threshold = block_sum / 16
-            // x < threshold <=> x * 16 < block_sum
+            // BAT: block size = 4x4, threshold = block average
             for (bi = 0; bi < N; bi = bi + 4) begin
                 for (bj = 0; bj < N; bj = bj + 4) begin
                     sum = 0;
@@ -615,10 +870,17 @@ begin
                         end
                     end
 
+                    threshold = sum >>> 4;
+
                     for (ii = bi; ii < bi + 4; ii = ii + 1) begin
                         for (jj = bj; jj < bj + 4; jj = jj + 1) begin
-                            if (in_mtx[ii][jj] * 16 < sum) out_mtx[ii][jj] = div_pow2_tz_func(in_mtx[ii][jj], 3);
-                            else                          out_mtx[ii][jj] = in_mtx[ii][jj];
+                            if (in_mtx[ii][jj] >= threshold) begin
+                                out_mtx[ii][jj] = in_mtx[ii][jj];
+                            end
+                            else begin
+                                out_mtx[ii][jj] = div_pow2_tz_func(in_mtx[ii][jj], 3);
+                                
+                            end
                         end
                     end
                 end
@@ -847,16 +1109,17 @@ begin
 
     $display("------------------------------------------------------------");
     $display("\033[34mOP SET DONE: PATTERN NO. %2d, OP SET NO. %1d \033[0m| op = %0d, act = %0d | opset latency = %0d | total latency = %0d",
-             rid , sid , cur_op, cur_act, opset_latency, total_latency);
+             rid, sid, cur_op, cur_act, opset_latency, total_latency);
     $display("------------------------------------------------------------");
 
     if (out_valid === 1'b1) begin
         YOU_FAIL_TASK();
         $display("============================================================");
         $display("Extra out_valid after 256 outputs.");
-        $display("PATTERN NO. = %0d, OP SET NO. = %0d", rid , sid );
+        $display("PATTERN NO. = %0d, OP SET NO. = %0d", rid, sid);
         $display("out_data = %h", out_data);
         $display("============================================================");
+        repeat (3) @(negedge clk);
         $finish;
     end
 end
@@ -889,9 +1152,10 @@ begin
                 $display("============================================================");
                 $display("Timeout: no output within %0d cycles.", MAX_WAIT);
                 $display("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d",
-                         rid - 1, sid + 1, addr);
+                         rid, sid, addr);
                 $display("op = %0d, act = %0d", cur_op, cur_act);
                 $display("============================================================");
+                repeat (3) @(negedge clk);
                 $finish;
             end
         end
@@ -915,9 +1179,10 @@ begin
                     $display("============================================================");
                     $display("Timeout: no output within %0d cycles.", MAX_WAIT);
                     $display("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d",
-                             rid , sid , addr);
+                             rid, sid, addr);
                     $display("op = %0d, act = %0d", cur_op, cur_act);
                     $display("============================================================");
+                    repeat (3) @(negedge clk);
                     $finish;
                 end
             end
