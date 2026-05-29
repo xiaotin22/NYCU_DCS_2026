@@ -2,7 +2,7 @@ from PIL import Image
 import sys
 
 # 已經過濾掉會報錯的字元，由暗(空白)到亮(密集)排列
-ASCII_CHARS = [" ", ".", ":", "-", "=", "+", "*", "#", "O", "@"]
+ASCII_CHARS = [" ", ".", ":", "-", "=", "+", "*", "#", "&", "@"]
 
 # 提取好的 PASS 後綴 (綠色 \033[32m)
 PASS_SUFFIX = [
@@ -48,6 +48,37 @@ FAIL_SUFFIX = [
     "\\033[31m .BBBB        :BBBB       BBBB7  .BBBB    7BBBBBBBBBBB   \\033[m",
     "\\033[31m  . ..        ....         ...:   ....    ..   .......   \\033[m"      
 ]
+
+def suffix_process(suffix_list, type_check):
+    processed = []
+    for line in suffix_list:
+        # 移除已有的 ANSI 代碼，保留純文字部分
+        clean_line = line.replace("\\033[32m", "").replace("\\033[31m", "").replace("\\033[m", "")
+        processed.append(clean_line)
+
+    # 根據 type_check 將每個非空白字元單獨加上顏色碼（保留空白）
+    if type_check == "PASS":
+        color = "\\033[32m"
+    elif type_check == "FAIL":
+        color = "\\033[31m"
+    else:
+        return processed
+
+    reset = "\\033[m"
+    result = []
+    for line in processed:
+        new_chars = []
+        for ch in line:
+            if ch == " ":
+                new_chars.append(" ")
+            else:
+                new_chars.append(f"{color}{ch}{reset}")
+        result.append("".join(new_chars))
+
+    return result
+    
+SUFFIX_PROCESSED_PASS = suffix_process(PASS_SUFFIX, "PASS")
+SUFFIX_PROCESSED_FAIL = suffix_process(FAIL_SUFFIX, "FAIL")
 
 def resize_image(image, new_width=100):
     width, height = image.size
@@ -128,7 +159,7 @@ def main():
         
         # 併排輸出圖片與後綴 (PASS 預設靠上對齊)
         for i, line in enumerate(ascii_lines):
-            suffix = PASS_SUFFIX[i] if i < len(PASS_SUFFIX) else ""
+            suffix = SUFFIX_PROCESSED_PASS[i] if i < len(SUFFIX_PROCESSED_PASS) else ""
             print(f'    $display("{line}{suffix}");')
             
         # 如果圖片高度不夠，把剩下的 PASS 後綴印完
@@ -152,7 +183,7 @@ def main():
             # 圖片行：如果不夠高就補空白
             img_str = ascii_lines[i - img_pad_top] if i >= img_pad_top else " " * new_width
             # 後綴行：如果不夠高就留白，達到底部時才印出 FAIL_SUFFIX
-            suf_str = FAIL_SUFFIX[i - suf_pad_top] if i >= suf_pad_top else ""
+            suf_str = SUFFIX_PROCESSED_FAIL[i - suf_pad_top] if i >= suf_pad_top else ""
             print(f'    $display("{img_str}{suf_str}");')
                 
         print("end endtask")
@@ -163,22 +194,23 @@ def main():
             f.write("// 這是 PASS 的圖片，請將以下程式碼貼到 PATTERN.sv 中的 YOU_PASS_TASK 裡\n")
             f.write("task YOU_PASS_TASK; begin\n")
             for i, line in enumerate(ascii_lines):
-                suffix = PASS_SUFFIX[i] if i < len(PASS_SUFFIX) else ""
+                suffix = SUFFIX_PROCESSED_PASS[i] if i < len(SUFFIX_PROCESSED_PASS) else ""
                 f.write(f'    $display("{line}{suffix}");\n')
-            if len(ascii_lines) < len(PASS_SUFFIX):
+            if len(ascii_lines) < len(SUFFIX_PROCESSED_PASS):
                 pad_spaces = " " * new_width
-                for i in range(len(ascii_lines), len(PASS_SUFFIX)):
-                    f.write(f'    $display("{pad_spaces}{PASS_SUFFIX[i]}");\n')
+                for i in range(len(ascii_lines), len(SUFFIX_PROCESSED_PASS)):
+                    f.write(f'    $display("{pad_spaces}{SUFFIX_PROCESSED_PASS[i]}");\n')
             f.write("end endtask\n")
         
         elif type_check == "FAIL":
             f.write("// 這是 FAIL 的圖片，請將以下程式碼貼到 PATTERN.sv 中的 YOU_FAIL_TASK 裡\n")
-            total_lines = max(len(ascii_lines), len(FAIL_SUFFIX))
+            f.write("task YOU_FAIL_TASK; begin\n")
+            total_lines = max(len(ascii_lines), len(SUFFIX_PROCESSED_FAIL))
             img_pad_top = total_lines - len(ascii_lines)
-            suf_pad_top = total_lines - len(FAIL_SUFFIX)
+            suf_pad_top = total_lines - len(SUFFIX_PROCESSED_FAIL)
             for i in range(total_lines):
                 img_str = ascii_lines[i - img_pad_top] if i >= img_pad_top else " " * new_width
-                suf_str = FAIL_SUFFIX[i - suf_pad_top] if i >= suf_pad_top else ""
+                suf_str = SUFFIX_PROCESSED_FAIL[i - suf_pad_top] if i >= suf_pad_top else ""
                 f.write(f'    $display("{img_str}{suf_str}");\n')
             f.write("end endtask\n")
 
