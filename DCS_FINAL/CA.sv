@@ -1204,6 +1204,29 @@ module ACT_FiveStage_Parallel (
         ext20 = {{4{value[15]}}, value};
     endfunction
 
+    // Balanced adder trees: depth log2(N) instead of serial accumulation.
+    function automatic s20_t reduce8(input s20_t a [0:7]);
+        s20_t l1 [0:3];
+        s20_t l2 [0:1];
+        begin
+            l1[0] = a[0] + a[1];
+            l1[1] = a[2] + a[3];
+            l1[2] = a[4] + a[5];
+            l1[3] = a[6] + a[7];
+            l2[0] = l1[0] + l1[1];
+            l2[1] = l1[2] + l1[3];
+            reduce8 = l2[0] + l2[1];
+        end
+    endfunction
+
+    function automatic s20_t reduce16(input s20_t a [0:15]);
+        s20_t l1 [0:7];
+        begin
+            for (int i = 0; i < 8; i++) l1[i] = a[2*i] + a[2*i+1];
+            reduce16 = reduce8(l1);
+        end
+    endfunction
+
     function automatic logic [39:0] calc_threshold_pair(
         input logic [1023:0] matrix,
         input logic [1:0]    act_sel,
@@ -1215,37 +1238,41 @@ module ACT_FiveStage_Parallel (
         integer col1;
         integer base_row;
         integer base_col;
-        s20_t  sum_a;
-        s20_t  sum_b;
+        s20_t  terms_a  [0:7];
+        s20_t  terms_b  [0:7];
+        s20_t  terms16  [0:15];
         s20_t  thr_a;
         s20_t  thr_b;
         begin
-            sum_a = 20'sd0;
-            sum_b = 20'sd0;
             thr_a = 20'sd0;
             thr_b = 20'sd0;
+            for (int i = 0; i < 8;  i++) begin
+                terms_a[i] = 20'sd0;
+                terms_b[i] = 20'sd0;
+            end
+            for (int i = 0; i < 16; i++) terms16[i] = 20'sd0;
 
             case (act_sel)
                 2'b01: begin
                     row0 = chunk * 2;
                     row1 = row0 + 1;
                     for (int c = 0; c < ROW_ELEM; c++) begin
-                        sum_a += ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
-                        sum_b += ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
+                        terms_a[c] = ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
+                        terms_b[c] = ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
                     end
-                    thr_a = sum_a >>> 3;
-                    thr_b = sum_b >>> 3;
+                    thr_a = reduce8(terms_a) >>> 3;
+                    thr_b = reduce8(terms_b) >>> 3;
                 end
 
                 2'b10: begin
                     col0 = chunk * 2;
                     col1 = col0 + 1;
                     for (int r = 0; r < ROW_ELEM; r++) begin
-                        sum_a += ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
-                        sum_b += ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
+                        terms_a[r] = ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
+                        terms_b[r] = ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
                     end
-                    thr_a = sum_a >>> 3;
-                    thr_b = sum_b >>> 3;
+                    thr_a = reduce8(terms_a) >>> 3;
+                    thr_b = reduce8(terms_b) >>> 3;
                 end
 
                 2'b11: begin
@@ -1253,12 +1280,13 @@ module ACT_FiveStage_Parallel (
                     base_col = (chunk % 2) * 4;
                     for (int r = 0; r < 4; r++) begin
                         for (int c = 0; c < 4; c++) begin
-                            sum_a += ext20(get_s16(matrix,
-                                                   ((base_row + r) * ROW_ELEM) +
-                                                   (base_col + c)));
+                            terms16[(r * 4) + c] =
+                                ext20(get_s16(matrix,
+                                              ((base_row + r) * ROW_ELEM) +
+                                              (base_col + c)));
                         end
                     end
-                    thr_a = sum_a >>> 4;
+                    thr_a = reduce16(terms16) >>> 4;
                     thr_b = thr_a;
                 end
 

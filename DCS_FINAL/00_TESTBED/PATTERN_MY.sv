@@ -436,9 +436,7 @@ task automatic random_op_set_task(input int sid);
 begin
     // First four sets cover op = 0,1,2,3.
     // Remaining sets are random.
-    if (sid < 4) cur_op = sid[1:0];
-    else         cur_op = $urandom_range(0, 3);
-
+    cur_op = $urandom_range(0, 3);
     cur_act = $urandom_range(0, 3);
 
     random_mtx4_task(param_q);
