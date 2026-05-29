@@ -959,14 +959,14 @@ module Multiple_Processor #(
     mult_tag_t  mult_tag_cs [0:MULT_STAGES-1];
     logic [2:0] mult_idx_cs [0:MULT_STAGES-1];
 
-    function automatic logic [1023:0] unpack_score(input logic [SCORE_PACK_W-1:0] src);
+    function automatic logic [A_WIDE_PACK-1:0] unpack_score(input logic [SCORE_PACK_W-1:0] src);
         logic [SCORE_ELEM_W-1:0] lane;
         begin
-            unpack_score = 1024'd0;
+            unpack_score = '0;
             for (int i = 0; i < 64; i++) begin
                 lane = src[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W];
-                unpack_score[1023 - (i * 16) -: 16] =
-                    {{(16-SCORE_ELEM_W){lane[SCORE_ELEM_W-1]}}, lane};
+                unpack_score[A_WIDE_PACK-1 - (i * A_WIDE_W) -: A_WIDE_W] =
+                    {{(A_WIDE_W-SCORE_ELEM_W){lane[SCORE_ELEM_W-1]}}, lane};
             end
         end
     endfunction
@@ -1063,7 +1063,7 @@ module Multiple_Processor #(
     logic [255:0]            op_A_cs;
     logic [255:0]            op_B_cs;
     logic [SCORE_PACK_W-1:0] op_score_cs;
-    logic [1023:0]           op_A_wide;
+    logic [A_WIDE_PACK-1:0]  op_A_wide;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -1087,7 +1087,7 @@ module Multiple_Processor #(
     // registering the full 1024-bit unpacked form.
     assign op_A_wide = unpack_score(op_score_cs);
 
-    Mult_2Stage_Parallel u_mult (
+    Mult_2Stage_Parallel #(.A_WIDE_W(A_WIDE_W)) u_mult (
         .clk            (clk),
         .rst_n          (rst_n),
         .op             (op_op_cs),
@@ -1117,7 +1117,9 @@ module Multiple_Processor #(
 
 endmodule
 
-module Mult_2Stage_Parallel (
+module Mult_2Stage_Parallel #(
+    parameter int A_WIDE_W = 12
+) (
     input  logic                 clk,
     input  logic                 rst_n,
     input  logic [1:0]           op,
@@ -1127,7 +1129,7 @@ module Mult_2Stage_Parallel (
     input  logic                 head_sel,
     input  logic                 in_valid,
     input  logic [255:0]         in_data_A,
-    input  logic [1023:0]        in_data_A_wide,
+    input  logic [A_WIDE_W*64-1:0] in_data_A_wide,
     input  logic [255:0]         in_data_B,
     output logic                 out_valid,
     output logic [1023:0]        out_data
@@ -1137,15 +1139,16 @@ module Mult_2Stage_Parallel (
     localparam int MAT_SIZE = 64;
     localparam int DOT_SIZE = 9;
 
-    typedef logic signed [3:0]  s4_t;
-    typedef logic signed [15:0] s16_t;
+    typedef logic signed [3:0]          s4_t;
+    typedef logic signed [15:0]         s16_t;
+    typedef logic signed [A_WIDE_W-1:0] sa_t;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
     endfunction
 
-    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
-        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic sa_t get_sa(input logic [A_WIDE_W*64-1:0] vec, input integer idx);
+        get_sa = $signed(vec[A_WIDE_W*64-1 - (idx * A_WIDE_W) -: A_WIDE_W]);
     endfunction
 
     function automatic s4_t get_pad_s4(input logic [255:0] vec, input integer row, input integer col);
@@ -1157,9 +1160,9 @@ module Mult_2Stage_Parallel (
         end
     endfunction
 
-    function automatic s16_t sel_a(
-        input logic [255:0]  mat_A,
-        input logic [1023:0] mat_A_wide,
+    function automatic sa_t sel_a(
+        input logic [255:0]            mat_A,
+        input logic [A_WIDE_W*64-1:0]  mat_A_wide,
         input logic [1:0]    op_sel,
         input logic          a_wide_sel,
         input logic          head_mask_sel,
@@ -1179,14 +1182,14 @@ module Mult_2Stage_Parallel (
                 sel_a = get_pad_s4(mat_A, row + (tap / 3) - 1, col + (tap % 3) - 1);
             end
             else if (tap == 8) begin
-                sel_a = 16'sd0;
+                sel_a = '0;
             end
             else if (head_mask_sel &&
                      ((!head_sel_sel && (tap >= 4)) || (head_sel_sel && (tap < 4)))) begin
-                sel_a = 16'sd0;
+                sel_a = '0;
             end
             else if (a_wide_sel) begin
-                sel_a = get_s16(mat_A_wide, (row_idx * ROW_ELEM) + tap);
+                sel_a = get_sa(mat_A_wide, (row_idx * ROW_ELEM) + tap);
             end
             else begin
                 sel_a = get_s4(mat_A, (row_idx * ROW_ELEM) + tap);
