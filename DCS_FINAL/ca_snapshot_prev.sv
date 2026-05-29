@@ -167,30 +167,37 @@ module CA_Control #(
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
 
-    typedef enum logic [3:0] {
+    typedef enum logic [2:0] {
         S_IDLE,
         S_FAST_RUN,
         S_ATT_PARAM,
         S_ATT_READ,
-        S_ATT_ISSUE_QKV,
-        S_ATT_WAIT_QKV,
-        S_ATT_ISSUE_SV,
-        S_ATT_WAIT_SV,
-        S_ATT_ISSUE_FINAL,
-        S_ATT_WAIT_FINAL
+        S_ATT_ISSUE,
+        S_ATT_WAIT
     } state_t;
 
+    // QKV / score / context all share one issue+wait skeleton; att_stage_q says
+    // which matmul stage S_ATT_ISSUE/S_ATT_WAIT are currently running.
+    typedef enum logic [1:0] {
+        ST_QKV,
+        ST_SV,
+        ST_FINAL
+    } att_stage_t;
+
     state_t      state_q;
+    att_stage_t  att_stage_q;
     logic        att_param_phase_q;
     logic [1:0]  rd_req_cnt_q;
     logic [1:0]  att_rd_word_cnt_q;
     logic [7:0]  wr_cmd_cnt_q;
     logic [7:0]  out_cnt_q;
-    logic [7:0]  wr_pre_pipe_q;
+    logic [9:0]  wr_pre_pipe_q;
     logic [7:0]  att_group_base_q;
     logic [3:0]  att_phase_cnt_q;
-    logic [11:0] att_wr_pipe_q;
+    logic [13:0] att_wr_pipe_q;
     logic        att_prefetch_pending_q;
+    logic [1:0]  att_pf_word_q;
+    logic        att_pf_done_q;
 
     logic        job_start;
     logic        attention_start;
@@ -199,28 +206,46 @@ module CA_Control #(
     logic        rd_cmd_fire;
     logic        att_read_fire;
     logic        att_prefetch_fire;
+    logic        att_pf_capture;
     logic        result_last;
     logic        att_final_start;
     logic        att_wr_fire;
     logic [7:0]  att_next_group_base;
+    logic [3:0]  att_phase_last;
 
     assign job_start              = (state_q == S_IDLE) && mem_set && in_valid;
     assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
     assign result_last            = datapath_result_valid && (out_cnt_q == 8'd255);
-    assign wr_pre_fire            = wr_pre_pipe_q[7];
+    assign wr_pre_fire            = wr_pre_pipe_q[9];
     assign wr_cmd_fire            = (state_q == S_FAST_RUN) && wr_pre_fire;
     assign rd_cmd_fire            = (state_q == S_FAST_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
     assign att_read_fire          = (state_q == S_ATT_READ) &&
                                     !att_prefetch_pending_q &&
+                                    !att_pf_done_q &&
                                     (rd_req_cnt_q == 2'd0) &&
                                     rd_ready;
-    assign att_prefetch_fire      = (state_q == S_ATT_ISSUE_SV) &&
+    // x_buf is released once QKV has issued, so the one-group-ahead prefetch can
+    // fire as early as the QKV issue (rd_ready permitting); the 50-cycle data
+    // return still lands well after QKV has finished reading x_buf.
+    assign att_prefetch_fire      = ((state_q == S_ATT_ISSUE) ||
+                                     (state_q == S_ATT_WAIT)) &&
+                                    (att_stage_q == ST_QKV) &&
                                     !att_prefetch_pending_q &&
+                                    !att_pf_done_q &&
                                     (att_group_base_q != 8'd252) &&
                                     rd_ready;
-    assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_phase_cnt_q == 4'd0);
-    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[11] : att_wr_pipe_q[7];
+    // Prefetched words land in x_buf as soon as they arrive: x_buf is free once
+    // the QKV issue is done (only QKV reads it), so capture is decoupled from the
+    // FSM state and the fixed 50-cycle read latency hides behind the current group.
+    assign att_pf_capture         = att_prefetch_pending_q && !att_pf_done_q && rd_valid;
+    assign att_final_start        = (state_q == S_ATT_ISSUE) && (att_stage_q == ST_FINAL) &&
+                                    (att_phase_cnt_q == 4'd0);
+    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[13] : att_wr_pipe_q[9];
     assign att_next_group_base    = att_group_base_q + 8'd4;
+    // Issue-phase upper bound: QKV always issues 12 phases (4 rows × Q/K/V);
+    // SV/FINAL issue 8 for MHA (2 heads × 4 rows) or 4 for SHA.
+    assign att_phase_last         = (att_stage_q == ST_QKV) ? 4'd11 :
+                                    (exec_op == 2'b11)      ? 4'd7  : 4'd3;
 
     always_comb begin
         datapath_issue_valid   = 1'b0;
@@ -238,59 +263,71 @@ module CA_Control #(
             end
 
             S_ATT_READ: begin
-                if (rd_valid) begin
+                if (!att_prefetch_pending_q && !att_pf_done_q && rd_valid) begin
                     datapath_capture_valid = 1'b1;
                     datapath_capture_idx   = att_rd_word_cnt_q;
                 end
             end
 
-            S_ATT_ISSUE_QKV: begin
+            S_ATT_ISSUE: begin
                 datapath_issue_valid = 1'b1;
-                datapath_issue_mode  = IM_QKV;
                 datapath_issue_idx   = att_phase_cnt_q;
-            end
-
-            S_ATT_ISSUE_SV: begin
-                datapath_issue_valid = 1'b1;
-                datapath_issue_mode  = IM_SV;
-                datapath_issue_idx   = att_phase_cnt_q;
-            end
-
-            S_ATT_ISSUE_FINAL: begin
-                datapath_issue_valid = 1'b1;
-                datapath_issue_mode  = IM_FINAL;
-                datapath_issue_idx   = att_phase_cnt_q;
+                case (att_stage_q)
+                    ST_QKV:  datapath_issue_mode = IM_QKV;
+                    ST_SV:   datapath_issue_mode = IM_SV;
+                    default: datapath_issue_mode = IM_FINAL;
+                endcase
             end
 
             default: begin
             end
         endcase
+
+        // Prefetched words are captured wherever they arrive (x_buf is already
+        // free), independent of FSM state. Takes priority over the in-state read.
+        if (att_pf_capture) begin
+            datapath_capture_valid = 1'b1;
+            datapath_capture_idx   = att_pf_word_q;
+        end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state_q                <= S_IDLE;
+            att_stage_q            <= ST_QKV;
+            att_param_phase_q      <= 1'b0;
             rd_req_cnt_q           <= 2'd0;
             att_rd_word_cnt_q      <= 2'd0;
             wr_cmd_cnt_q           <= 8'd0;
             out_cnt_q              <= 8'd0;
-            wr_pre_pipe_q          <= 8'd0;
+            wr_pre_pipe_q          <= 10'd0;
             att_group_base_q       <= 8'd0;
             att_phase_cnt_q        <= 4'd0;
-            att_wr_pipe_q          <= 12'd0;
+            att_wr_pipe_q          <= 14'd0;
             att_prefetch_pending_q <= 1'b0;
-            wr_en                  <= 1'b0;
+            att_pf_word_q          <= 2'd0;
+            att_pf_done_q          <= 1'b0;
         end
         else begin
-            wr_en    <= 1'b0;
-            wr_burst <= '0;
+            att_wr_pipe_q <= {att_wr_pipe_q[12:0], att_final_start};
 
-            att_wr_pipe_q <= {att_wr_pipe_q[10:0], att_final_start};
+            // Prefetched burst lands while the current group is still computing;
+            // collect the 4 words then flag the next group's x_buf ready.
+            if (att_pf_capture) begin
+                if (att_pf_word_q == 2'd3) begin
+                    att_pf_done_q          <= 1'b1;
+                    att_prefetch_pending_q <= 1'b0;
+                end
+                else begin
+                    att_pf_word_q <= att_pf_word_q + 1'b1;
+                end
+            end
 
-            if (att_wr_fire) begin
-                wr_en    <= 1'b1;
-                wr_addr  <= att_group_base_q[ADDR_W-1:0];
-                wr_burst <= BURST_4;
+            // One-group-ahead prefetch (fires while att_stage_q == ST_QKV, see wire).
+            // rd_addr/rd_en/rd_burst for this read are driven in the RAM-read block.
+            if (att_prefetch_fire) begin
+                att_prefetch_pending_q <= 1'b1;
+                att_pf_word_q          <= 2'd0;
             end
 
             case (state_q)
@@ -300,13 +337,12 @@ module CA_Control #(
                         exec_act  <= act;
                         exec_param <= param;
 
-                        rd_req_cnt_q          <= 2'd0;
-                        att_rd_word_cnt_q     <= 2'd0;
-                        wr_cmd_cnt_q          <= 8'd0;
-                        out_cnt_q             <= 8'd0;
-                        wr_pre_pipe_q         <= 8'd0;
-                        att_wr_pipe_q         <= 12'd0;
-                        att_prefetch_pending_q <= 1'b0;
+                        // FAST_RUN counters only; attention-specific state is
+                        // initialised in S_ATT_PARAM right before S_ATT_READ.
+                        rd_req_cnt_q  <= 2'd0;
+                        wr_cmd_cnt_q  <= 8'd0;
+                        out_cnt_q     <= 8'd0;
+                        wr_pre_pipe_q <= 10'd0;
 
                         if (attention_start) begin
                             att_param_phase_q <= 1'b0;
@@ -319,19 +355,15 @@ module CA_Control #(
                 end
 
                 S_FAST_RUN: begin
-                    wr_pre_pipe_q <= {wr_pre_pipe_q[6:0], datapath_issue_valid};
+                    wr_pre_pipe_q <= {wr_pre_pipe_q[8:0], datapath_issue_valid};
 
                     if (rd_cmd_fire) begin
-                        rd_addr      <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
                         rd_req_cnt_q <= rd_req_cnt_q + 1'b1;
                     end
 
+                    // wr_en/wr_addr/wr_burst for this write are driven in the
+                    // RAM-write block; here we only advance the command counter.
                     if (wr_cmd_fire) begin
-                        if (wr_cmd_cnt_q[6:0] == 7'd0) begin
-                            wr_en    <= 1'b1;
-                            wr_addr  <= wr_cmd_cnt_q[ADDR_W-1:0];
-                            wr_burst <= BURST_128;
-                        end
                         wr_cmd_cnt_q <= wr_cmd_cnt_q + 1'b1;
                     end
 
@@ -357,8 +389,10 @@ module CA_Control #(
                             rd_req_cnt_q           <= 2'd0;
                             att_rd_word_cnt_q      <= 2'd0;
                             out_cnt_q              <= 8'd0;
-                            att_wr_pipe_q          <= 12'd0;
+                            att_wr_pipe_q          <= 14'd0;
                             att_prefetch_pending_q <= 1'b0;
+                            att_pf_word_q          <= 2'd0;
+                            att_pf_done_q          <= 1'b0;
                             state_q                <= S_ATT_READ;
                         end
                     end
@@ -366,15 +400,23 @@ module CA_Control #(
 
                 S_ATT_READ: begin
                     if (att_read_fire) begin
-                        rd_addr      <= att_group_base_q[ADDR_W-1:0];
                         rd_req_cnt_q <= 2'd1;
                     end
 
-                    if (rd_valid) begin
+                    if (att_pf_done_q) begin
+                        // Next group's input was already prefetched into x_buf.
+                        att_pf_done_q   <= 1'b0;
+                        att_phase_cnt_q <= 4'd0;
+                        att_stage_q     <= ST_QKV;
+                        state_q         <= S_ATT_ISSUE;
+                    end
+                    else if (!att_prefetch_pending_q && rd_valid) begin
+                        // First group (no prefetch yet): capture the burst here.
                         if (att_rd_word_cnt_q == 2'd3) begin
-                            att_phase_cnt_q        <= 4'd0;
-                            att_prefetch_pending_q <= 1'b0;
-                            state_q                <= S_ATT_ISSUE_QKV;
+                            att_rd_word_cnt_q <= 2'd0;
+                            att_phase_cnt_q   <= 4'd0;
+                            att_stage_q       <= ST_QKV;
+                            state_q           <= S_ATT_ISSUE;
                         end
                         else begin
                             att_rd_word_cnt_q <= att_rd_word_cnt_q + 1'b1;
@@ -382,73 +424,54 @@ module CA_Control #(
                     end
                 end
 
-                S_ATT_ISSUE_QKV: begin
-                    if (att_phase_cnt_q == 4'd11) begin
-                        state_q <= S_ATT_WAIT_QKV;
+                S_ATT_ISSUE: begin
+                    if (att_phase_cnt_q == att_phase_last) begin
+                        state_q <= S_ATT_WAIT;
                     end
                     else begin
                         att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
                     end
                 end
 
-                S_ATT_WAIT_QKV: begin
-                    if (att_prefetch_fire) begin
-                        rd_addr                 <= att_next_group_base[ADDR_W-1:0];
-                        att_prefetch_pending_q  <= 1'b1;
-                    end
-
-                    if (datapath_qkv_ready) begin
-                        att_phase_cnt_q <= 4'd0;
-                        state_q         <= S_ATT_ISSUE_SV;
-                    end
-                end
-
-                S_ATT_ISSUE_SV: begin
-                    if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
-                        ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
-                        state_q <= S_ATT_WAIT_SV;
-                    end
-                    else begin
-                        att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
-                    end
-                end
-
-                S_ATT_WAIT_SV: begin
-                    if (datapath_sv_ready) begin
-                        att_phase_cnt_q <= 4'd0;
-                        att_wr_pipe_q   <= 12'd0;
-                        state_q         <= S_ATT_ISSUE_FINAL;
-                    end
-                end
-
-                S_ATT_ISSUE_FINAL: begin
-                    if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
-                        ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
-                        state_q <= S_ATT_WAIT_FINAL;
-                    end
-                    else begin
-                        att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
-                    end
-                end
-
-                S_ATT_WAIT_FINAL: begin
-                    if (datapath_result_valid) begin
-                        if (out_cnt_q[1:0] == 2'd3) begin
-                            if (att_group_base_q == 8'd252) begin
-                                state_q <= S_IDLE;
-                            end
-                            else begin
-                                att_group_base_q  <= att_next_group_base;
-                                rd_req_cnt_q      <= att_prefetch_pending_q ? 2'd1 : 2'd0;
-                                att_rd_word_cnt_q <= 2'd0;
-                                state_q           <= S_ATT_READ;
+                S_ATT_WAIT: begin
+                    case (att_stage_q)
+                        ST_QKV: begin
+                            if (datapath_qkv_ready) begin
+                                att_phase_cnt_q <= 4'd0;
+                                att_stage_q     <= ST_SV;
+                                state_q         <= S_ATT_ISSUE;
                             end
                         end
 
-                        if (out_cnt_q != 8'd255) begin
-                            out_cnt_q <= out_cnt_q + 1'b1;
+                        ST_SV: begin
+                            if (datapath_sv_ready) begin
+                                att_phase_cnt_q <= 4'd0;
+                                att_wr_pipe_q   <= 14'd0;
+                                att_stage_q     <= ST_FINAL;
+                                state_q         <= S_ATT_ISSUE;
+                            end
                         end
-                    end
+
+                        default: begin  // ST_FINAL: write back, advance group / finish.
+                            if (datapath_result_valid) begin
+                                if (out_cnt_q[1:0] == 2'd3) begin
+                                    if (att_group_base_q == 8'd252) begin
+                                        state_q <= S_IDLE;
+                                    end
+                                    else begin
+                                        att_group_base_q  <= att_next_group_base;
+                                        rd_req_cnt_q      <= att_prefetch_pending_q ? 2'd1 : 2'd0;
+                                        att_rd_word_cnt_q <= 2'd0;
+                                        state_q           <= S_ATT_READ;
+                                    end
+                                end
+
+                                if (out_cnt_q != 8'd255) begin
+                                    out_cnt_q <= out_cnt_q + 1'b1;
+                                end
+                            end
+                        end
+                    endcase
                 end
 
                 default: begin
@@ -458,9 +481,9 @@ module CA_Control #(
         end
     end
 
-    logic [2:0] selected_burst;
-    assign selected_burst = (exec_op[1]) ? BURST_128 :BURST_4;
-
+    // All RAM-read command outputs (rd_en/rd_burst/rd_addr) live here. The three
+    // fire conditions are mutually exclusive (each gated on a distinct state), so
+    // the if/else-if chain matches the original parallel assignments.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rd_en <= 1'b0;
@@ -471,10 +494,48 @@ module CA_Control #(
             if (rd_cmd_fire) begin
                 rd_en    <= 1'b1;
                 rd_burst <= BURST_128;
+                rd_addr  <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
             end
-            else if (att_read_fire || att_prefetch_fire) begin
+            else if (att_read_fire) begin
                 rd_en    <= 1'b1;
                 rd_burst <= BURST_4;
+                rd_addr  <= att_group_base_q[ADDR_W-1:0];
+            end
+            else if (att_prefetch_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_4;
+                rd_addr  <= att_next_group_base[ADDR_W-1:0];
+            end
+        end
+    end
+
+    // All RAM-write command outputs (wr_en/wr_burst/wr_addr) live here. The two
+    // write paths never overlap (attention write-back only fires in attention
+    // states; the FAST_RUN write only in S_FAST_RUN), so the separate ifs keep
+    // the original "last assignment wins" tie-break while staying mutually
+    // exclusive in practice. Counters (wr_cmd_cnt_q, att_wr_pipe_q) stay in the
+    // main FSM block and are only read here.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            wr_en    <= 1'b0;
+            wr_burst <= '0;
+        end
+        else begin
+            wr_en    <= 1'b0;
+            wr_burst <= '0;
+
+            // Attention: one BURST_4 per group, timed by att_wr_pipe_q.
+            if (att_wr_fire) begin
+                wr_en    <= 1'b1;
+                wr_addr  <= att_group_base_q[ADDR_W-1:0];
+                wr_burst <= BURST_4;
+            end
+
+            // FAST_RUN: a single BURST_128 covering all 256 results.
+            if (wr_cmd_fire && (wr_cmd_cnt_q[6:0] == 7'd0)) begin
+                wr_en    <= 1'b1;
+                wr_addr  <= wr_cmd_cnt_q[ADDR_W-1:0];
+                wr_burst <= BURST_128;
             end
         end
     end
@@ -547,6 +608,11 @@ module CA_DataPath #(
     logic [1023:0] act_in_data;
     pipe_tag_t     act_in_tag;
     logic [2:0]    act_in_idx;
+    logic          act_in_valid_q;
+    logic [1:0]    act_in_mode_q;
+    logic [1023:0] act_in_data_q;
+    pipe_tag_t     act_in_tag_q;
+    logic [2:0]    act_in_idx_q;
     logic          act_valid;
     logic [1023:0] act_data;
     pipe_tag_t     act_tag_q [0:4];
@@ -730,10 +796,10 @@ module CA_DataPath #(
     ACT_FiveStage_Parallel u_act (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (act_in_valid),
+        .in_valid  (act_in_valid_q),
         .act       (act),
-        .act_mode  (act_in_mode),
-        .in_data   (act_in_data),
+        .act_mode  (act_in_mode_q),
+        .in_data   (act_in_data_q),
         .out_valid (act_valid),
         .out_data  (act_data)
     );
@@ -755,11 +821,25 @@ module CA_DataPath #(
             score_ready_q <= 8'd0;
             out_valid     <= 1'b0;
             out_data      <= 32'd0;
+            act_in_valid_q <= 1'b0;
+            act_in_mode_q  <= ACT_USER;
+            act_in_data_q  <= 1024'd0;
+            act_in_tag_q   <= PT_NONE;
+            act_in_idx_q   <= 3'd0;
         end
         else begin
             out_valid <= result_valid;
 
-            if (capture_valid_q && (capture_idx_q == 2'd0)) begin
+            act_in_valid_q <= act_in_valid;
+            act_in_mode_q  <= act_in_mode;
+            act_in_data_q  <= act_in_data;
+            act_in_tag_q   <= act_in_valid ? act_in_tag : PT_NONE;
+            act_in_idx_q   <= act_in_idx;
+
+            // Clear the per-group ready flags at the first QKV issue (decoupled
+            // from x_buf capture, which now happens early via prefetch while the
+            // previous group still needs these flags in SV/FINAL).
+            if (issue_valid_q && (issue_mode_q == IM_QKV) && (issue_idx_q == 4'd0)) begin
                 q_ready_q     <= 4'd0;
                 k_ready_q     <= 4'd0;
                 v_ready_q     <= 4'd0;
@@ -770,8 +850,8 @@ module CA_DataPath #(
                 x_buf_q[capture_idx_q] <= rd_data_q[255:0];
             end
 
-            act_tag_q[0] <= act_in_valid ? act_in_tag : PT_NONE;
-            act_idx_q[0] <= act_in_idx;
+            act_tag_q[0] <= act_in_tag_q;
+            act_idx_q[0] <= act_in_idx_q;
             for (int i = 1; i < 5; i++) begin
                 act_tag_q[i] <= act_tag_q[i - 1];
                 act_idx_q[i] <= act_idx_q[i - 1];
@@ -851,7 +931,9 @@ module Multiple_Processor #(
     output logic [2:0]     mult_idx_out
 );
 
-    localparam int MULT_STAGES = 2;
+    // Stage 0 = registered operands (issue-time selection mux is now off the
+    // multiplier critical path); Stage 1/2 = multiplier internal pipeline.
+    localparam int MULT_STAGES = 3;
 
     logic          mult_issue_valid;
     logic          mult_issue_b_transpose;
@@ -859,7 +941,7 @@ module Multiple_Processor #(
     logic          mult_issue_head_mask;
     logic          mult_issue_head_sel;
     logic [255:0]  mult_issue_A;
-    logic [1023:0] mult_issue_A_wide;
+    logic [SCORE_PACK_W-1:0] mult_issue_score;
     logic [255:0]  mult_issue_B;
     mult_tag_t     mult_issue_tag;
     logic [2:0]    mult_issue_idx;
@@ -886,7 +968,7 @@ module Multiple_Processor #(
         mult_issue_head_mask   = 1'b0;
         mult_issue_head_sel    = 1'b0;
         mult_issue_A           = 256'd0;
-        mult_issue_A_wide      = 1024'd0;
+        mult_issue_score       = '0;
         mult_issue_B           = 256'd0;
         mult_issue_tag         = MT_NONE;
         mult_issue_idx         = 3'd0;
@@ -946,7 +1028,7 @@ module Multiple_Processor #(
                                         {issue_idx[2], issue_idx[1:0]} :
                                         {1'b0, issue_idx[1:0]};
                     mult_issue_a_wide = 1'b1;
-                    mult_issue_A_wide = unpack_score(score_buf[mult_issue_idx]);
+                    mult_issue_score  = score_buf[mult_issue_idx];
                     mult_issue_B      = v_buf[issue_idx[1:0]];
                     mult_issue_tag    = MT_FINAL;
                 end
@@ -958,18 +1040,55 @@ module Multiple_Processor #(
         end
     end
 
+    // ---- Stage 0: operand pipeline register --------------------------------
+    // The issue-time selection (mode/idx muxing of x/q/k/v/score buffers) used
+    // to sit in series with the multiplier, costing ~1.4ns. Latch the selected
+    // operands so the multiplier starts each cycle from stable registers.
+    logic                    op_valid_q;
+    logic                    op_btr_q;
+    logic                    op_awide_q;
+    logic                    op_hmask_q;
+    logic                    op_hsel_q;
+    logic [1:0]              op_op_q;
+    logic [255:0]            op_A_q;
+    logic [255:0]            op_B_q;
+    logic [SCORE_PACK_W-1:0] op_score_q;
+    logic [1023:0]           op_A_wide;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            op_valid_q <= 1'b0;
+        end
+        else begin
+            op_valid_q <= mult_issue_valid;
+            op_btr_q   <= mult_issue_b_transpose;
+            op_awide_q <= mult_issue_a_wide;
+            op_hmask_q <= mult_issue_head_mask;
+            op_hsel_q  <= mult_issue_head_sel;
+            op_op_q    <= op;
+            op_A_q     <= mult_issue_A;
+            op_B_q     <= mult_issue_B;
+            op_score_q <= mult_issue_score;
+        end
+    end
+
+    // Sign-extension unpack is pure wiring; doing it after the register keeps
+    // the 8:1 score_buf mux off the multiplier path and saves 320 flops vs.
+    // registering the full 1024-bit unpacked form.
+    assign op_A_wide = unpack_score(op_score_q);
+
     Mult_2Stage_Parallel u_mult (
         .clk            (clk),
         .rst_n          (rst_n),
-        .op             (op),
-        .b_transpose    (mult_issue_b_transpose),
-        .a_wide         (mult_issue_a_wide),
-        .head_mask      (mult_issue_head_mask),
-        .head_sel       (mult_issue_head_sel),
-        .in_valid       (mult_issue_valid),
-        .in_data_A      (mult_issue_A),
-        .in_data_A_wide (mult_issue_A_wide),
-        .in_data_B      (mult_issue_B),
+        .op             (op_op_q),
+        .b_transpose    (op_btr_q),
+        .a_wide         (op_awide_q),
+        .head_mask      (op_hmask_q),
+        .head_sel       (op_hsel_q),
+        .in_valid       (op_valid_q),
+        .in_data_A      (op_A_q),
+        .in_data_A_wide (op_A_wide),
+        .in_data_B      (op_B_q),
         .out_valid      (mult_valid),
         .out_data       (mult_data)
     );
@@ -1205,6 +1324,29 @@ module ACT_FiveStage_Parallel (
         ext20 = {{4{value[15]}}, value};
     endfunction
 
+    // Balanced adder trees: depth log2(N) instead of serial accumulation.
+    function automatic s20_t reduce8(input s20_t a [0:7]);
+        s20_t l1 [0:3];
+        s20_t l2 [0:1];
+        begin
+            l1[0] = a[0] + a[1];
+            l1[1] = a[2] + a[3];
+            l1[2] = a[4] + a[5];
+            l1[3] = a[6] + a[7];
+            l2[0] = l1[0] + l1[1];
+            l2[1] = l1[2] + l1[3];
+            reduce8 = l2[0] + l2[1];
+        end
+    endfunction
+
+    function automatic s20_t reduce16(input s20_t a [0:15]);
+        s20_t l1 [0:7];
+        begin
+            for (int i = 0; i < 8; i++) l1[i] = a[2*i] + a[2*i+1];
+            reduce16 = reduce8(l1);
+        end
+    endfunction
+
     function automatic logic [39:0] calc_threshold_pair(
         input logic [1023:0] matrix,
         input logic [1:0]    act_sel,
@@ -1216,37 +1358,41 @@ module ACT_FiveStage_Parallel (
         integer col1;
         integer base_row;
         integer base_col;
-        s20_t  sum_a;
-        s20_t  sum_b;
+        s20_t  terms_a  [0:7];
+        s20_t  terms_b  [0:7];
+        s20_t  terms16  [0:15];
         s20_t  thr_a;
         s20_t  thr_b;
         begin
-            sum_a = 20'sd0;
-            sum_b = 20'sd0;
             thr_a = 20'sd0;
             thr_b = 20'sd0;
+            for (int i = 0; i < 8;  i++) begin
+                terms_a[i] = 20'sd0;
+                terms_b[i] = 20'sd0;
+            end
+            for (int i = 0; i < 16; i++) terms16[i] = 20'sd0;
 
             case (act_sel)
                 2'b01: begin
                     row0 = chunk * 2;
                     row1 = row0 + 1;
                     for (int c = 0; c < ROW_ELEM; c++) begin
-                        sum_a += ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
-                        sum_b += ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
+                        terms_a[c] = ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
+                        terms_b[c] = ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
                     end
-                    thr_a = sum_a >>> 3;
-                    thr_b = sum_b >>> 3;
+                    thr_a = reduce8(terms_a) >>> 3;
+                    thr_b = reduce8(terms_b) >>> 3;
                 end
 
                 2'b10: begin
                     col0 = chunk * 2;
                     col1 = col0 + 1;
                     for (int r = 0; r < ROW_ELEM; r++) begin
-                        sum_a += ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
-                        sum_b += ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
+                        terms_a[r] = ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
+                        terms_b[r] = ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
                     end
-                    thr_a = sum_a >>> 3;
-                    thr_b = sum_b >>> 3;
+                    thr_a = reduce8(terms_a) >>> 3;
+                    thr_b = reduce8(terms_b) >>> 3;
                 end
 
                 2'b11: begin
@@ -1254,12 +1400,13 @@ module ACT_FiveStage_Parallel (
                     base_col = (chunk % 2) * 4;
                     for (int r = 0; r < 4; r++) begin
                         for (int c = 0; c < 4; c++) begin
-                            sum_a += ext20(get_s16(matrix,
-                                                   ((base_row + r) * ROW_ELEM) +
-                                                   (base_col + c)));
+                            terms16[(r * 4) + c] =
+                                ext20(get_s16(matrix,
+                                              ((base_row + r) * ROW_ELEM) +
+                                              (base_col + c)));
                         end
                     end
-                    thr_a = sum_a >>> 4;
+                    thr_a = reduce16(terms16) >>> 4;
                     thr_b = thr_a;
                 end
 
@@ -1595,6 +1742,7 @@ module PoT_FiveStage_Parallel (
 
 endmodule
 
+
 module Matrix_Max_3Stage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
@@ -1717,63 +1865,3 @@ module Matrix_Max_3Stage_Parallel (
     end
 
 endmodule
-
-/*
-  Point                                                   Incr       Path
-  --------------------------------------------------------------------------
-  clock clk (rise edge)                                   0.00       0.00
-  clock network delay (ideal)                             0.00       0.00
-  u_datapath_issue_mode_q_reg_2_/CK (DFFHQX4)             0.00 #     0.00 r
-  u_datapath_issue_mode_q_reg_2_/Q (DFFHQX4)              0.32       0.32 r
-  U1116/Y (INVX4)                                         0.06       0.37 f
-  U954/Y (NAND3X4)                                        0.11       0.49 r
-  U994/Y (NOR2X4)                                         0.08       0.57 f
-  U993/Y (CLKINVX8)                                       0.09       0.66 r
-  U260/Y (INVX4)                                          0.06       0.72 f
-  U72/Y (NAND2X2)                                         0.11       0.83 r
-  U32/Y (INVX2)                                           0.07       0.90 f
-  U1199/Y (INVX4)                                         0.17       1.07 r
-  U972/Y (INVX8)                                          0.20       1.27 f
-  U4583/Y (AOI22XL)                                       0.19       1.46 r
-  U4585/Y (NAND2XL)                                       0.09       1.55 f
-  U353/Y (AOI21XL)                                        0.16       1.71 r
-  U652/Y (NAND4X1)                                        0.31       2.02 f
-  u_datapath_u_mult_proc_u_mult/in_data_B[248] (Mult_2Stage_Parallel)
-                                                          0.00       2.02 f
-  u_datapath_u_mult_proc_u_mult/U3019/Y (NAND2X4)         0.29       2.31 r
-  u_datapath_u_mult_proc_u_mult/U3206/Y (NAND3X4)         0.44       2.75 f
-  u_datapath_u_mult_proc_u_mult/U100/Y (INVX2)            0.62       3.37 r
-  u_datapath_u_mult_proc_u_mult/U1059/Y (INVX2)           0.41       3.78 f
-  u_datapath_u_mult_proc_u_mult/U14896/Y (OAI32XL)        0.38       4.16 r
-  u_datapath_u_mult_proc_u_mult/U17007/S (ADDHXL)         0.45       4.61 f
-  u_datapath_u_mult_proc_u_mult/U17008/CO (ADDFX1)        0.51       5.13 f
-  u_datapath_u_mult_proc_u_mult/U19366/CO (ADDFX1)        0.34       5.46 f
-  u_datapath_u_mult_proc_u_mult/U21869/CO (ADDFX1)        0.34       5.80 f
-  u_datapath_u_mult_proc_u_mult/U24286/CO (ADDFX1)        0.34       6.13 f
-  u_datapath_u_mult_proc_u_mult/U40361/CO (ADDFX1)        0.32       6.45 f
-  u_datapath_u_mult_proc_u_mult/U1320/CO (ADDFHX1)        0.29       6.75 f
-  u_datapath_u_mult_proc_u_mult/U51755/CO (ADDFX1)        0.32       7.07 f
-  u_datapath_u_mult_proc_u_mult/U51752/CO (ADDFX1)        0.34       7.40 f
-  u_datapath_u_mult_proc_u_mult/U51749/CO (ADDFX1)        0.34       7.74 f
-  u_datapath_u_mult_proc_u_mult/U51746/CO (ADDFX1)        0.34       8.08 f
-  u_datapath_u_mult_proc_u_mult/U51743/CO (ADDFX1)        0.32       8.39 f
-  u_datapath_u_mult_proc_u_mult/U1242/CO (ADDFHX1)        0.29       8.68 f
-  u_datapath_u_mult_proc_u_mult/U306/Y (XOR2XL)           0.35       9.03 r
-  u_datapath_u_mult_proc_u_mult/U40362/Y (XOR2X1)         0.26       9.29 f
-  u_datapath_u_mult_proc_u_mult/U40364/Y (OAI2BB1XL)      0.21       9.50 f
-  u_datapath_u_mult_proc_u_mult/prod_q_reg_4__1__15_/D (DFFHQX1)
-                                                          0.00       9.50 f
-  data arrival time                                                  9.50
-
-  clock clk (rise edge)                                  10.00      10.00
-  clock network delay (ideal)                             0.00      10.00
-  clock uncertainty                                      -0.10       9.90
-  u_datapath_u_mult_proc_u_mult/prod_q_reg_4__1__15_/CK (DFFHQX1)
-                                                          0.00       9.90 r
-  library setup time                                     -0.40       9.50
-  data required time                                                 9.50
-  --------------------------------------------------------------------------
-  data required time                                                 9.50
-  data arrival time                                                 -9.50
-  --------------------------------------------------------------------------
-  slack (MET)                                                        0.00
