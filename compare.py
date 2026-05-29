@@ -2,21 +2,21 @@ import mosspy
 
 userid = 112623940
 
-m = mosspy.Moss(userid, "python")
+m = mosspy.Moss(userid, "verilog")
 
-m.addBaseFile("submission/a01.py")
-m.addBaseFile("submission/test_student.py")
+m.addBaseFile("DCS_FINAL/CA_TA.sv")
 
 # Submission Files
-m.addFile("submission/a01-sample.py")
-m.addFilesByWildcard("submission/a01-*.py")
+m.addFile("DCS_FINAL/CA.sv")
+m.addFile("DCS_FINAL/CA_Neko.sv")
+#m.addFilesByWildcard("submission/a01-*.sv")
 
 url = m.send() # Submission Report URL
 
 print ("Report Url: " + url)
 
 # Save report file
-m.saveWebPage(url, "submission/report.html")
+m.saveWebPage(url, "DCS_FINAL/compare_report.html")
 
 # Download whole report locally including code diff links
-mosspy.download_report(url, "submission/report/", connections=8)
+mosspy.download_report(url, "DCS_FINAL/report/", connections=8)
