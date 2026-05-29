@@ -218,7 +218,11 @@ module CA_Control #(
                                     !att_pf_done_q &&
                                     (rd_req_cnt_q == 2'd0) &&
                                     rd_ready;
-    assign att_prefetch_fire      = (state_q == S_ATT_WAIT_QKV) &&
+    // x_buf is released once QKV has issued, so the one-group-ahead prefetch can
+    // fire as early as ISSUE_QKV (rd_ready permitting); the 50-cycle data return
+    // still lands well after QKV has finished reading x_buf.
+    assign att_prefetch_fire      = ((state_q == S_ATT_ISSUE_QKV) ||
+                                     (state_q == S_ATT_WAIT_QKV)) &&
                                     !att_prefetch_pending_q &&
                                     !att_pf_done_q &&
                                     (att_group_base_q != 8'd252) &&
@@ -323,6 +327,13 @@ module CA_Control #(
                 else begin
                     att_pf_word_q <= att_pf_word_q + 1'b1;
                 end
+            end
+
+            // One-group-ahead prefetch (fires in ISSUE_QKV or WAIT_QKV, see wire).
+            if (att_prefetch_fire) begin
+                rd_addr                <= att_next_group_base[ADDR_W-1:0];
+                att_prefetch_pending_q <= 1'b1;
+                att_pf_word_q          <= 2'd0;
             end
 
             case (state_q)
@@ -435,12 +446,6 @@ module CA_Control #(
                 end
 
                 S_ATT_WAIT_QKV: begin
-                    if (att_prefetch_fire) begin
-                        rd_addr                <= att_next_group_base[ADDR_W-1:0];
-                        att_prefetch_pending_q <= 1'b1;
-                        att_pf_word_q          <= 2'd0;
-                    end
-
                     if (datapath_qkv_ready) begin
                         att_phase_cnt_q <= 4'd0;
                         state_q         <= S_ATT_ISSUE_SV;
