@@ -186,11 +186,13 @@ module CA_Control #(
     logic [1:0]  att_rd_word_cnt_q;
     logic [7:0]  wr_cmd_cnt_q;
     logic [7:0]  out_cnt_q;
-    logic [8:0]  wr_pre_pipe_q;
+    logic [9:0]  wr_pre_pipe_q;
     logic [7:0]  att_group_base_q;
     logic [3:0]  att_phase_cnt_q;
-    logic [12:0] att_wr_pipe_q;
+    logic [13:0] att_wr_pipe_q;
     logic        att_prefetch_pending_q;
+    logic [1:0]  att_pf_word_q;
+    logic        att_pf_done_q;
 
     logic        job_start;
     logic        attention_start;
@@ -199,6 +201,7 @@ module CA_Control #(
     logic        rd_cmd_fire;
     logic        att_read_fire;
     logic        att_prefetch_fire;
+    logic        att_pf_capture;
     logic        result_last;
     logic        att_final_start;
     logic        att_wr_fire;
@@ -207,19 +210,25 @@ module CA_Control #(
     assign job_start              = (state_q == S_IDLE) && mem_set && in_valid;
     assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
     assign result_last            = datapath_result_valid && (out_cnt_q == 8'd255);
-    assign wr_pre_fire            = wr_pre_pipe_q[8];
+    assign wr_pre_fire            = wr_pre_pipe_q[9];
     assign wr_cmd_fire            = (state_q == S_FAST_RUN) && wr_pre_fire;
     assign rd_cmd_fire            = (state_q == S_FAST_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
     assign att_read_fire          = (state_q == S_ATT_READ) &&
                                     !att_prefetch_pending_q &&
+                                    !att_pf_done_q &&
                                     (rd_req_cnt_q == 2'd0) &&
                                     rd_ready;
     assign att_prefetch_fire      = (state_q == S_ATT_WAIT_QKV) &&
                                     !att_prefetch_pending_q &&
+                                    !att_pf_done_q &&
                                     (att_group_base_q != 8'd252) &&
                                     rd_ready;
+    // Prefetched words land in x_buf as soon as they arrive: x_buf is free from
+    // WAIT_QKV onward (only QKV reads it), so capture is decoupled from the FSM
+    // state and the fixed 50-cycle read latency hides behind the current group.
+    assign att_pf_capture         = att_prefetch_pending_q && !att_pf_done_q && rd_valid;
     assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_phase_cnt_q == 4'd0);
-    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[12] : att_wr_pipe_q[8];
+    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[13] : att_wr_pipe_q[9];
     assign att_next_group_base    = att_group_base_q + 8'd4;
 
     always_comb begin
@@ -238,7 +247,7 @@ module CA_Control #(
             end
 
             S_ATT_READ: begin
-                if (rd_valid) begin
+                if (!att_prefetch_pending_q && !att_pf_done_q && rd_valid) begin
                     datapath_capture_valid = 1'b1;
                     datapath_capture_idx   = att_rd_word_cnt_q;
                 end
@@ -265,6 +274,13 @@ module CA_Control #(
             default: begin
             end
         endcase
+
+        // Prefetched words are captured wherever they arrive (x_buf is already
+        // free), independent of FSM state. Takes priority over the in-state read.
+        if (att_pf_capture) begin
+            datapath_capture_valid = 1'b1;
+            datapath_capture_idx   = att_pf_word_q;
+        end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -275,11 +291,13 @@ module CA_Control #(
             att_rd_word_cnt_q      <= 2'd0;
             wr_cmd_cnt_q           <= 8'd0;
             out_cnt_q              <= 8'd0;
-            wr_pre_pipe_q          <= 9'd0;
+            wr_pre_pipe_q          <= 10'd0;
             att_group_base_q       <= 8'd0;
             att_phase_cnt_q        <= 4'd0;
-            att_wr_pipe_q          <= 13'd0;
+            att_wr_pipe_q          <= 14'd0;
             att_prefetch_pending_q <= 1'b0;
+            att_pf_word_q          <= 2'd0;
+            att_pf_done_q          <= 1'b0;
             wr_en                  <= 1'b0;
             wr_burst               <= '0;
         end
@@ -287,12 +305,24 @@ module CA_Control #(
             wr_en    <= 1'b0;
             wr_burst <= '0;
 
-            att_wr_pipe_q <= {att_wr_pipe_q[11:0], att_final_start};
+            att_wr_pipe_q <= {att_wr_pipe_q[12:0], att_final_start};
 
             if (att_wr_fire) begin
                 wr_en    <= 1'b1;
                 wr_addr  <= att_group_base_q[ADDR_W-1:0];
                 wr_burst <= BURST_4;
+            end
+
+            // Prefetched burst lands while the current group is still computing;
+            // collect the 4 words then flag the next group's x_buf ready.
+            if (att_pf_capture) begin
+                if (att_pf_word_q == 2'd3) begin
+                    att_pf_done_q          <= 1'b1;
+                    att_prefetch_pending_q <= 1'b0;
+                end
+                else begin
+                    att_pf_word_q <= att_pf_word_q + 1'b1;
+                end
             end
 
             case (state_q)
@@ -306,9 +336,11 @@ module CA_Control #(
                         att_rd_word_cnt_q     <= 2'd0;
                         wr_cmd_cnt_q          <= 8'd0;
                         out_cnt_q             <= 8'd0;
-                        wr_pre_pipe_q         <= 9'd0;
-                        att_wr_pipe_q         <= 13'd0;
+                        wr_pre_pipe_q         <= 10'd0;
+                        att_wr_pipe_q         <= 14'd0;
                         att_prefetch_pending_q <= 1'b0;
+                        att_pf_word_q          <= 2'd0;
+                        att_pf_done_q          <= 1'b0;
 
                         if (attention_start) begin
                             att_param_phase_q <= 1'b0;
@@ -321,7 +353,7 @@ module CA_Control #(
                 end
 
                 S_FAST_RUN: begin
-                    wr_pre_pipe_q <= {wr_pre_pipe_q[7:0], datapath_issue_valid};
+                    wr_pre_pipe_q <= {wr_pre_pipe_q[8:0], datapath_issue_valid};
 
                     if (rd_cmd_fire) begin
                         rd_addr      <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
@@ -359,8 +391,10 @@ module CA_Control #(
                             rd_req_cnt_q           <= 2'd0;
                             att_rd_word_cnt_q      <= 2'd0;
                             out_cnt_q              <= 8'd0;
-                            att_wr_pipe_q          <= 13'd0;
+                            att_wr_pipe_q          <= 14'd0;
                             att_prefetch_pending_q <= 1'b0;
+                            att_pf_word_q          <= 2'd0;
+                            att_pf_done_q          <= 1'b0;
                             state_q                <= S_ATT_READ;
                         end
                     end
@@ -372,11 +406,18 @@ module CA_Control #(
                         rd_req_cnt_q <= 2'd1;
                     end
 
-                    if (rd_valid) begin
+                    if (att_pf_done_q) begin
+                        // Next group's input was already prefetched into x_buf.
+                        att_pf_done_q   <= 1'b0;
+                        att_phase_cnt_q <= 4'd0;
+                        state_q         <= S_ATT_ISSUE_QKV;
+                    end
+                    else if (!att_prefetch_pending_q && rd_valid) begin
+                        // First group (no prefetch yet): capture the burst here.
                         if (att_rd_word_cnt_q == 2'd3) begin
-                            att_phase_cnt_q        <= 4'd0;
-                            att_prefetch_pending_q <= 1'b0;
-                            state_q                <= S_ATT_ISSUE_QKV;
+                            att_rd_word_cnt_q <= 2'd0;
+                            att_phase_cnt_q   <= 4'd0;
+                            state_q           <= S_ATT_ISSUE_QKV;
                         end
                         else begin
                             att_rd_word_cnt_q <= att_rd_word_cnt_q + 1'b1;
@@ -397,6 +438,7 @@ module CA_Control #(
                     if (att_prefetch_fire) begin
                         rd_addr                <= att_next_group_base[ADDR_W-1:0];
                         att_prefetch_pending_q <= 1'b1;
+                        att_pf_word_q          <= 2'd0;
                     end
 
                     if (datapath_qkv_ready) begin
@@ -418,7 +460,7 @@ module CA_Control #(
                 S_ATT_WAIT_SV: begin
                     if (datapath_sv_ready) begin
                         att_phase_cnt_q <= 4'd0;
-                        att_wr_pipe_q   <= 13'd0;
+                        att_wr_pipe_q   <= 14'd0;
                         state_q         <= S_ATT_ISSUE_FINAL;
                     end
                 end
@@ -774,7 +816,10 @@ module CA_DataPath #(
             act_in_tag_q   <= act_in_valid ? act_in_tag : PT_NONE;
             act_in_idx_q   <= act_in_idx;
 
-            if (capture_valid_q && (capture_idx_q == 2'd0)) begin
+            // Clear the per-group ready flags at the first QKV issue (decoupled
+            // from x_buf capture, which now happens early via prefetch while the
+            // previous group still needs these flags in SV/FINAL).
+            if (issue_valid_q && (issue_mode_q == IM_QKV) && (issue_idx_q == 4'd0)) begin
                 q_ready_q     <= 4'd0;
                 k_ready_q     <= 4'd0;
                 v_ready_q     <= 4'd0;
@@ -866,7 +911,9 @@ module Multiple_Processor #(
     output logic [2:0]     mult_idx_out
 );
 
-    localparam int MULT_STAGES = 2;
+    // Stage 0 = registered operands (issue-time selection mux is now off the
+    // multiplier critical path); Stage 1/2 = multiplier internal pipeline.
+    localparam int MULT_STAGES = 3;
 
     logic          mult_issue_valid;
     logic          mult_issue_b_transpose;
@@ -874,7 +921,7 @@ module Multiple_Processor #(
     logic          mult_issue_head_mask;
     logic          mult_issue_head_sel;
     logic [255:0]  mult_issue_A;
-    logic [1023:0] mult_issue_A_wide;
+    logic [SCORE_PACK_W-1:0] mult_issue_score;
     logic [255:0]  mult_issue_B;
     mult_tag_t     mult_issue_tag;
     logic [2:0]    mult_issue_idx;
@@ -901,7 +948,7 @@ module Multiple_Processor #(
         mult_issue_head_mask   = 1'b0;
         mult_issue_head_sel    = 1'b0;
         mult_issue_A           = 256'd0;
-        mult_issue_A_wide      = 1024'd0;
+        mult_issue_score       = '0;
         mult_issue_B           = 256'd0;
         mult_issue_tag         = MT_NONE;
         mult_issue_idx         = 3'd0;
@@ -961,7 +1008,7 @@ module Multiple_Processor #(
                                         {issue_idx[2], issue_idx[1:0]} :
                                         {1'b0, issue_idx[1:0]};
                     mult_issue_a_wide = 1'b1;
-                    mult_issue_A_wide = unpack_score(score_buf[mult_issue_idx]);
+                    mult_issue_score  = score_buf[mult_issue_idx];
                     mult_issue_B      = v_buf[issue_idx[1:0]];
                     mult_issue_tag    = MT_FINAL;
                 end
@@ -973,18 +1020,55 @@ module Multiple_Processor #(
         end
     end
 
+    // ---- Stage 0: operand pipeline register --------------------------------
+    // The issue-time selection (mode/idx muxing of x/q/k/v/score buffers) used
+    // to sit in series with the multiplier, costing ~1.4ns. Latch the selected
+    // operands so the multiplier starts each cycle from stable registers.
+    logic                    op_valid_q;
+    logic                    op_btr_q;
+    logic                    op_awide_q;
+    logic                    op_hmask_q;
+    logic                    op_hsel_q;
+    logic [1:0]              op_op_q;
+    logic [255:0]            op_A_q;
+    logic [255:0]            op_B_q;
+    logic [SCORE_PACK_W-1:0] op_score_q;
+    logic [1023:0]           op_A_wide;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            op_valid_q <= 1'b0;
+        end
+        else begin
+            op_valid_q <= mult_issue_valid;
+            op_btr_q   <= mult_issue_b_transpose;
+            op_awide_q <= mult_issue_a_wide;
+            op_hmask_q <= mult_issue_head_mask;
+            op_hsel_q  <= mult_issue_head_sel;
+            op_op_q    <= op;
+            op_A_q     <= mult_issue_A;
+            op_B_q     <= mult_issue_B;
+            op_score_q <= mult_issue_score;
+        end
+    end
+
+    // Sign-extension unpack is pure wiring; doing it after the register keeps
+    // the 8:1 score_buf mux off the multiplier path and saves 320 flops vs.
+    // registering the full 1024-bit unpacked form.
+    assign op_A_wide = unpack_score(op_score_q);
+
     Mult_2Stage_Parallel u_mult (
         .clk            (clk),
         .rst_n          (rst_n),
-        .op             (op),
-        .b_transpose    (mult_issue_b_transpose),
-        .a_wide         (mult_issue_a_wide),
-        .head_mask      (mult_issue_head_mask),
-        .head_sel       (mult_issue_head_sel),
-        .in_valid       (mult_issue_valid),
-        .in_data_A      (mult_issue_A),
-        .in_data_A_wide (mult_issue_A_wide),
-        .in_data_B      (mult_issue_B),
+        .op             (op_op_q),
+        .b_transpose    (op_btr_q),
+        .a_wide         (op_awide_q),
+        .head_mask      (op_hmask_q),
+        .head_sel       (op_hsel_q),
+        .in_valid       (op_valid_q),
+        .in_data_A      (op_A_q),
+        .in_data_A_wide (op_A_wide),
+        .in_data_B      (op_B_q),
         .out_valid      (mult_valid),
         .out_data       (mult_data)
     );
