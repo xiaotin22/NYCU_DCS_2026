@@ -206,6 +206,7 @@ module CA_Control #(
     logic        att_final_start;
     logic        att_wr_fire;
     logic [7:0]  att_next_group_base;
+    logic [3:0]  att_issue_last;
 
     assign job_start              = (state_q == S_IDLE) && mem_set && in_valid;
     assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
@@ -234,6 +235,8 @@ module CA_Control #(
     assign att_final_start        = (state_q == S_ATT_ISSUE_FINAL) && (att_phase_cnt_q == 4'd0);
     assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[13] : att_wr_pipe_q[9];
     assign att_next_group_base    = att_group_base_q + 8'd4;
+    // MHA issues 8 phases per stage (2 heads × 4 rows); SHA issues 4.
+    assign att_issue_last         = (exec_op == 2'b11) ? 4'd7 : 4'd3;
 
     always_comb begin
         datapath_issue_valid   = 1'b0;
@@ -330,8 +333,8 @@ module CA_Control #(
             end
 
             // One-group-ahead prefetch (fires in ISSUE_QKV or WAIT_QKV, see wire).
+            // rd_addr/rd_en/rd_burst for this read are driven in the RAM-read block.
             if (att_prefetch_fire) begin
-                rd_addr                <= att_next_group_base[ADDR_W-1:0];
                 att_prefetch_pending_q <= 1'b1;
                 att_pf_word_q          <= 2'd0;
             end
@@ -343,15 +346,12 @@ module CA_Control #(
                         exec_act  <= act;
                         exec_param <= param;
 
-                        rd_req_cnt_q          <= 2'd0;
-                        att_rd_word_cnt_q     <= 2'd0;
-                        wr_cmd_cnt_q          <= 8'd0;
-                        out_cnt_q             <= 8'd0;
-                        wr_pre_pipe_q         <= 10'd0;
-                        att_wr_pipe_q         <= 14'd0;
-                        att_prefetch_pending_q <= 1'b0;
-                        att_pf_word_q          <= 2'd0;
-                        att_pf_done_q          <= 1'b0;
+                        // FAST_RUN counters only; attention-specific state is
+                        // initialised in S_ATT_PARAM right before S_ATT_READ.
+                        rd_req_cnt_q  <= 2'd0;
+                        wr_cmd_cnt_q  <= 8'd0;
+                        out_cnt_q     <= 8'd0;
+                        wr_pre_pipe_q <= 10'd0;
 
                         if (attention_start) begin
                             att_param_phase_q <= 1'b0;
@@ -367,7 +367,6 @@ module CA_Control #(
                     wr_pre_pipe_q <= {wr_pre_pipe_q[8:0], datapath_issue_valid};
 
                     if (rd_cmd_fire) begin
-                        rd_addr      <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
                         rd_req_cnt_q <= rd_req_cnt_q + 1'b1;
                     end
 
@@ -413,7 +412,6 @@ module CA_Control #(
 
                 S_ATT_READ: begin
                     if (att_read_fire) begin
-                        rd_addr      <= att_group_base_q[ADDR_W-1:0];
                         rd_req_cnt_q <= 2'd1;
                     end
 
@@ -453,8 +451,7 @@ module CA_Control #(
                 end
 
                 S_ATT_ISSUE_SV: begin
-                    if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
-                        ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
+                    if (att_phase_cnt_q == att_issue_last) begin
                         state_q <= S_ATT_WAIT_SV;
                     end
                     else begin
@@ -471,8 +468,7 @@ module CA_Control #(
                 end
 
                 S_ATT_ISSUE_FINAL: begin
-                    if (((exec_op == 2'b11) && (att_phase_cnt_q == 4'd7)) ||
-                        ((exec_op != 2'b11) && (att_phase_cnt_q == 4'd3))) begin
+                    if (att_phase_cnt_q == att_issue_last) begin
                         state_q <= S_ATT_WAIT_FINAL;
                     end
                     else begin
@@ -507,6 +503,9 @@ module CA_Control #(
         end
     end
 
+    // All RAM-read command outputs (rd_en/rd_burst/rd_addr) live here. The three
+    // fire conditions are mutually exclusive (each gated on a distinct state), so
+    // the if/else-if chain matches the original parallel assignments.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rd_en <= 1'b0;
@@ -517,10 +516,17 @@ module CA_Control #(
             if (rd_cmd_fire) begin
                 rd_en    <= 1'b1;
                 rd_burst <= BURST_128;
+                rd_addr  <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
             end
-            else if (att_read_fire || att_prefetch_fire) begin
+            else if (att_read_fire) begin
                 rd_en    <= 1'b1;
                 rd_burst <= BURST_4;
+                rd_addr  <= att_group_base_q[ADDR_W-1:0];
+            end
+            else if (att_prefetch_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_4;
+                rd_addr  <= att_next_group_base[ADDR_W-1:0];
             end
         end
     end
