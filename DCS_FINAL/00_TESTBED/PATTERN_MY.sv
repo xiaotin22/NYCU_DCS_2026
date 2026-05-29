@@ -118,19 +118,23 @@ initial begin
         repeat (2) @(negedge clk);
 
         for (set_idx = 0; set_idx < `OP_SET_NUMBER; set_idx = set_idx + 1) begin
-            // Important:
-            // Before every op set, sync current golden_ram into real DUT RAM.
-            // set_idx=0: original patXX file data.
-            // set_idx>0: previous op set result.
-            preload_dut_ram_from_current_golden_task(ram_idx, set_idx);
-
-            // For each new RAM pattern, mem_set rises only after RAM is ready.
             if (set_idx == 0) begin
+                // First op set of this RAM pattern:
+                // DUT RAM is empty, so PATTERN actively writes the original
+                // patXX file data in, then raises mem_set once RAM is ready.
+                preload_dut_ram_from_current_golden_task(ram_idx, set_idx);
+
                 @(negedge clk);
                 mem_set = 1'b1;
                 repeat (3) @(negedge clk);
             end
             else begin
+                // Later op sets:
+                // DUT already wrote its previous op set result back into RAM
+                // (full 8x8 matrix at each address). check_all_outputs_task
+                // already verified those results match golden, otherwise the
+                // simulation would have stopped. So the DUT RAM equals
+                // golden_ram and PATTERN does NOT write it back again.
                 repeat ($urandom_range(1, 3)) @(negedge clk);
             end
 
@@ -187,11 +191,11 @@ begin
 
     if (out_valid !== 1'b0 || out_data !== 32'd0) begin
         YOU_FAIL_TASK();
-        $display("============================================================");
+        $display("======================================================================================================================");
         $display(" Reset output is not zero.");
         $display(" out_valid = %b", out_valid);
         $display(" out_data  = %h", out_data);
-        $display("============================================================");
+        $display("======================================================================================================================");
         repeat (3) @(negedge clk);
         $finish;
     end
@@ -242,10 +246,10 @@ begin
     fp = $fopen(file_name, "r");
     if (fp == 0) begin
         YOU_FAIL_TASK();
-        $display("============================================================");
+        $display("======================================================================================================================");
         $display(" Cannot open RAM data file.");
         $display(" file_name = %s", file_name);
-        $display("============================================================");
+        $display("======================================================================================================================");
         $finish;
     end
     $fclose(fp);
@@ -258,7 +262,6 @@ begin
 
     if (`DEBUG_EN) begin
         $display("[LOAD] %s", file_name);
-        $display("[LOAD] first word = %h", ram_word[0]);
     end
 end
 endtask
@@ -270,9 +273,10 @@ endtask
 // 256 words = two burst writes
 // wr_burst = 7 => 2^7 = 128 words per burst
 //
-// This task is called before EVERY op set.
-// Therefore DUT RAM input for op set N matches golden_ram, which is
-// already updated by op set N-1.
+// This task is called ONLY for the first op set (set_idx == 0) of each
+// RAM pattern, to load the original patXX file data into the empty DUT RAM.
+// For later op sets the DUT carries its own write-back forward, so PATTERN
+// does not force the RAM again.
 // ============================================================
 task automatic preload_dut_ram_from_current_golden_task(input int rid, input int sid);
     int a;
@@ -393,11 +397,11 @@ begin
 
         if (wait_cnt > MAX_WAIT) begin
             YOU_FAIL_TASK();
-            $display("============================================================");
+            $display("======================================================================================================================");
             $display(" Timeout while waiting wr_valid during RAM sync.");
             $display(" start_addr = %0d", base_addr);
             $display(" first data = %h", dut_ram_word[base_addr]);
-            $display("============================================================");
+            $display("======================================================================================================================");
             repeat (3) @(negedge clk);
             $finish;
         end
@@ -602,7 +606,10 @@ begin
                     jj = j + kj - 1;
 
                     if (ii >= 0 && ii < N && jj >= 0 && jj < N) begin
-                        acc = acc + in_mtx[ii][jj] * kernel[ki][kj];
+                        // Kernel is packed as 9 contiguous nibbles (raster MSB->LSB),
+                        // so tap (ki*3+kj) maps linearly into the 8-wide param matrix
+                        // to match CA (get_s4(param, ki*3+kj)).
+                        acc = acc + in_mtx[ii][jj] * kernel[(ki*3 + kj) / N][(ki*3 + kj) % N];
                     end
                 end
             end
@@ -764,7 +771,7 @@ begin
     for (i = 0; i < N; i = i + 1) begin
         for (j = 0; j < N; j = j + 1) begin
             if (in_mtx[i][j] >= 0) out_mtx[i][j] = in_mtx[i][j];
-            else                   out_mtx[i][j] = div_pow2_tz_func(in_mtx[i][j], 2);
+            else                   out_mtx[i][j] = in_mtx[i][j] >>> 2;  // CA uses arithmetic shift (floor)
         end
     end
 
@@ -813,19 +820,14 @@ begin
                     sum = sum + in_mtx[i][j];
                 end
 
-                // Version A: signed division, truncate toward zero
                 threshold = sum >>> 3;
-
-                
 
                 for (j = 0; j < N; j = j + 1) begin
                     if (in_mtx[i][j] >= threshold) begin
                         out_mtx[i][j] = in_mtx[i][j];
                     end
                     else begin
-                        // Version A: divide by 8, truncate toward zero
-                        // out_mtx[i][j] = div_pow2_tz_func(in_mtx[i][j], 3);
-                        // If your CA uses arithmetic shift:
+                        // CA uses arithmetic shift right (floor), not truncate-toward-zero.
                         out_mtx[i][j] = in_mtx[i][j] >>> 3;
                     end
                 end
@@ -842,17 +844,14 @@ begin
                 end
 
                 threshold = sum >>> 3;
-                // If your CA uses arithmetic shift:
-                // threshold = sum >>> 3;
 
                 for (i = 0; i < N; i = i + 1) begin
                     if (in_mtx[i][j] >= threshold) begin
                         out_mtx[i][j] = in_mtx[i][j];
                     end
                     else begin
-                        out_mtx[i][j] = div_pow2_tz_func(in_mtx[i][j], 3);
-                        // If your CA uses arithmetic shift:
-                        // out_mtx[i][j] = in_mtx[i][j] >>> 3;
+                        // CA uses arithmetic shift right (floor), not truncate-toward-zero.
+                        out_mtx[i][j] = in_mtx[i][j] >>> 3;
                     end
                 end
             end
@@ -878,8 +877,8 @@ begin
                                 out_mtx[ii][jj] = in_mtx[ii][jj];
                             end
                             else begin
-                                out_mtx[ii][jj] = div_pow2_tz_func(in_mtx[ii][jj], 3);
-                                
+                                // CA uses arithmetic shift right (floor), not truncate-toward-zero.
+                                out_mtx[ii][jj] = in_mtx[ii][jj] >>> 3;
                             end
                         end
                     end
@@ -972,21 +971,6 @@ begin
     if (x > 7)       clamp_s4_func = 7;
     else if (x < -8) clamp_s4_func = -8;
     else             clamp_s4_func = x;
-end
-endfunction
-
-
-// signed division by 2^sh, truncate toward zero
-function automatic int signed div_pow2_tz_func(input int signed x, input int sh);
-    int signed mag;
-begin
-    if (x >= 0) begin
-        div_pow2_tz_func = x >>> sh;
-    end
-    else begin
-        mag = -x;
-        div_pow2_tz_func = -(mag >>> sh);
-    end
 end
 endfunction
 
@@ -1107,18 +1091,18 @@ begin
         total_latency = total_latency + word_latency;
     end
 
-    $display("------------------------------------------------------------");
-    $display("\033[34mOP SET DONE: PATTERN NO. %2d, OP SET NO. %1d \033[0m| op = %0d, act = %0d | opset latency = %0d | total latency = %0d",
+    $display("--------------------------------------------------------------------------------------------------------------------------");
+    $display("\033[33mOP SET DONE:\033[0m \033[35mPATTERN NO. %2d, OP SET NO. %1d \033[0m| op = %0d, act = %0d | opset latency = %0d | total latency = %0d",
              rid, sid, cur_op, cur_act, opset_latency, total_latency);
-    $display("------------------------------------------------------------");
+    $display("--------------------------------------------------------------------------------------------------------------------------");
 
     if (out_valid === 1'b1) begin
         YOU_FAIL_TASK();
-        $display("============================================================");
+        $display("======================================================================================================================");
         $display("Extra out_valid after 256 outputs.");
         $display("PATTERN NO. = %0d, OP SET NO. = %0d", rid, sid);
         $display("out_data = %h", out_data);
-        $display("============================================================");
+        $display("======================================================================================================================");
         repeat (3) @(negedge clk);
         $finish;
     end
