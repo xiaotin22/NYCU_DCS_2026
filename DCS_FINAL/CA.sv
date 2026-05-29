@@ -191,10 +191,10 @@ module CA_Control #(
     logic [1:0]  ha_rd_word_cnt_cs;
     logic [7:0]  wr_cmd_cnt_cs;
     logic [7:0]  out_cnt_cs;
-    logic [9:0]  wr_pre_pipe_cs;
+    logic [7:0]  wr_pre_pipe_cs;
     logic [7:0]  ha_group_base_cs;
     logic [3:0]  ha_phase_cnt_cs;
-    logic [13:0] ha_wr_pipe_cs;
+    logic [11:0] ha_wr_pipe_cs;
     logic        ha_prefetch_pending_cs;
     logic [1:0]  ha_pf_word_cs;
     logic        ha_pf_done_cs;
@@ -216,7 +216,7 @@ module CA_Control #(
     assign job_start              = (state_cs == S_IDLE) && mem_set && in_valid;
     assign ha_start        = job_start && ((op == 2'b10) || (op == 2'b11));
     assign result_last            = datapath_result_valid && (out_cnt_cs == 8'd255);
-    assign wr_pre_fire            = wr_pre_pipe_cs[9];
+    assign wr_pre_fire            = wr_pre_pipe_cs[7];
     assign wr_cmd_fire            = (state_cs == S_FAST_RUN) && wr_pre_fire;
     assign rd_cmd_fire            = (state_cs == S_FAST_RUN) && (rd_req_cnt_cs < 2'd2) && rd_ready;
     assign ha_read_fire          = (state_cs == S_HA_READ) &&
@@ -240,7 +240,7 @@ module CA_Control #(
     assign ha_pf_capture         = ha_prefetch_pending_cs && !ha_pf_done_cs && rd_valid;
     assign ha_final_start        = (state_cs == S_HA_ISSUE) && (ha_stage_cs == ST_FINAL) &&
                                     (ha_phase_cnt_cs == 4'd0);
-    assign ha_wr_fire            = (exec_op == 2'b11) ? ha_wr_pipe_cs[13] : ha_wr_pipe_cs[9];
+    assign ha_wr_fire            = (exec_op == 2'b11) ? ha_wr_pipe_cs[11] : ha_wr_pipe_cs[7];
     assign ha_next_group_base    = ha_group_base_cs + 8'd4;
     // Issue-phase upper bound: QKV always issues 12 phases (4 rows × Q/K/V);
     // SV/FINAL issue 8 for MHA (2 heads × 4 rows) or 4 for SHA.
@@ -300,16 +300,16 @@ module CA_Control #(
             ha_rd_word_cnt_cs      <= 2'd0;
             wr_cmd_cnt_cs           <= 8'd0;
             out_cnt_cs              <= 8'd0;
-            wr_pre_pipe_cs          <= 10'd0;
+            wr_pre_pipe_cs          <= 8'd0;
             ha_group_base_cs       <= 8'd0;
             ha_phase_cnt_cs        <= 4'd0;
-            ha_wr_pipe_cs          <= 14'd0;
+            ha_wr_pipe_cs          <= 12'd0;
             ha_prefetch_pending_cs <= 1'b0;
             ha_pf_word_cs          <= 2'd0;
             ha_pf_done_cs          <= 1'b0;
         end
         else begin
-            ha_wr_pipe_cs <= {ha_wr_pipe_cs[12:0], ha_final_start};
+            ha_wr_pipe_cs <= {ha_wr_pipe_cs[10:0], ha_final_start};
 
             // Prefetched burst lands while the current group is still computing;
             // collect the 4 words then flag the next group's x_mem ready.
@@ -342,7 +342,7 @@ module CA_Control #(
                         rd_req_cnt_cs  <= 2'd0;
                         wr_cmd_cnt_cs  <= 8'd0;
                         out_cnt_cs     <= 8'd0;
-                        wr_pre_pipe_cs <= 10'd0;
+                        wr_pre_pipe_cs <= 8'd0;
 
                         if (ha_start) begin
                             ha_param_phase_cs <= 1'b0;
@@ -355,7 +355,7 @@ module CA_Control #(
                 end
 
                 S_FAST_RUN: begin
-                    wr_pre_pipe_cs <= {wr_pre_pipe_cs[8:0], datapath_issue_valid};
+                    wr_pre_pipe_cs <= {wr_pre_pipe_cs[6:0], datapath_issue_valid};
 
                     if (rd_cmd_fire) begin
                         rd_req_cnt_cs <= rd_req_cnt_cs + 1'b1;
@@ -389,7 +389,7 @@ module CA_Control #(
                             rd_req_cnt_cs           <= 2'd0;
                             ha_rd_word_cnt_cs      <= 2'd0;
                             out_cnt_cs              <= 8'd0;
-                            ha_wr_pipe_cs          <= 14'd0;
+                            ha_wr_pipe_cs          <= 12'd0;
                             ha_prefetch_pending_cs <= 1'b0;
                             ha_pf_word_cs          <= 2'd0;
                             ha_pf_done_cs          <= 1'b0;
@@ -446,7 +446,7 @@ module CA_Control #(
                         ST_SV: begin
                             if (datapath_sv_ready) begin
                                 ha_phase_cnt_cs <= 4'd0;
-                                ha_wr_pipe_cs   <= 14'd0;
+                                ha_wr_pipe_cs   <= 12'd0;
                                 ha_stage_cs     <= ST_FINAL;
                                 state_cs         <= S_HA_ISSUE;
                             end
@@ -578,7 +578,10 @@ module CA_DataPath #(
     localparam int SCORE_ELEM_W   = 11;
     localparam int SCORE_PACK_W   = SCORE_ELEM_W * 64;
     localparam int MHA_OUT_ELEM_W = 15;
-    localparam int MHA_OUT_PACK_W = MHA_OUT_ELEM_W * 64;
+    // combine_mha_heads only consumes head0 cols 0-3 of each row, so the FINAL
+    // head0 buffer keeps just those 32 lanes (cols 4-7 are computed but discarded).
+    localparam int MHA_OUT_LANES  = 32;
+    localparam int MHA_OUT_PACK_W = MHA_OUT_ELEM_W * MHA_OUT_LANES;
 
     // Attention scores are activated before buffering: SHA fits in signed 11 bits.
     // MHA head0 FINAL partial output can reach -16384, so it keeps 15-bit lanes.
@@ -610,8 +613,8 @@ module CA_DataPath #(
     logic [2:0]    act_in_idx_cs;
     logic          act_valid;
     logic [1023:0] act_data;
-    pipe_tag_t     act_tag_cs [0:4];
-    logic [2:0]    act_idx_cs [0:4];
+    pipe_tag_t     act_tag_cs [0:2];
+    logic [2:0]    act_idx_cs [0:2];
 
     logic          pot_in_valid;
     logic [1023:0] pot_in_data;
@@ -663,22 +666,28 @@ module CA_DataPath #(
         end
     endfunction
 
+    // Storage slot s in [0,31] maps to full 8x8 lane (row=s/4, col=s%4); only
+    // head0 cols 0-3 of each row survive into combine_mha_heads.
     function automatic logic [MHA_OUT_PACK_W-1:0] pack_mha_out(input logic [1023:0] src);
+        integer full_lane;
         begin
-            for (int i = 0; i < 64; i++) begin
-                pack_mha_out[MHA_OUT_PACK_W-1 - (i * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W] =
-                    src[1023 - (i * 16) - (16 - MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
+            for (int s = 0; s < MHA_OUT_LANES; s++) begin
+                full_lane = ((s / 4) * 8) + (s % 4);
+                pack_mha_out[MHA_OUT_PACK_W-1 - (s * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W] =
+                    src[1023 - (full_lane * 16) - (16 - MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
             end
         end
     endfunction
 
     function automatic logic [1023:0] unpack_mha_out(input logic [MHA_OUT_PACK_W-1:0] src);
         logic [MHA_OUT_ELEM_W-1:0] lane;
+        integer full_lane;
         begin
             unpack_mha_out = 1024'd0;
-            for (int i = 0; i < 64; i++) begin
-                lane = src[MHA_OUT_PACK_W-1 - (i * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
-                unpack_mha_out[1023 - (i * 16) -: 16] =
+            for (int s = 0; s < MHA_OUT_LANES; s++) begin
+                full_lane = ((s / 4) * 8) + (s % 4);
+                lane = src[MHA_OUT_PACK_W-1 - (s * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
+                unpack_mha_out[1023 - (full_lane * 16) -: 16] =
                     {{(16-MHA_OUT_ELEM_W){lane[MHA_OUT_ELEM_W-1]}}, lane};
             end
         end
@@ -725,18 +734,18 @@ module CA_DataPath #(
 
     logic use_act_for_pot;
     assign use_act_for_pot = act_valid &&
-                             ((act_tag_cs[4] == PT_NORM) || (act_tag_cs[4] == PT_FINAL));
+                             ((act_tag_cs[2] == PT_NORM) || (act_tag_cs[2] == PT_FINAL));
 
     assign pot_in_valid = use_act_for_pot ||
                           (mult_valid && ((mult_tag_out == MT_Q) ||
                                           (mult_tag_out == MT_K) ||
                                           (mult_tag_out == MT_V)));
     assign pot_in_data  = use_act_for_pot ? act_data       : mult_data;
-    assign pot_in_idx   = use_act_for_pot ? act_idx_cs[4]   : mult_idx_out;
+    assign pot_in_idx   = use_act_for_pot ? act_idx_cs[2]   : mult_idx_out;
 
     always_comb begin
         if (use_act_for_pot) begin
-            pot_in_tag = act_tag_cs[4];
+            pot_in_tag = act_tag_cs[2];
         end
         else begin
             case (mult_tag_out)
@@ -788,7 +797,7 @@ module CA_DataPath #(
         .mult_idx_out (mult_idx_out)
     );
 
-    ACT_FiveStage_Parallel u_act (
+    ACT_ThreeStage_Parallel u_act (
         .clk       (clk),
         .rst_n     (rst_n),
         .in_valid  (act_in_valid_cs),
@@ -847,7 +856,7 @@ module CA_DataPath #(
 
             act_tag_cs[0] <= act_in_tag_cs;
             act_idx_cs[0] <= act_in_idx_cs;
-            for (int i = 1; i < 5; i++) begin
+            for (int i = 1; i < 3; i++) begin
                 act_tag_cs[i] <= act_tag_cs[i - 1];
                 act_idx_cs[i] <= act_idx_cs[i - 1];
             end
@@ -859,9 +868,9 @@ module CA_DataPath #(
                 pot_idx_cs[i] <= pot_idx_cs[i - 1];
             end
 
-            if (act_valid && (act_tag_cs[4] == PT_SCORE)) begin
-                score_mem[act_idx_cs[4]] <= pack_score(act_data);
-                score_ready_cs[act_idx_cs[4]] <= 1'b1;
+            if (act_valid && (act_tag_cs[2] == PT_SCORE)) begin
+                score_mem[act_idx_cs[2]] <= pack_score(act_data);
+                score_ready_cs[act_idx_cs[2]] <= 1'b1;
             end
 
             if (mult_valid && (mult_tag_out == MT_FINAL) &&
@@ -929,6 +938,12 @@ module Multiple_Processor #(
     // Stage 0 = registered operands (issue-time selection mux is now off the
     // multiplier critical path); Stage 1/2 = multiplier internal pipeline.
     localparam int MULT_STAGES = 3;
+
+    // Wide A operand carries the activated score, which is SCORE_ELEM_W(=11) bits
+    // (+1 sign headroom). The multiplier A side is built this narrow instead of
+    // 16-bit: 12x4 array shrinks both the partial-product depth and the path.
+    localparam int A_WIDE_W    = SCORE_ELEM_W + 1;
+    localparam int A_WIDE_PACK = A_WIDE_W * 64;
 
     logic          mult_issue_valid;
     logic          mult_issue_b_transpose;
@@ -1272,7 +1287,7 @@ module Mult_2Stage_Parallel (
 
 endmodule
 
-module ACT_FiveStage_Parallel (
+module ACT_ThreeStage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
@@ -1286,7 +1301,8 @@ module ACT_FiveStage_Parallel (
     localparam int MAT_SIZE   = 64;
     localparam int ROW_ELEM   = 8;
     localparam int CHUNK_SIZE = 16;
-    localparam int ACT_STAGES = 5;
+    localparam int NUM_CHUNK  = 4;
+    localparam int ACT_STAGES = 3;
 
     localparam logic [1:0] ACT_USER    = 2'd0;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
@@ -1298,15 +1314,24 @@ module ACT_FiveStage_Parallel (
     logic [1:0]    act_cs    [0:ACT_STAGES-1];
     logic [1:0]    mode_cs   [0:ACT_STAGES-1];
     logic [1023:0] matrix_cs [0:ACT_STAGES-1];
-    // thr_*_cs only feeds stages 1..4 (each stage uses prev stage's threshold).
-    // Stage 4 is the last apply_chunk consumer, so we only need indices 0..3.
-    s20_t          thr_a_cs  [0:ACT_STAGES-2];
-    s20_t          thr_b_cs  [0:ACT_STAGES-2];
 
-    logic [39:0]   thr0_pair;
-    logic [39:0]   thr1_pair;
-    logic [39:0]   thr2_pair;
-    logic [39:0]   thr3_pair;
+    // Stage 0 registers 4 partial sums per chunk (16 total); stage 1 combines
+    // them into per-chunk thresholds. Splitting the BAT 16-element sum into a
+    // partial + combine keeps every adder tree at depth 2, so BAT no longer has
+    // a longer path than RAT/CAT.
+    s20_t          psum_cs   [0:NUM_CHUNK-1][0:3];
+    s20_t          thr_a_cs  [0:NUM_CHUNK-1];
+    s20_t          thr_b_cs  [0:NUM_CHUNK-1];
+
+    s20_t          psum_ns   [0:NUM_CHUNK-1][0:3];
+    s20_t          thr_a_ns  [0:NUM_CHUNK-1];
+    s20_t          thr_b_ns  [0:NUM_CHUNK-1];
+    logic [1023:0] apply_ns;
+
+    s20_t          part_sum01;
+    s20_t          part_sum23;
+    integer        apply_idx;
+    s20_t          apply_thr;
 
     assign out_valid = valid_cs[ACT_STAGES-1];
     assign out_data  = matrix_cs[ACT_STAGES-1];
@@ -1319,99 +1344,68 @@ module ACT_FiveStage_Parallel (
         ext20 = {{4{value[15]}}, value};
     endfunction
 
-    // Balanced adder trees: depth log2(N) instead of serial accumulation.
-    function automatic s20_t reduce8(input s20_t a [0:7]);
-        s20_t l1 [0:3];
-        s20_t l2 [0:1];
-        begin
-            l1[0] = a[0] + a[1];
-            l1[1] = a[2] + a[3];
-            l1[2] = a[4] + a[5];
-            l1[3] = a[6] + a[7];
-            l2[0] = l1[0] + l1[1];
-            l2[1] = l1[2] + l1[3];
-            reduce8 = l2[0] + l2[1];
-        end
-    endfunction
-
-    function automatic s20_t reduce16(input s20_t a [0:15]);
-        s20_t l1 [0:7];
-        begin
-            for (int i = 0; i < 8; i++) l1[i] = a[2*i] + a[2*i+1];
-            reduce16 = reduce8(l1);
-        end
-    endfunction
-
-    function automatic logic [39:0] calc_threshold_pair(
+    // One partial sum = 4 elements: a half-row (RAT), a half-column (CAT), or a
+    // block row (BAT). p in 0..3 selects which group within the chunk. Depth-2
+    // adder tree; the stage-1 combine adds the partials back together.
+    function automatic s20_t chunk_partial_sum(
         input logic [1023:0] matrix,
         input logic [1:0]    act_sel,
-        input integer        chunk
+        input integer        chunk,
+        input integer        p
     );
-        integer row0;
-        integer row1;
-        integer col0;
-        integer col1;
+        integer row;
+        integer col;
         integer base_row;
         integer base_col;
-        s20_t  terms_a  [0:7];
-        s20_t  terms_b  [0:7];
-        s20_t  terms16  [0:15];
-        s20_t  thr_a;
-        s20_t  thr_b;
+        integer blk_row;
+        s20_t   e0;
+        s20_t   e1;
+        s20_t   e2;
+        s20_t   e3;
         begin
-            thr_a = 20'sd0;
-            thr_b = 20'sd0;
-            for (int i = 0; i < 8;  i++) begin
-                terms_a[i] = 20'sd0;
-                terms_b[i] = 20'sd0;
-            end
-            for (int i = 0; i < 16; i++) terms16[i] = 20'sd0;
+            e0 = 20'sd0;
+            e1 = 20'sd0;
+            e2 = 20'sd0;
+            e3 = 20'sd0;
 
             case (act_sel)
-                2'b01: begin
-                    row0 = chunk * 2;
-                    row1 = row0 + 1;
-                    for (int c = 0; c < ROW_ELEM; c++) begin
-                        terms_a[c] = ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
-                        terms_b[c] = ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
-                    end
-                    thr_a = reduce8(terms_a) >>> 3;
-                    thr_b = reduce8(terms_b) >>> 3;
+                2'b01: begin  // RAT: row = 2*chunk + (p>>1), cols = (p&1)*4 + 0..3
+                    row = (chunk * 2) + (p / 2);
+                    col = (p % 2) * 4;
+                    e0  = ext20(get_s16(matrix, (row * ROW_ELEM) + col + 0));
+                    e1  = ext20(get_s16(matrix, (row * ROW_ELEM) + col + 1));
+                    e2  = ext20(get_s16(matrix, (row * ROW_ELEM) + col + 2));
+                    e3  = ext20(get_s16(matrix, (row * ROW_ELEM) + col + 3));
                 end
 
-                2'b10: begin
-                    col0 = chunk * 2;
-                    col1 = col0 + 1;
-                    for (int r = 0; r < ROW_ELEM; r++) begin
-                        terms_a[r] = ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
-                        terms_b[r] = ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
-                    end
-                    thr_a = reduce8(terms_a) >>> 3;
-                    thr_b = reduce8(terms_b) >>> 3;
+                2'b10: begin  // CAT: col = 2*chunk + (p>>1), rows = (p&1)*4 + 0..3
+                    col = (chunk * 2) + (p / 2);
+                    row = (p % 2) * 4;
+                    e0  = ext20(get_s16(matrix, ((row + 0) * ROW_ELEM) + col));
+                    e1  = ext20(get_s16(matrix, ((row + 1) * ROW_ELEM) + col));
+                    e2  = ext20(get_s16(matrix, ((row + 2) * ROW_ELEM) + col));
+                    e3  = ext20(get_s16(matrix, ((row + 3) * ROW_ELEM) + col));
                 end
 
-                2'b11: begin
+                2'b11: begin  // BAT: 4x4 block, p selects the block row (4 elements)
                     base_row = (chunk / 2) * 4;
                     base_col = (chunk % 2) * 4;
-                    for (int r = 0; r < 4; r++) begin
-                        for (int c = 0; c < 4; c++) begin
-                            terms16[(r * 4) + c] =
-                                ext20(get_s16(matrix,
-                                              ((base_row + r) * ROW_ELEM) +
-                                              (base_col + c)));
-                        end
-                    end
-                    thr_a = reduce16(terms16) >>> 4;
-                    thr_b = thr_a;
+                    blk_row  = base_row + p;
+                    e0 = ext20(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 0));
+                    e1 = ext20(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 1));
+                    e2 = ext20(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 2));
+                    e3 = ext20(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 3));
                 end
 
                 default: begin
-                    thr_a = 20'sd0;
-                    thr_b = 20'sd0;
+                    e0 = 20'sd0;
+                    e1 = 20'sd0;
+                    e2 = 20'sd0;
+                    e3 = 20'sd0;
                 end
             endcase
 
-            calc_threshold_pair = {thr_a, thr_b};
+            chunk_partial_sum = (e0 + e1) + (e2 + e3);
         end
     endfunction
 
@@ -1500,34 +1494,53 @@ module ACT_FiveStage_Parallel (
         end
     endfunction
 
-    function automatic logic [1023:0] apply_chunk(
-        input logic [1023:0] base_matrix,
-        input logic [1023:0] src_matrix,
-        input logic [1:0]    act_sel,
-        input logic [1:0]    mode_sel,
-        input integer        chunk,
-        input s20_t          threshold_a,
-        input s20_t          threshold_b
-    );
-        integer idx;
-        s20_t  threshold;
-        begin
-            apply_chunk = base_matrix;
-
-            for (int lane = 0; lane < CHUNK_SIZE; lane++) begin
-                idx       = chunk_idx(act_sel, mode_sel, chunk, lane);
-                threshold = select_threshold(act_sel, lane, threshold_a, threshold_b);
-                apply_chunk[1023 - (idx * 16) -: 16] =
-                    activate_value(get_s16(src_matrix, idx), act_sel, mode_sel, threshold);
+    // Stage 0 combinational: 4 partial sums per chunk, straight from the input.
+    always_comb begin
+        for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
+            for (int p = 0; p < 4; p++) begin
+                psum_ns[chunk][p] = chunk_partial_sum(in_data, act, chunk, p);
             end
         end
-    endfunction
+    end
 
+    // Stage 1 combinational: combine the registered partials into thresholds.
+    // RAT/CAT keep two thresholds per chunk (one per row/col); BAT shares one.
     always_comb begin
-        thr0_pair = calc_threshold_pair(in_data,     act,      0);
-        thr1_pair = calc_threshold_pair(matrix_cs[0], act_cs[0], 1);
-        thr2_pair = calc_threshold_pair(matrix_cs[1], act_cs[1], 2);
-        thr3_pair = calc_threshold_pair(matrix_cs[2], act_cs[2], 3);
+        for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
+            part_sum01 = psum_cs[chunk][0] + psum_cs[chunk][1];
+            part_sum23 = psum_cs[chunk][2] + psum_cs[chunk][3];
+            case (act_cs[0])
+                2'b01, 2'b10: begin
+                    thr_a_ns[chunk] = part_sum01 >>> 3;
+                    thr_b_ns[chunk] = part_sum23 >>> 3;
+                end
+                2'b11: begin
+                    thr_a_ns[chunk] = (part_sum01 + part_sum23) >>> 4;
+                    thr_b_ns[chunk] = thr_a_ns[chunk];
+                end
+                default: begin
+                    thr_a_ns[chunk] = 20'sd0;
+                    thr_b_ns[chunk] = 20'sd0;
+                end
+            endcase
+        end
+    end
+
+    // Stage 2 combinational: apply activation to all 64 lanes in parallel using
+    // the stage-1 thresholds. chunk_idx fully partitions the matrix, so every
+    // element is written exactly once (no latch).
+    always_comb begin
+        apply_ns = matrix_cs[1];
+        for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
+            for (int lane = 0; lane < CHUNK_SIZE; lane++) begin
+                apply_idx = chunk_idx(act_cs[1], mode_cs[1], chunk, lane);
+                apply_thr = select_threshold(act_cs[1], lane,
+                                             thr_a_cs[chunk], thr_b_cs[chunk]);
+                apply_ns[1023 - (apply_idx * 16) -: 16] =
+                    activate_value(get_s16(matrix_cs[1], apply_idx),
+                                   act_cs[1], mode_cs[1], apply_thr);
+            end
+        end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -1538,48 +1551,37 @@ module ACT_FiveStage_Parallel (
                 mode_cs[i]   <= ACT_USER;
                 matrix_cs[i] <= 1024'd0;
             end
-            for (int i = 0; i < ACT_STAGES - 1; i++) begin
-                thr_a_cs[i] <= 20'sd0;
-                thr_b_cs[i] <= 20'sd0;
+            for (int c = 0; c < NUM_CHUNK; c++) begin
+                for (int p = 0; p < 4; p++) psum_cs[c][p] <= 20'sd0;
+                thr_a_cs[c] <= 20'sd0;
+                thr_b_cs[c] <= 20'sd0;
             end
         end
         else begin
+            // Stage 0: capture matrix + partial sums.
             valid_cs[0]  <= in_valid;
             act_cs[0]    <= act;
             mode_cs[0]   <= act_mode;
             matrix_cs[0] <= in_data;
-            thr_a_cs[0]  <= $signed(thr0_pair[39:20]);
-            thr_b_cs[0]  <= $signed(thr0_pair[19:0]);
+            for (int c = 0; c < NUM_CHUNK; c++) begin
+                for (int p = 0; p < 4; p++) psum_cs[c][p] <= psum_ns[c][p];
+            end
 
+            // Stage 1: combine partials into thresholds, carry the matrix.
             valid_cs[1]  <= valid_cs[0];
             act_cs[1]    <= act_cs[0];
             mode_cs[1]   <= mode_cs[0];
-            matrix_cs[1] <= apply_chunk(matrix_cs[0], matrix_cs[0], act_cs[0], mode_cs[0],
-                                       0, thr_a_cs[0], thr_b_cs[0]);
-            thr_a_cs[1]  <= $signed(thr1_pair[39:20]);
-            thr_b_cs[1]  <= $signed(thr1_pair[19:0]);
+            matrix_cs[1] <= matrix_cs[0];
+            for (int c = 0; c < NUM_CHUNK; c++) begin
+                thr_a_cs[c] <= thr_a_ns[c];
+                thr_b_cs[c] <= thr_b_ns[c];
+            end
 
+            // Stage 2: apply activation.
             valid_cs[2]  <= valid_cs[1];
             act_cs[2]    <= act_cs[1];
             mode_cs[2]   <= mode_cs[1];
-            matrix_cs[2] <= apply_chunk(matrix_cs[1], matrix_cs[1], act_cs[1], mode_cs[1],
-                                       1, thr_a_cs[1], thr_b_cs[1]);
-            thr_a_cs[2]  <= $signed(thr2_pair[39:20]);
-            thr_b_cs[2]  <= $signed(thr2_pair[19:0]);
-
-            valid_cs[3]  <= valid_cs[2];
-            act_cs[3]    <= act_cs[2];
-            mode_cs[3]   <= mode_cs[2];
-            matrix_cs[3] <= apply_chunk(matrix_cs[2], matrix_cs[2], act_cs[2], mode_cs[2],
-                                       2, thr_a_cs[2], thr_b_cs[2]);
-            thr_a_cs[3]  <= $signed(thr3_pair[39:20]);
-            thr_b_cs[3]  <= $signed(thr3_pair[19:0]);
-
-            valid_cs[4]  <= valid_cs[3];
-            act_cs[4]    <= act_cs[3];
-            mode_cs[4]   <= mode_cs[3];
-            matrix_cs[4] <= apply_chunk(matrix_cs[3], matrix_cs[3], act_cs[3], mode_cs[3],
-                                       3, thr_a_cs[3], thr_b_cs[3]);
+            matrix_cs[2] <= apply_ns;
         end
     end
 
@@ -1595,21 +1597,33 @@ module PoT_FiveStage_Parallel (
 );
 
     localparam int MAT_SIZE  = 64;
-    localparam int HALF_SIZE = MAT_SIZE / 2;
 
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [15:0] s16_t;
 
+    // Extra input register to cut the critical path from DataPath mux/control
+    // into Matrix_Max's first-stage comparator tree.
+    logic          in_valid_cs;
+    logic [1023:0] in_data_cs;
+
     logic          max_valid;
     logic [15:0]   max_abs;
     logic [1023:0] src_pipe_cs [0:2];
-    logic          quant_valid;
-    logic [3:0]    quant_shift;
-    logic [1023:0] quant_src;
-    logic [255:0]  quant_data;
     logic [3:0]    shift_next;
-    logic [255:0]  quant_data_next;
     logic [255:0]  out_data_next;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            in_valid_cs <= 1'b0;
+            in_data_cs  <= 1024'd0;
+        end
+        else begin
+            // Do not gate in_data_cs with in_valid; avoiding the enable mux keeps
+            // the register D path simpler and gives synthesis more freedom.
+            in_valid_cs <= in_valid;
+            in_data_cs  <= in_data;
+        end
+    end
 
     function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
         get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
@@ -1655,36 +1669,33 @@ module PoT_FiveStage_Parallel (
         end
     endfunction
 
-    function automatic logic [255:0] quant_half(
-        input logic [255:0]  base_data,
+    // Quantize all 64 elements in one stage: each lane is an independent
+    // arithmetic shift + clamp, so the two former phase-halves run in parallel
+    // without lengthening the per-lane path.
+    function automatic logic [255:0] quant_all(
         input logic [1023:0] src_data,
-        input logic [3:0]    shift,
-        input logic          phase
+        input logic [3:0]    shift
     );
-        integer idx;
-        s16_t   scaled;
+        s16_t scaled;
         begin
-            quant_half = base_data;
-
-            for (int lane = 0; lane < HALF_SIZE; lane++) begin
-                idx    = (phase ? HALF_SIZE : 0) + lane;
+            quant_all = 256'd0;
+            for (int idx = 0; idx < MAT_SIZE; idx++) begin
                 scaled = get_s16(src_data, idx) >>> shift;
-                quant_half[255 - (idx * 4) -: 4] = clamp_s4(scaled);
+                quant_all[255 - (idx * 4) -: 4] = clamp_s4(scaled);
             end
         end
     endfunction
 
     always_comb begin
-        shift_next      = pot_shift(max_abs);
-        quant_data_next = quant_half(256'd0, src_pipe_cs[2], shift_next, 1'b0);
-        out_data_next   = quant_half(quant_data, quant_src, quant_shift, 1'b1);
+        shift_next    = pot_shift(max_abs);
+        out_data_next = quant_all(src_pipe_cs[2], shift_next);
     end
 
     Matrix_Max_3Stage_Parallel u_matrix_max (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (in_valid),
-        .in_data   (in_data),
+        .in_valid  (in_valid_cs),
+        .in_data   (in_data_cs),
         .out_valid (max_valid),
         .out_max   (max_abs)
     );
@@ -1696,7 +1707,7 @@ module PoT_FiveStage_Parallel (
             end
         end
         else begin
-            src_pipe_cs[0] <= in_data;
+            src_pipe_cs[0] <= in_data_cs;
             src_pipe_cs[1] <= src_pipe_cs[0];
             src_pipe_cs[2] <= src_pipe_cs[1];
         end
@@ -1704,25 +1715,10 @@ module PoT_FiveStage_Parallel (
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            quant_valid <= 1'b0;
-            out_valid   <= 1'b0;
+            out_valid <= 1'b0;
         end
         else begin
-            quant_valid <= max_valid;
-            out_valid   <= quant_valid;
-        end
-    end
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            quant_shift <= 4'd0;
-            quant_src   <= 1024'd0;
-            quant_data  <= 256'd0;
-        end
-        else if (max_valid) begin
-            quant_shift <= shift_next;
-            quant_src   <= src_pipe_cs[2];
-            quant_data  <= quant_data_next;
+            out_valid <= max_valid;
         end
     end
 
@@ -1730,7 +1726,7 @@ module PoT_FiveStage_Parallel (
         if (!rst_n) begin
             out_data <= 256'd0;
         end
-        else if (quant_valid) begin
+        else if (max_valid) begin
             out_data <= out_data_next;
         end
     end
