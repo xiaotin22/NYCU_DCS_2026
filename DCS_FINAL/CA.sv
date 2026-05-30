@@ -1054,10 +1054,8 @@ module Multiple_Processor #(
                     mult_issue_A          = extract_score_nibble(
                                                score_mem[mult_issue_idx], fin_nibble_cs);
                     mult_issue_B          = v_mem[fin_row_cs[1:0]];
-                    if (op == 2'b11) begin
-                        mult_issue_head_mask = 1'b1;
-                        mult_issue_head_sel  = fin_row_cs[2];
-                    end
+                    // No head_mask in FINAL: MHA does a full 8-tap score×V dot;
+                    // the per-head column split happens later in combine_mha_heads.
                     mult_issue_tag = MT_FINAL;
                 end
 
