@@ -1175,20 +1175,22 @@ module Multiple_Processor #(
 
     assign fin_mat_out = mult_idx_cs[MULT_STAGES-1][1:0];
 
-    // Per-lane shift helpers: multiply each 16-bit slot by 16 or 256.
-    function automatic logic [1023:0] lanes_shift4(input logic [1023:0] src);
+    // Per-lane shift-accumulate: each 16-bit slot does acc + (prod << sh)
+    // INDEPENDENTLY, truncated to 16 bits. Doing one 1024-bit add would let a
+    // lane overflow carry into the neighbouring lane (off-by-one corruption).
+    function automatic logic [1023:0] lane_shift_add(
+        input logic [1023:0] acc,
+        input logic [1023:0] prod,
+        input int            sh
+    );
+        logic signed [15:0] a;
+        logic signed [15:0] p;
         begin
-            for (int i = 0; i < 64; i++)
-                lanes_shift4[1023 - (i * 16) -: 16] =
-                    src[1023 - (i * 16) -: 16] << 4;
-        end
-    endfunction
-
-    function automatic logic [1023:0] lanes_shift8(input logic [1023:0] src);
-        begin
-            for (int i = 0; i < 64; i++)
-                lanes_shift8[1023 - (i * 16) -: 16] =
-                    src[1023 - (i * 16) -: 16] << 8;
+            for (int i = 0; i < 64; i++) begin
+                a = acc [1023 - (i * 16) -: 16];
+                p = prod[1023 - (i * 16) -: 16];
+                lane_shift_add[1023 - (i * 16) -: 16] = a + (p <<< sh);
+            end
         end
     endfunction
 
@@ -1199,14 +1201,14 @@ module Multiple_Processor #(
             case (mult_nibble_cs[MULT_STAGES-1])
                 2'd0: nibb_acc_cs[fin_mat_out] <= mult_raw_data;
                 2'd1: nibb_acc_cs[fin_mat_out] <=
-                          nibb_acc_cs[fin_mat_out] + lanes_shift4(mult_raw_data);
+                          lane_shift_add(nibb_acc_cs[fin_mat_out], mult_raw_data, 4);
                 default: ; // phase 2 handled combinationally; acc not updated
             endcase
         end
     end
 
-    // Combinational: phase 2 final lane-wise accumulation for this matrix
-    assign nibb_final_data = nibb_acc_cs[fin_mat_out] + lanes_shift8(mult_raw_data);
+    // Combinational: phase 2 final per-lane accumulation for this matrix
+    assign nibb_final_data = lane_shift_add(nibb_acc_cs[fin_mat_out], mult_raw_data, 8);
 
     // Public outputs: non-FINAL passes through; FINAL only fires on phase 2.
     assign mult_valid   = mult_raw_valid &&
