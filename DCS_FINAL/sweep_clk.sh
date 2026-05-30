@@ -1,20 +1,21 @@
 #!/bin/bash
-# Clock-time sweep 4.0 -> 5.0 (step 0.1), based on sweep_syn.sh format.
+# Clock-time sweep based on sweep_syn.sh format.
 # Designed to survive SSH disconnection: launch with setsid + nohup + redirect.
 # Results are written incrementally so a crash never loses completed points.
 
 # ================= 設定區塊 =================
 TCL_FILE="syn.tcl"
-START_CYCLE=4.0
-END_CYCLE=5.0
+START_CYCLE=3.5
+END_CYCLE=4.5
 STEP=0.1
-LOG_FILE="sweep_report_4to5.log"
-RAW_DATA_FILE="sweep_data_4to5.tmp"
+LOG_FILE="clk_sweep_report.log"
+RAW_DATA_FILE="clk_sweep_data.tmp"
 DONE_MARKER="SWEEP_COMPLETE"
 
-RED='\e[1;31m'
-GREEN='\e[1;32m'
-NC='\e[0m'
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;34m'
+NC='\033[0m'
 
 # 備份原始 syn.tcl，結束時還原
 cp -f "$TCL_FILE" "${TCL_FILE}.sweepbak"
@@ -35,8 +36,8 @@ rm -f syn_*.log
 # 1. 初始化 Log 總表標頭
 {
 echo "========================================================================================================================================="
-echo "                                            數位電路合成掃頻自動化分析報告 (CLK 4.0 ~ 5.0, step 0.1)                                      "
-echo "                                            產生時間: $(date '+%Y-%m-%d %H:%M:%S')                                                         "
+echo "                         Digital Circuit Synthesis Report (CLK ${START_CYCLE} ~ ${END_CYCLE}, step ${STEP})                              "
+echo "                                            Generate Time: $(date '+%Y-%m-%d %H:%M:%S')                                                  "
 echo "========================================================================================================================================="
 printf "%-10s %-10s %-15s %-15s %-8s %-40s %-40s\n" "Cycle(ns)" "Slack(ns)" "Total_Area" "Area*CLK" "Status" "Critical_Startpoint" "Critical_Endpoint"
 echo "-----------------------------------------------------------------------------------------------------------------------------------------"
@@ -45,7 +46,7 @@ echo "--------------------------------------------------------------------------
 # 2. 開始掃頻迴圈
 for cycle in $(seq -f '%.1f' $START_CYCLE $STEP $END_CYCLE); do
     echo "========================================================"
-    echo " [$(date '+%H:%M:%S')] 開始合成: CYCLE = $cycle ns"
+    echo " [$(date '+%H:%M:%S')] Start Synthesis: CYCLE = $cycle ns"
     echo "========================================================"
 
     sed -i "s/^set CYCLE.*/set CYCLE $cycle/g" "$TCL_FILE"
@@ -90,12 +91,15 @@ for cycle in $(seq -f '%.1f' $START_CYCLE $STEP $END_CYCLE); do
     # ================= 寫入紀錄（逐點即時寫入，斷線不丟）=================
     if [ "$AREA_CLK" != "N/A" ]; then
         printf "%-10s %-10s %-15s %-15.4f %-8s %-40s %-40s\n" "$cycle" "$SLACK" "$AREA" "$AREA_CLK" "$STATUS" "$STARTPOINT" "$ENDPOINT" >> "$LOG_FILE"
-        echo "$AREA_CLK $cycle $SLACK $AREA $STATUS $STARTPOINT $ENDPOINT" >> "$RAW_DATA_FILE"
+        # 只有 PASS 才進排名暫存檔
+        if [ "$STATUS" = "PASS" ]; then
+            echo "$AREA_CLK $cycle $SLACK $AREA $STATUS $STARTPOINT $ENDPOINT" >> "$RAW_DATA_FILE"
+        fi
     else
         printf "%-10s %-10s %-15s %-15s %-8s %-40s %-40s\n" "$cycle" "$SLACK" "$AREA" "$AREA_CLK" "$STATUS" "$STARTPOINT" "$ENDPOINT" >> "$LOG_FILE"
     fi
 
-    echo -e " [$(date '+%H:%M:%S')] 完成 $cycle ns | Slack: $SLACK | Area: $AREA | Status: $PRINT_STATUS"
+    echo -e " [$(date '+%H:%M:%S')] Finish! $cycle ns | Slack: $SLACK | Area: $AREA | Performance: $AREA_CLK | Status: $PRINT_STATUS"
 done
 
 rm -f make_temp.log
@@ -104,7 +108,7 @@ rm -f make_temp.log
 {
 echo ""
 echo "========================================================================"
-echo "根據 AREA * CLK 大小排序之晶片效益排名 (由優到劣)"
+echo "  Ranking by Area*CLK — PASS only (FAIL entries excluded)"
 echo "========================================================================"
 } >> "$LOG_FILE"
 
@@ -114,21 +118,20 @@ if [ -f "$RAW_DATA_FILE" ]; then
     rank=1
     while read -r area_clk clk slack area status start_pt end_pt; do
         {
-            echo "====Rank${rank}===="
+            echo "---------------------- RANK ${rank} -----------------------"
             echo "CLK      = ${clk} ns"
             echo "AREA     = ${area}"
             echo "Slack    = ${slack} (${status})"
             printf "Area*CLK = %.4f\n" "$area_clk"
-            if [ "$rank" -eq 1 ]; then
-                echo "Path     = ${start_pt} -> ${end_pt}"
-            fi
+            
+            echo "Path     = ${start_pt} -> ${end_pt}"
         } >> "$LOG_FILE"
         rank=$((rank + 1))
     done < sweep_sorted.tmp
 
     rm -f sweep_sorted.tmp
 else
-    echo "沒有收集到有效的資料，無法進行排名。" >> "$LOG_FILE"
+    echo "  No PASS entries — all points may have timing violations (FAIL)." >> "$LOG_FILE"
 fi
 
 rm -f "$RAW_DATA_FILE"
