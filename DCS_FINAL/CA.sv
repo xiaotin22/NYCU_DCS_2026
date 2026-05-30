@@ -192,12 +192,14 @@ module CA_Control #(
     logic [7:0]  wr_cmd_cnt_cs;
     logic [7:0]  out_cnt_cs;
     logic [7:0]  wr_pre_pipe_cs;
-    logic [7:0]  ha_group_base_cs;
+    logic [7:0]  ha_group_base_cs;   // issue pointer (advances at FINAL issue end)
+    logic [7:0]  ha_wb_base_cs;      // write-back pointer (lags by ~1 group)
     logic [4:0]  ha_phase_cnt_cs;
     logic [27:0] ha_wr_pipe_cs;
     logic        ha_prefetch_pending_cs;
     logic [1:0]  ha_pf_word_cs;
     logic        ha_pf_done_cs;
+    logic        ha_issue_done_cs;   // last group (252) FINAL has been issued
 
     logic        job_start;
     logic        ha_start;
@@ -310,14 +312,32 @@ module CA_Control #(
             out_cnt_cs              <= 8'd0;
             wr_pre_pipe_cs          <= 8'd0;
             ha_group_base_cs       <= 8'd0;
+            ha_wb_base_cs          <= 8'd0;
             ha_phase_cnt_cs        <= 5'd0;
             ha_wr_pipe_cs          <= 28'd0;
             ha_prefetch_pending_cs <= 1'b0;
             ha_pf_word_cs          <= 2'd0;
             ha_pf_done_cs          <= 1'b0;
+            ha_issue_done_cs       <= 1'b0;
         end
         else begin
             ha_wr_pipe_cs <= {ha_wr_pipe_cs[26:0], ha_final_start};
+
+            // Latch the write-back base at the moment FINAL starts: the issue
+            // pointer (ha_group_base_cs) advances as soon as FINAL has *issued*,
+            // but the burst write fires ~1 group later off ha_wr_pipe_cs, so it
+            // must use this lagged base.
+            if (ha_final_start) begin
+                ha_wb_base_cs <= ha_group_base_cs;
+            end
+
+            // FINAL results drain in the background while the next group already
+            // issues QKV, so count them here (state-independent) rather than in
+            // the FINAL wait. FAST_RUN keeps its own count in its case arm.
+            if ((state_cs != S_FAST_RUN) && datapath_result_valid &&
+                (out_cnt_cs != 8'd255)) begin
+                out_cnt_cs <= out_cnt_cs + 1'b1;
+            end
 
             // Prefetched burst lands while the current group is still computing;
             // collect the 4 words then flag the next group's x_mem ready.
@@ -394,6 +414,7 @@ module CA_Control #(
                         else begin
                             exec_weight_v          <= param;
                             ha_group_base_cs       <= 8'd0;
+                            ha_wb_base_cs          <= 8'd0;
                             rd_req_cnt_cs           <= 2'd0;
                             ha_rd_word_cnt_cs      <= 2'd0;
                             out_cnt_cs              <= 8'd0;
@@ -401,6 +422,7 @@ module CA_Control #(
                             ha_prefetch_pending_cs <= 1'b0;
                             ha_pf_word_cs          <= 2'd0;
                             ha_pf_done_cs          <= 1'b0;
+                            ha_issue_done_cs       <= 1'b0;
                             state_cs                <= S_HA_READ;
                         end
                     end
@@ -434,7 +456,29 @@ module CA_Control #(
 
                 S_HA_ISSUE: begin
                     if (ha_phase_cnt_cs == ha_phase_last) begin
-                        state_cs <= S_HA_WAIT;
+                        // QKV/SV must drain (next stage depends on their results),
+                        // but FINAL has no in-group consumer: its results drain in
+                        // the background while we immediately start the next group's
+                        // QKV, hiding the ~13-cycle FINAL drain.
+                        if (ha_stage_cs == ST_FINAL) begin
+                            if (ha_group_base_cs == 8'd252) begin
+                                // Last group: nothing more to issue, wait out the
+                                // background drain in S_HA_WAIT until out_cnt hits 255.
+                                ha_issue_done_cs <= 1'b1;
+                                state_cs         <= S_HA_WAIT;
+                            end
+                            else begin
+                                ha_group_base_cs  <= ha_next_group_base;
+                                rd_req_cnt_cs     <= ha_prefetch_pending_cs ? 2'd1 : 2'd0;
+                                ha_rd_word_cnt_cs <= 2'd0;
+                                ha_phase_cnt_cs   <= 5'd0;
+                                ha_stage_cs       <= ST_QKV;
+                                state_cs          <= S_HA_READ;
+                            end
+                        end
+                        else begin
+                            state_cs <= S_HA_WAIT;
+                        end
                     end
                     else begin
                         ha_phase_cnt_cs <= ha_phase_cnt_cs + 1'b1;
@@ -460,23 +504,13 @@ module CA_Control #(
                             end
                         end
 
-                        default: begin  // ST_FINAL: write back, advance group / finish.
-                            if (datapath_result_valid) begin
-                                if (out_cnt_cs[1:0] == 2'd3) begin
-                                    if (ha_group_base_cs == 8'd252) begin
-                                        state_cs <= S_IDLE;
-                                    end
-                                    else begin
-                                        ha_group_base_cs  <= ha_next_group_base;
-                                        rd_req_cnt_cs      <= ha_prefetch_pending_cs ? 2'd1 : 2'd0;
-                                        ha_rd_word_cnt_cs <= 2'd0;
-                                        state_cs           <= S_HA_READ;
-                                    end
-                                end
-
-                                if (out_cnt_cs != 8'd255) begin
-                                    out_cnt_cs <= out_cnt_cs + 1'b1;
-                                end
+                        default: begin  // ST_FINAL: only the last group lands here,
+                            // waiting out the background drain. out_cnt is counted
+                            // in the state-independent block above; when the 256th
+                            // (last) result arrives out_cnt is already 255.
+                            if (ha_issue_done_cs && datapath_result_valid &&
+                                (out_cnt_cs == 8'd255)) begin
+                                state_cs <= S_IDLE;
                             end
                         end
                     endcase
@@ -527,10 +561,11 @@ module CA_Control #(
             wr_en    <= 1'b0;
             wr_burst <= '0;
 
-            // Attention: one BURST_4 per group, timed by ha_wr_pipe_cs.
+            // Attention: one BURST_4 per group, timed by ha_wr_pipe_cs. Uses the
+            // lagged write-back base (the issue pointer has already moved on).
             if (ha_wr_fire) begin
                 wr_en    <= 1'b1;
-                wr_addr  <= ha_group_base_cs[ADDR_W-1:0];
+                wr_addr  <= ha_wb_base_cs[ADDR_W-1:0];
                 wr_burst <= BURST_4;
             end
 
