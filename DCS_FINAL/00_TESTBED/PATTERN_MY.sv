@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
-`define CYCLE_TIME       5.2
-`define DEBUG_EN         1
+`define CYCLE_TIME       4.4
+`define DEBUG_EN         0
 `define SEED             23
 `define RAM_NUMBER       5
 `define OP_SET_NUMBER    5
@@ -1131,12 +1131,12 @@ begin
 
             if (word_latency > MAX_WAIT) begin
                 YOU_FAIL_TASK();
-                $display("============================================================");
+                $display("======================================================================================================================");
                 $display("Timeout: no output within %0d cycles.", MAX_WAIT);
                 $display("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d",
                          rid, sid, addr);
                 $display("op = %0d, act = %0d", cur_op, cur_act);
-                $display("============================================================");
+                $display("======================================================================================================================");
                 repeat (3) @(negedge clk);
                 $finish;
             end
@@ -1158,12 +1158,12 @@ begin
 
                 if (wait_cnt > MAX_WAIT) begin
                     YOU_FAIL_TASK();
-                    $display("============================================================");
+                    $display("======================================================================================================================");
                     $display("Timeout: no output within %0d cycles.", MAX_WAIT);
                     $display("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d",
                              rid, sid, addr);
                     $display("op = %0d, act = %0d", cur_op, cur_act);
-                    $display("============================================================");
+                    $display("======================================================================================================================");
                     repeat (3) @(negedge clk);
                     $finish;
                 end

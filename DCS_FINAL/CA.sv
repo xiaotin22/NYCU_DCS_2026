@@ -545,6 +545,23 @@ module CA_Control #(
 
 endmodule
 
+// ============================================================================
+// CA_DataPath
+// 角色：純路由 + 中間儲存 + 三個 compute submodule 的 dispatch / collect
+//
+// Pipeline 全圖（從 issue/capture 進來算起）：
+//   Multiple_Processor: in→[1 issue buf]→[3 mult stages]            → mult_valid  (cycle 4)
+//   ACT_4Stage_Parallel: in→[1 input buf]→[3 act stages]            → act_valid   (cycle 4)
+//   PoT_5Stage_Parallel: in→[1 input buf]→[3 max stages]→[1 final]  → pot_valid   (cycle 5)
+//
+// Sideband (tag/idx) pipeline 長度跟著走：
+//   act_*_cs[0..3]  → 4 級 (對齊 ACT 4-stage)
+//   pot_*_cs[0..4]  → 5 級 (對齊 PoT 5-stage)
+//
+// FF 分配原則：
+//   * Multiple_Processor / ACT / PoT 自己的 input buffer 已搬進各自模組
+//   * DataPath 只留：①跨 issue 的中間儲存  ②sideband pipeline  ③output buffer
+// ============================================================================
 module CA_DataPath #(
     parameter RAM_WIDTH = 256
 )(
@@ -570,6 +587,9 @@ module CA_DataPath #(
     output logic [31:0]          out_data
 );
 
+    // ------------------------------------------------------------------------
+    // 區塊 1：型別 / 常數
+    // ------------------------------------------------------------------------
     localparam logic [1:0] ACT_USER    = 2'd0;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
@@ -586,57 +606,48 @@ module CA_DataPath #(
     localparam int SCORE_ELEM_W   = 11;
     localparam int SCORE_PACK_W   = SCORE_ELEM_W * 64;
     localparam int MHA_OUT_ELEM_W = 15;
-    // combine_mha_heads only consumes head0 cols 0-3 of each row, so the FINAL
-    // head0 buffer keeps just those 32 lanes (cols 4-7 are computed but discarded).
+    // combine_mha_heads 只取 head0 每 row 的 col 0-3，所以 FINAL head0 buffer
+    // 只存 32 lanes（col 4-7 計算後丟棄）。
     localparam int MHA_OUT_LANES  = 32;
     localparam int MHA_OUT_PACK_W = MHA_OUT_ELEM_W * MHA_OUT_LANES;
 
-    // Attention scores are activated before buffering: SHA fits in signed 11 bits.
-    // MHA head0 FINAL partial output can reach -16384, so it keeps 15-bit lanes.
-    logic [255:0]  x_mem        [0:3];
-    logic [255:0]  q_mem        [0:3];
-    logic [255:0]  k_mem        [0:3];
-    logic [255:0]  v_mem        [0:3];
+    // ------------------------------------------------------------------------
+    // 區塊 2：跨 issue 的中間儲存（這些是 DataPath 的「狀態」，必須留在這層）
+    // ------------------------------------------------------------------------
+    // x/q/k/v_mem: 4 個 256-bit slot；score_mem: 8 個 (11-bit × 64) slot。
+    // mha_out0_mem: MHA head0 FINAL 部份積，等 head1 算完再 combine。
+    logic [255:0]              x_mem        [0:3];
+    logic [255:0]              q_mem        [0:3];
+    logic [255:0]              k_mem        [0:3];
+    logic [255:0]              v_mem        [0:3];
     logic [SCORE_PACK_W-1:0]   score_mem    [0:7];
     logic [MHA_OUT_PACK_W-1:0] mha_out0_mem [0:3];
-    logic [3:0]    q_ready_cs;
-    logic [3:0]    k_ready_cs;
-    logic [3:0]    v_ready_cs;
-    logic [7:0]    score_ready_cs;
 
+    logic [3:0]                q_ready_cs;
+    logic [3:0]                k_ready_cs;
+    logic [3:0]                v_ready_cs;
+    logic [7:0]                score_ready_cs;
+
+    // ------------------------------------------------------------------------
+    // 區塊 3：Submodule output 線（comb，從各 submodule 出來的訊號）
+    // ------------------------------------------------------------------------
     logic          mult_valid;
     logic [1023:0] mult_data;
     mult_tag_t     mult_tag_out;
     logic [2:0]    mult_idx_out;
 
-    logic          act_in_valid;
-    logic [1:0]    act_in_mode;
-    logic [1023:0] act_in_data;
-    pipe_tag_t     act_in_tag;
-    logic [2:0]    act_in_idx;
-    logic          act_in_valid_cs;
-    logic [1:0]    act_in_mode_cs;
-    logic [1023:0] act_in_data_cs;
-    pipe_tag_t     act_in_tag_cs;
-    logic [2:0]    act_in_idx_cs;
     logic          act_valid;
     logic [1023:0] act_data;
-    pipe_tag_t     act_tag_cs [0:2];
-    logic [2:0]    act_idx_cs [0:2];
 
-    logic          pot_in_valid;
-    logic [1023:0] pot_in_data;
-    pipe_tag_t     pot_in_tag;
-    logic [2:0]    pot_in_idx;
     logic          pot_valid;
     logic [255:0]  pot_data;
-    pipe_tag_t     pot_tag_cs [0:4];
-    logic [2:0]    pot_idx_cs [0:4];
 
-    logic          mha_comb_valid;
-    logic [1023:0] mha_comb_data;
-    logic [2:0]    mha_comb_idx;
-
+    // ------------------------------------------------------------------------
+    // 區塊 4：Issue / capture 入口 buffer
+    //   * issue path 給 Multiple_Processor，先打一拍切短上游 mux
+    //   * rd_data_cs 同時服務 capture (寫 x_mem) 和 IM_NORM (送進 MP)，
+    //     兩者互斥，所以共享一個 register 不衝突
+    // ------------------------------------------------------------------------
     logic                 issue_valid_cs;
     issue_mode_t          issue_mode_cs;
     logic [4:0]           issue_idx_cs;
@@ -644,12 +655,39 @@ module CA_DataPath #(
     logic [1:0]           capture_idx_cs;
     logic [RAM_WIDTH-1:0] rd_data_cs;
 
-    assign qkv_ready = (&q_ready_cs) && (&k_ready_cs) && (&v_ready_cs);
-    assign sv_ready  = (op == 2'b11) ? (&score_ready_cs) : (&score_ready_cs[3:0]);
-    assign result_valid = pot_valid &&
-                          ((pot_tag_cs[4] == PT_NORM) ||
-                           (pot_tag_cs[4] == PT_FINAL));
+    // ------------------------------------------------------------------------
+    // 區塊 5：Dispatch comb 線（mult → ACT / PoT 的分流）
+    // ------------------------------------------------------------------------
+    logic          act_in_valid;
+    logic [1:0]    act_in_mode;
+    logic [1023:0] act_in_data;
+    pipe_tag_t     act_in_tag;
+    logic [2:0]    act_in_idx;
 
+    logic          pot_in_valid;
+    logic [1023:0] pot_in_data;
+    pipe_tag_t     pot_in_tag;
+    logic [2:0]    pot_in_idx;
+
+    logic          mha_comb_valid;
+    logic [1023:0] mha_comb_data;
+    logic [2:0]    mha_comb_idx;
+
+    logic          use_act_for_pot;
+
+    // ------------------------------------------------------------------------
+    // 區塊 6：Sideband pipeline (跟 ACT/PoT 的延遲對齊)
+    //   act_*_cs: 4 級 (input buf + 3 stages)
+    //   pot_*_cs: 5 級 (input buf + Matrix_Max 3 stages + final 1 stage)
+    // ------------------------------------------------------------------------
+    pipe_tag_t     act_tag_cs [0:3];
+    logic [2:0]    act_idx_cs [0:3];
+    pipe_tag_t     pot_tag_cs [0:4];
+    logic [2:0]    pot_idx_cs [0:4];
+
+    // ========================================================================
+    // 函式：MHA head 合併 / score 壓縮 / mha_out0 壓縮解壓
+    // ========================================================================
     function automatic logic [1023:0] combine_mha_heads(
         input logic [1023:0] head0,
         input logic [1023:0] head1
@@ -701,6 +739,25 @@ module CA_DataPath #(
         end
     endfunction
 
+    // ========================================================================
+    // 區塊 7：Ready / result_valid 給 Control 看的回報訊號
+    // ========================================================================
+    assign qkv_ready    = (&q_ready_cs) && (&k_ready_cs) && (&v_ready_cs);
+    assign sv_ready     = (op == 2'b11) ? (&score_ready_cs) : (&score_ready_cs[3:0]);
+    assign result_valid = pot_valid &&
+                          ((pot_tag_cs[4] == PT_NORM) ||
+                           (pot_tag_cs[4] == PT_FINAL));
+
+    // ========================================================================
+    // 區塊 8：Mult-output dispatch (mult → ACT 或 PoT 或 mha_out0_mem)
+    //
+    //   MT_NORM            → ACT (USER mode, tag=PT_NORM)
+    //   MT_SCORE           → ACT (SPECIAL mode, tag=PT_SCORE)
+    //   MT_FINAL (SHA)     → ACT (USER mode, tag=PT_FINAL)
+    //   MT_FINAL (MHA h0)  → 存進 mha_out0_mem，不送 ACT
+    //   MT_FINAL (MHA h1)  → 跟 mha_out0_mem combine 後送 ACT (tag=PT_FINAL)
+    //   MT_Q/K/V           → PoT (直接，不過 ACT)
+    // ========================================================================
     assign mha_comb_valid = mult_valid && (op == 2'b11) &&
                             (mult_tag_out == MT_FINAL) && mult_idx_out[2];
     assign mha_comb_idx   = {1'b0, mult_idx_out[1:0]};
@@ -721,39 +778,37 @@ module CA_DataPath #(
     always_comb begin
         act_in_tag  = PT_NONE;
         act_in_mode = ACT_USER;
-
         case (mult_tag_out)
-            MT_NORM: begin
-                act_in_tag  = PT_NORM;
-                act_in_mode = ACT_USER;
-            end
-            MT_SCORE: begin
-                act_in_tag  = PT_SCORE;
-                act_in_mode = ACT_SPECIAL;
-            end
+            MT_NORM:  begin act_in_tag = PT_NORM;  act_in_mode = ACT_USER;    end
+            MT_SCORE: begin act_in_tag = PT_SCORE; act_in_mode = ACT_SPECIAL; end
             MT_FINAL: begin
                 act_in_tag  = ((op == 2'b11) && !mha_comb_valid) ? PT_NONE : PT_FINAL;
                 act_in_mode = ACT_USER;
             end
-            default: begin
-            end
+            default: begin end
         endcase
     end
 
-    logic use_act_for_pot;
+    // ========================================================================
+    // 區塊 9：ACT-output / Mult-Q/K/V dispatch (→ PoT)
+    //
+    //   PT_NORM/PT_FINAL (after ACT) → PoT (走 ACT→PoT 路徑)
+    //   MT_Q/K/V (from mult, bypass ACT) → PoT 直接
+    //   PT_SCORE (after ACT) → score_mem (不走 PoT)
+    // ========================================================================
     assign use_act_for_pot = act_valid &&
-                             ((act_tag_cs[2] == PT_NORM) || (act_tag_cs[2] == PT_FINAL));
+                             ((act_tag_cs[3] == PT_NORM) || (act_tag_cs[3] == PT_FINAL));
 
     assign pot_in_valid = use_act_for_pot ||
                           (mult_valid && ((mult_tag_out == MT_Q) ||
                                           (mult_tag_out == MT_K) ||
                                           (mult_tag_out == MT_V)));
     assign pot_in_data  = use_act_for_pot ? act_data       : mult_data;
-    assign pot_in_idx   = use_act_for_pot ? act_idx_cs[2]   : mult_idx_out;
+    assign pot_in_idx   = use_act_for_pot ? act_idx_cs[3]  : mult_idx_out;
 
     always_comb begin
         if (use_act_for_pot) begin
-            pot_in_tag = act_tag_cs[2];
+            pot_in_tag = act_tag_cs[3];
         end
         else begin
             case (mult_tag_out)
@@ -765,25 +820,10 @@ module CA_DataPath #(
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            issue_valid_cs   <= 1'b0;
-            capture_valid_cs <= 1'b0;
-        end
-        else begin
-            issue_valid_cs   <= issue_valid;
-            issue_mode_cs    <= issue_valid ? issue_mode : IM_NONE;
-            issue_idx_cs     <= issue_valid ? issue_idx : 5'd0;
-            capture_valid_cs <= capture_valid;
-            capture_idx_cs   <= capture_idx;
-            rd_data_cs       <= rd_data;
-        end
-    end
-
-    Multiple_Processor #(
-        .SCORE_ELEM_W (SCORE_ELEM_W),
-        .SCORE_PACK_W (SCORE_PACK_W)
-    ) u_mult_proc (
+    // ========================================================================
+    // 區塊 10：Submodule 例化（純連線，沒有額外邏輯）
+    // ========================================================================
+    Multiple_Processor u_mult_proc (
         .clk          (clk),
         .rst_n        (rst_n),
         .issue_valid  (issue_valid_cs),
@@ -805,13 +845,13 @@ module CA_DataPath #(
         .mult_idx_out (mult_idx_out)
     );
 
-    ACT_3Stage_Parallel u_act (
+    ACT_4Stage_Parallel u_act (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (act_in_valid_cs),
+        .in_valid  (act_in_valid),   // comb 直接進，input buffer 在 ACT 內
         .act       (act),
-        .act_mode  (act_in_mode_cs),
-        .in_data   (act_in_data_cs),
+        .act_mode  (act_in_mode),
+        .in_data   (act_in_data),
         .out_valid (act_valid),
         .out_data  (act_data)
     );
@@ -819,56 +859,68 @@ module CA_DataPath #(
     PoT_5Stage_Parallel u_pot (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (pot_in_valid),
+        .in_valid  (pot_in_valid),   // comb 直接進，input buffer 在 PoT 內
         .in_data   (pot_in_data),
         .out_valid (pot_valid),
         .out_data  (pot_data)
     );
 
+    // ========================================================================
+    // 區塊 11：所有狀態更新 (always_ff)
+    //   1. Issue / capture 入口 buffer
+    //   2. Sideband pipeline (act_*_cs / pot_*_cs)
+    //   3. Memory writes (x/q/k/v/score/mha_out0_mem + ready flags)
+    //   4. Output buffer (wr_data / out_valid / out_data)
+    // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            // (1) issue / capture buffer
+            issue_valid_cs   <= 1'b0;
+            issue_mode_cs    <= IM_NONE;
+            issue_idx_cs     <= 5'd0;
+            capture_valid_cs <= 1'b0;
+            capture_idx_cs   <= 2'd0;
+            rd_data_cs       <= '0;
+
+            // (2) sideband
+            for (int i = 0; i < 4; i++) begin
+                act_tag_cs[i] <= PT_NONE;
+                act_idx_cs[i] <= 3'd0;
+            end
+            for (int i = 0; i < 5; i++) begin
+                pot_tag_cs[i] <= PT_NONE;
+                pot_idx_cs[i] <= 3'd0;
+            end
+
+            // (3) ready flags
             q_ready_cs     <= 4'd0;
             k_ready_cs     <= 4'd0;
             v_ready_cs     <= 4'd0;
             score_ready_cs <= 8'd0;
-            out_valid     <= 1'b0;
-            out_data      <= 32'd0;
-            act_in_valid_cs <= 1'b0;
-            act_in_mode_cs  <= ACT_USER;
-            act_in_data_cs  <= 1024'd0;
-            act_in_tag_cs   <= PT_NONE;
-            act_in_idx_cs   <= 3'd0;
+
+            // (4) output buffer
+            out_valid <= 1'b0;
+            out_data  <= 32'd0;
         end
         else begin
-            out_valid <= result_valid;
+            // ---------------- (1) Issue / capture buffer --------------------
+            issue_valid_cs   <= issue_valid;
+            issue_mode_cs    <= issue_valid ? issue_mode : IM_NONE;
+            issue_idx_cs     <= issue_valid ? issue_idx  : 5'd0;
+            capture_valid_cs <= capture_valid;
+            capture_idx_cs   <= capture_idx;
+            rd_data_cs       <= rd_data;
 
-            act_in_valid_cs <= act_in_valid;
-            act_in_mode_cs  <= act_in_mode;
-            act_in_data_cs  <= act_in_data;
-            act_in_tag_cs   <= act_in_valid ? act_in_tag : PT_NONE;
-            act_in_idx_cs   <= act_in_idx;
-
-            // Clear the per-group ready flags at the first QKV issue (decoupled
-            // from x_mem capture, which now happens early via prefetch while the
-            // previous group still needs these flags in SV/FINAL).
-            if (issue_valid_cs && (issue_mode_cs == IM_QKV) && (issue_idx_cs == 5'd0)) begin
-                q_ready_cs     <= 4'd0;
-                k_ready_cs     <= 4'd0;
-                v_ready_cs     <= 4'd0;
-                score_ready_cs <= 8'd0;
-            end
-
-            if (capture_valid_cs) begin
-                x_mem[capture_idx_cs] <= rd_data_cs[255:0];
-            end
-
-            act_tag_cs[0] <= act_in_tag_cs;
-            act_idx_cs[0] <= act_in_idx_cs;
-            for (int i = 1; i < 3; i++) begin
+            // ---------------- (2) Sideband pipeline -------------------------
+            // ACT path: 4 級 (input buf + 3 stages)
+            act_tag_cs[0] <= act_in_valid ? act_in_tag : PT_NONE;
+            act_idx_cs[0] <= act_in_idx;
+            for (int i = 1; i < 4; i++) begin
                 act_tag_cs[i] <= act_tag_cs[i - 1];
                 act_idx_cs[i] <= act_idx_cs[i - 1];
             end
 
+            // PoT path: 5 級 (input buf + 3 max + 1 final)
             pot_tag_cs[0] <= pot_in_valid ? pot_in_tag : PT_NONE;
             pot_idx_cs[0] <= pot_in_idx;
             for (int i = 1; i < 5; i++) begin
@@ -876,35 +928,53 @@ module CA_DataPath #(
                 pot_idx_cs[i] <= pot_idx_cs[i - 1];
             end
 
-            if (act_valid && (act_tag_cs[2] == PT_SCORE)) begin
-                score_mem[act_idx_cs[2]] <= pack_score(act_data);
-                score_ready_cs[act_idx_cs[2]] <= 1'b1;
+            // ---------------- (3) Memory writes -----------------------------
+            // x_mem capture (from RAM)
+            if (capture_valid_cs) begin
+                x_mem[capture_idx_cs] <= rd_data_cs[255:0];
             end
 
+            // 新 QKV 組開始：清掉前一組的 ready flags
+            if (issue_valid_cs && (issue_mode_cs == IM_QKV) && (issue_idx_cs == 5'd0)) begin
+                q_ready_cs     <= 4'd0;
+                k_ready_cs     <= 4'd0;
+                v_ready_cs     <= 4'd0;
+                score_ready_cs <= 8'd0;
+            end
+
+            // score_mem ← ACT (PT_SCORE)
+            if (act_valid && (act_tag_cs[3] == PT_SCORE)) begin
+                score_mem[act_idx_cs[3]]      <= pack_score(act_data);
+                score_ready_cs[act_idx_cs[3]] <= 1'b1;
+            end
+
+            // mha_out0_mem ← Mult (MHA FINAL head0)
             if (mult_valid && (mult_tag_out == MT_FINAL) &&
                 (op == 2'b11) && !mult_idx_out[2]) begin
                 mha_out0_mem[mult_idx_out[1:0]] <= pack_mha_out(mult_data);
             end
 
+            // q/k/v_mem ← PoT
             if (pot_valid) begin
                 case (pot_tag_cs[4])
                     PT_Q: begin
-                        q_mem[pot_idx_cs[4][1:0]] <= pot_data;
+                        q_mem[pot_idx_cs[4][1:0]]      <= pot_data;
                         q_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
                     end
                     PT_K: begin
-                        k_mem[pot_idx_cs[4][1:0]] <= pot_data;
+                        k_mem[pot_idx_cs[4][1:0]]      <= pot_data;
                         k_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
                     end
                     PT_V: begin
-                        v_mem[pot_idx_cs[4][1:0]] <= pot_data;
+                        v_mem[pot_idx_cs[4][1:0]]      <= pot_data;
                         v_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
                     end
-                    default: begin
-                    end
+                    default: begin end
                 endcase
             end
 
+            // ---------------- (4) Output buffer -----------------------------
+            out_valid <= result_valid;
             if (result_valid) begin
                 wr_data  <= pot_data;
                 out_data <= pot_data[31:0];
@@ -914,10 +984,7 @@ module CA_DataPath #(
 
 endmodule
 
-module Multiple_Processor #(
-    parameter int SCORE_ELEM_W = 11,
-    parameter int SCORE_PACK_W = SCORE_ELEM_W * 64
-)(
+module Multiple_Processor (
     input  logic           clk,
     input  logic           rst_n,
 
@@ -935,7 +1002,7 @@ module Multiple_Processor #(
     input  logic [255:0]   q_mem       [0:3],
     input  logic [255:0]   k_mem       [0:3],
     input  logic [255:0]   v_mem       [0:3],
-    input  logic [SCORE_PACK_W-1:0] score_mem [0:7],
+    input  logic [703:0]   score_mem   [0:7],  // 11-bit × 64 lanes
 
     output logic           mult_valid,
     output logic [1023:0]  mult_data,
@@ -976,13 +1043,13 @@ module Multiple_Processor #(
     // phase 1: bits[7:4]  (unsigned nibble)
     // phase 2: sign_extend(bits[10:8] from 3-bit to 4-bit)  (signed nibble)
     function automatic logic [255:0] extract_score_nibble(
-        input logic [SCORE_PACK_W-1:0] src,
-        input logic [1:0]              phase
+        input logic [703:0] src,
+        input logic [1:0]   phase
     );
-        logic [SCORE_ELEM_W-1:0] ls;
+        logic [10:0] ls;
         begin
             for (int s = 0; s < 64; s++) begin
-                ls = src[SCORE_PACK_W-1 - (s * SCORE_ELEM_W) -: SCORE_ELEM_W];
+                ls = src[703 - (s * 11) -: 11];
                 case (phase)
                     2'd0:    extract_score_nibble[255 - (s * 4) -: 4] = ls[3:0];
                     2'd1:    extract_score_nibble[255 - (s * 4) -: 4] = ls[7:4];
@@ -1379,7 +1446,7 @@ module Mult_3Stage_Parallel (
 
 endmodule
 
-module ACT_3Stage_Parallel (
+module ACT_4Stage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
@@ -1401,6 +1468,13 @@ module ACT_3Stage_Parallel (
 
     typedef logic signed [15:0] s16_t;
     typedef logic signed [19:0] s20_t;
+
+    // Input buffer (decouples upstream dispatch mux from psum tree; ACT 從外面
+    // 看是 4-stage：input_buf → psum → threshold → apply)。
+    logic          in_valid_buf;
+    logic [1:0]    act_buf;
+    logic [1:0]    mode_buf;
+    logic [1023:0] in_data_buf;
 
     logic          valid_cs  [0:ACT_STAGES-1];
     logic [1:0]    act_cs    [0:ACT_STAGES-1];
@@ -1586,11 +1660,11 @@ module ACT_3Stage_Parallel (
         end
     endfunction
 
-    // Stage 0 combinational: 4 partial sums per chunk, straight from the input.
+    // Stage 0 combinational: 4 partial sums per chunk, straight from the buffered input.
     always_comb begin
         for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
             for (int p = 0; p < 4; p++) begin
-                psum_ns[chunk][p] = chunk_partial_sum(in_data, act, chunk, p);
+                psum_ns[chunk][p] = chunk_partial_sum(in_data_buf, act_buf, chunk, p);
             end
         end
     end
@@ -1637,6 +1711,10 @@ module ACT_3Stage_Parallel (
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            in_valid_buf <= 1'b0;
+            act_buf      <= 2'd0;
+            mode_buf     <= ACT_USER;
+            in_data_buf  <= 1024'd0;
             for (int i = 0; i < ACT_STAGES; i++) begin
                 valid_cs[i]  <= 1'b0;
                 act_cs[i]    <= 2'd0;
@@ -1650,11 +1728,17 @@ module ACT_3Stage_Parallel (
             end
         end
         else begin
+            // Input buffer: 從上游 dispatch mux 切一拍進來。
+            in_valid_buf <= in_valid;
+            act_buf      <= act;
+            mode_buf     <= act_mode;
+            in_data_buf  <= in_data;
+
             // Stage 0: capture matrix + partial sums.
-            valid_cs[0]  <= in_valid;
-            act_cs[0]    <= act;
-            mode_cs[0]   <= act_mode;
-            matrix_cs[0] <= in_data;
+            valid_cs[0]  <= in_valid_buf;
+            act_cs[0]    <= act_buf;
+            mode_cs[0]   <= mode_buf;
+            matrix_cs[0] <= in_data_buf;
             for (int c = 0; c < NUM_CHUNK; c++) begin
                 for (int p = 0; p < 4; p++) psum_cs[c][p] <= psum_ns[c][p];
             end
@@ -1779,11 +1863,6 @@ module PoT_5Stage_Parallel (
         end
     endfunction
 
-    always_comb begin
-        shift_next   = pot_shift(max_abs);
-        out_data_ns  = quant_all(src_pipe_cs[2], shift_next);
-    end
-
     Matrix_Max_3Stage_Parallel u_matrix_max (
         .clk       (clk),
         .rst_n     (rst_n),
@@ -1792,6 +1871,11 @@ module PoT_5Stage_Parallel (
         .out_valid (max_valid),
         .out_max   (max_abs)
     );
+
+    always_comb begin
+        shift_next   = pot_shift(max_abs);
+        out_data_ns  = quant_all(src_pipe_cs[2], shift_next);
+    end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -1894,6 +1978,7 @@ module Matrix_Max_3Stage_Parallel (
         out_max_ns = max4_u16(max4_cs[0], max4_cs[1], max4_cs[2], max4_cs[3]);
     end
 
+    // valid pipeline
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st1_valid <= 1'b0;
@@ -1907,7 +1992,7 @@ module Matrix_Max_3Stage_Parallel (
         end
     end
 
-
+    // data pipeline
     always_ff @(posedge clk) begin
         if (in_valid) begin
             for (int i = 0; i < MAX16_COUNT; i++) begin
