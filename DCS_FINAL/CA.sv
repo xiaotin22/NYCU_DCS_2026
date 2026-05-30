@@ -55,7 +55,7 @@ module CA #(
 
     logic          datapath_issue_valid;
     issue_mode_t   datapath_issue_mode;
-    logic [3:0]    datapath_issue_idx;
+    logic [4:0]    datapath_issue_idx;
     logic          datapath_capture_valid;
     logic [1:0]    datapath_capture_idx;
     logic          datapath_qkv_ready;
