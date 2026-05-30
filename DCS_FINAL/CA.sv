@@ -194,7 +194,11 @@ module CA_Control #(
     logic [7:0]  wr_pre_pipe_cs;
     logic [7:0]  ha_group_base_cs;
     logic [4:0]  ha_phase_cnt_cs;
-    logic [27:0] ha_wr_pipe_cs;
+    // 把原本 28-bit shift register 換成 5-bit counter + run flag：
+    // ha_final_start 每組只 fire 一次，shift reg 同時最多只有 1 bit 為 1，
+    // 用 counter 等效但省 ~22 flops。
+    logic [4:0]  ha_wr_cnt_cs;
+    logic        ha_wr_run_cs;
     logic        ha_prefetch_pending_cs;
     logic [1:0]  ha_pf_word_cs;
     logic        ha_pf_done_cs;
@@ -245,7 +249,12 @@ module CA_Control #(
     // (SHA) / 20 (MHA), i.e. +8 / +16 vs the original phase-0/4 single-issue
     // design, so the write-command tap shifts by the same amount: [7]→[15],
     // [11]→[27]. (Empirical alignment — re-verify on gate sim.)
-    assign ha_wr_fire            = (exec_op == 2'b11) ? ha_wr_pipe_cs[27] : ha_wr_pipe_cs[15];
+    // Counter equivalent of original ha_wr_pipe_cs[15]/[27]: ha_final_start
+    // sets run=1 + cnt=0; cnt increments per cycle; fire when cnt hits target.
+    // PoT 為 5-stage（abs 已搬到上游做，內部還是 abs + 3-stage max + 1 final），
+    // wr_data 出現時點與原版一致 → tap 維持 27 (MHA) / 15 (SHA)。
+    assign ha_wr_fire            = ha_wr_run_cs &&
+                                    (ha_wr_cnt_cs == ((exec_op == 2'b11) ? 5'd27 : 5'd15));
     assign ha_next_group_base    = ha_group_base_cs + 8'd4;
     // Issue-phase upper bound:
     //   QKV: 12 phases (4 rows × Q/K/V)
@@ -311,13 +320,26 @@ module CA_Control #(
             wr_pre_pipe_cs         <= 8'd0;
             ha_group_base_cs       <= 8'd0;
             ha_phase_cnt_cs        <= 5'd0;
-            ha_wr_pipe_cs          <= 28'd0;
+            ha_wr_cnt_cs           <= 5'd0;
+            ha_wr_run_cs           <= 1'b0;
             ha_prefetch_pending_cs <= 1'b0;
             ha_pf_word_cs          <= 2'd0;
             ha_pf_done_cs          <= 1'b0;
         end
         else begin
-            ha_wr_pipe_cs <= {ha_wr_pipe_cs[26:0], ha_final_start};
+            // Counter update (replaces ha_wr_pipe shift register).
+            // 優先級：ha_final_start > ha_wr_fire > 計數中。state-based 清零
+            // 在 case block 內以後寫覆蓋 (SV "last assignment wins")。
+            if (ha_final_start) begin
+                ha_wr_run_cs <= 1'b1;
+                ha_wr_cnt_cs <= 5'd0;
+            end
+            else if (ha_wr_fire) begin
+                ha_wr_run_cs <= 1'b0;
+            end
+            else if (ha_wr_run_cs) begin
+                ha_wr_cnt_cs <= ha_wr_cnt_cs + 1'b1;
+            end
 
             // Prefetched burst lands while the current group is still computing;
             // collect the 4 words then flag the next group's x_mem ready.
@@ -397,7 +419,8 @@ module CA_Control #(
                             rd_req_cnt_cs           <= 2'd0;
                             ha_rd_word_cnt_cs      <= 2'd0;
                             out_cnt_cs              <= 8'd0;
-                            ha_wr_pipe_cs          <= 28'd0;
+                            ha_wr_cnt_cs           <= 5'd0;
+                            ha_wr_run_cs           <= 1'b0;
                             ha_prefetch_pending_cs <= 1'b0;
                             ha_pf_word_cs          <= 2'd0;
                             ha_pf_done_cs          <= 1'b0;
@@ -454,7 +477,8 @@ module CA_Control #(
                         ST_SV: begin
                             if (datapath_sv_ready) begin
                                 ha_phase_cnt_cs <= 5'd0;
-                                ha_wr_pipe_cs   <= 28'd0;
+                                ha_wr_cnt_cs    <= 5'd0;
+                                ha_wr_run_cs    <= 1'b0;
                                 ha_stage_cs     <= ST_FINAL;
                                 state_cs         <= S_HA_ISSUE;
                             end
@@ -527,7 +551,7 @@ module CA_Control #(
             wr_en    <= 1'b0;
             wr_burst <= '0;
 
-            // Attention: one BURST_4 per group, timed by ha_wr_pipe_cs.
+            // Attention: one BURST_4 per group, timed by ha_wr_cnt_cs.
             if (ha_wr_fire) begin
                 wr_en    <= 1'b1;
                 wr_addr  <= ha_group_base_cs[ADDR_W-1:0];
@@ -552,7 +576,7 @@ endmodule
 // Pipeline 全圖（從 issue/capture 進來算起）：
 //   Multiple_Processor: in→[1 issue buf]→[3 mult stages]            → mult_valid  (cycle 4)
 //   ACT_4Stage_Parallel: in→[1 input buf]→[3 act stages]            → act_valid   (cycle 4)
-//   PoT_5Stage_Parallel: in→[1 input buf]→[3 max stages]→[1 final]  → pot_valid   (cycle 5)
+//   PoT_5Stage_Parallel: in+abs→[1 input buf]→[3 max stages]→[1 final] → pot_valid (cycle 5)
 //
 // Sideband (tag/idx) pipeline 長度跟著走：
 //   act_*_cs[0..3]  → 4 級 (對齊 ACT 4-stage)
@@ -593,15 +617,8 @@ module CA_DataPath #(
     localparam logic [1:0] ACT_USER    = 2'd0;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
-    typedef enum logic [2:0] {
-        PT_NONE,
-        PT_NORM,
-        PT_Q,
-        PT_K,
-        PT_V,
-        PT_SCORE,
-        PT_FINAL
-    } pipe_tag_t;
+    // Use top-level mult_tag_t for the whole DataPath sideband; values pass
+    // through unchanged from Multiple_Processor into ACT / PoT tag pipelines.
 
     localparam int SCORE_ELEM_W   = 11;
     localparam int SCORE_PACK_W   = SCORE_ELEM_W * 64;
@@ -661,12 +678,12 @@ module CA_DataPath #(
     logic          act_in_valid;
     logic [1:0]    act_in_mode;
     logic [1023:0] act_in_data;
-    pipe_tag_t     act_in_tag;
+    mult_tag_t     act_in_tag;
     logic [2:0]    act_in_idx;
 
     logic          pot_in_valid;
     logic [1023:0] pot_in_data;
-    pipe_tag_t     pot_in_tag;
+    mult_tag_t     pot_in_tag;
     logic [2:0]    pot_in_idx;
 
     logic          mha_comb_valid;
@@ -680,9 +697,9 @@ module CA_DataPath #(
     //   act_*_cs: 4 級 (input buf + 3 stages)
     //   pot_*_cs: 5 級 (input buf + Matrix_Max 3 stages + final 1 stage)
     // ------------------------------------------------------------------------
-    pipe_tag_t     act_tag_cs [0:3];
+    mult_tag_t     act_tag_cs [0:3];
     logic [2:0]    act_idx_cs [0:3];
-    pipe_tag_t     pot_tag_cs [0:4];
+    mult_tag_t     pot_tag_cs [0:4];
     logic [2:0]    pot_idx_cs [0:4];
 
     // ========================================================================
@@ -745,17 +762,17 @@ module CA_DataPath #(
     assign qkv_ready    = (&q_ready_cs) && (&k_ready_cs) && (&v_ready_cs);
     assign sv_ready     = (op == 2'b11) ? (&score_ready_cs) : (&score_ready_cs[3:0]);
     assign result_valid = pot_valid &&
-                          ((pot_tag_cs[4] == PT_NORM) ||
-                           (pot_tag_cs[4] == PT_FINAL));
+                          ((pot_tag_cs[4] == MT_NORM) ||
+                           (pot_tag_cs[4] == MT_FINAL));
 
     // ========================================================================
     // 區塊 8：Mult-output dispatch (mult → ACT 或 PoT 或 mha_out0_mem)
     //
-    //   MT_NORM            → ACT (USER mode, tag=PT_NORM)
-    //   MT_SCORE           → ACT (SPECIAL mode, tag=PT_SCORE)
-    //   MT_FINAL (SHA)     → ACT (USER mode, tag=PT_FINAL)
+    //   MT_NORM            → ACT (USER mode, tag=MT_NORM)
+    //   MT_SCORE           → ACT (SPECIAL mode, tag=MT_SCORE)
+    //   MT_FINAL (SHA)     → ACT (USER mode, tag=MT_FINAL)
     //   MT_FINAL (MHA h0)  → 存進 mha_out0_mem，不送 ACT
-    //   MT_FINAL (MHA h1)  → 跟 mha_out0_mem combine 後送 ACT (tag=PT_FINAL)
+    //   MT_FINAL (MHA h1)  → 跟 mha_out0_mem combine 後送 ACT (tag=MT_FINAL)
     //   MT_Q/K/V           → PoT (直接，不過 ACT)
     // ========================================================================
     assign mha_comb_valid = mult_valid && (op == 2'b11) &&
@@ -776,28 +793,23 @@ module CA_DataPath #(
                                                                  3'd0;
 
     always_comb begin
-        act_in_tag  = PT_NONE;
-        act_in_mode = ACT_USER;
-        case (mult_tag_out)
-            MT_NORM:  begin act_in_tag = PT_NORM;  act_in_mode = ACT_USER;    end
-            MT_SCORE: begin act_in_tag = PT_SCORE; act_in_mode = ACT_SPECIAL; end
-            MT_FINAL: begin
-                act_in_tag  = ((op == 2'b11) && !mha_comb_valid) ? PT_NONE : PT_FINAL;
-                act_in_mode = ACT_USER;
-            end
-            default: begin end
-        endcase
+        // For NORM/SCORE the tag passes through; for FINAL we suppress head0
+        // of MHA (it's only stored, not sent to ACT). act_in_tag value is
+        // ignored when act_in_valid=0 (Q/K/V path), so default is harmless.
+        act_in_mode = (mult_tag_out == MT_SCORE) ? ACT_SPECIAL : ACT_USER;
+        act_in_tag  = ((mult_tag_out == MT_FINAL) && (op == 2'b11) && !mha_comb_valid)
+                      ? MT_NONE : mult_tag_out;
     end
 
     // ========================================================================
     // 區塊 9：ACT-output / Mult-Q/K/V dispatch (→ PoT)
     //
-    //   PT_NORM/PT_FINAL (after ACT) → PoT (走 ACT→PoT 路徑)
+    //   MT_NORM/MT_FINAL (after ACT) → PoT (走 ACT→PoT 路徑)
     //   MT_Q/K/V (from mult, bypass ACT) → PoT 直接
-    //   PT_SCORE (after ACT) → score_mem (不走 PoT)
+    //   MT_SCORE (after ACT) → score_mem (不走 PoT)
     // ========================================================================
     assign use_act_for_pot = act_valid &&
-                             ((act_tag_cs[3] == PT_NORM) || (act_tag_cs[3] == PT_FINAL));
+                             ((act_tag_cs[3] == MT_NORM) || (act_tag_cs[3] == MT_FINAL));
 
     assign pot_in_valid = use_act_for_pot ||
                           (mult_valid && ((mult_tag_out == MT_Q) ||
@@ -806,19 +818,8 @@ module CA_DataPath #(
     assign pot_in_data  = use_act_for_pot ? act_data       : mult_data;
     assign pot_in_idx   = use_act_for_pot ? act_idx_cs[3]  : mult_idx_out;
 
-    always_comb begin
-        if (use_act_for_pot) begin
-            pot_in_tag = act_tag_cs[3];
-        end
-        else begin
-            case (mult_tag_out)
-                MT_Q:    pot_in_tag = PT_Q;
-                MT_K:    pot_in_tag = PT_K;
-                MT_V:    pot_in_tag = PT_V;
-                default: pot_in_tag = PT_NONE;
-            endcase
-        end
-    end
+    // tags pass through; Q/K/V branch gated by pot_in_valid downstream
+    assign pot_in_tag   = use_act_for_pot ? act_tag_cs[3]  : mult_tag_out;
 
     // ========================================================================
     // 區塊 10：Submodule 例化（純連線，沒有額外邏輯）
@@ -884,11 +885,11 @@ module CA_DataPath #(
 
             // (2) sideband
             for (int i = 0; i < 4; i++) begin
-                act_tag_cs[i] <= PT_NONE;
+                act_tag_cs[i] <= MT_NONE;
                 act_idx_cs[i] <= 3'd0;
             end
             for (int i = 0; i < 5; i++) begin
-                pot_tag_cs[i] <= PT_NONE;
+                pot_tag_cs[i] <= MT_NONE;
                 pot_idx_cs[i] <= 3'd0;
             end
 
@@ -913,7 +914,7 @@ module CA_DataPath #(
 
             // ---------------- (2) Sideband pipeline -------------------------
             // ACT path: 4 級 (input buf + 3 stages)
-            act_tag_cs[0] <= act_in_valid ? act_in_tag : PT_NONE;
+            act_tag_cs[0] <= act_in_valid ? act_in_tag : MT_NONE;
             act_idx_cs[0] <= act_in_idx;
             for (int i = 1; i < 4; i++) begin
                 act_tag_cs[i] <= act_tag_cs[i - 1];
@@ -921,7 +922,7 @@ module CA_DataPath #(
             end
 
             // PoT path: 5 級 (input buf + 3 max + 1 final)
-            pot_tag_cs[0] <= pot_in_valid ? pot_in_tag : PT_NONE;
+            pot_tag_cs[0] <= pot_in_valid ? pot_in_tag : MT_NONE;
             pot_idx_cs[0] <= pot_in_idx;
             for (int i = 1; i < 5; i++) begin
                 pot_tag_cs[i] <= pot_tag_cs[i - 1];
@@ -942,8 +943,8 @@ module CA_DataPath #(
                 score_ready_cs <= 8'd0;
             end
 
-            // score_mem ← ACT (PT_SCORE)
-            if (act_valid && (act_tag_cs[3] == PT_SCORE)) begin
+            // score_mem ← ACT (MT_SCORE)
+            if (act_valid && (act_tag_cs[3] == MT_SCORE)) begin
                 score_mem[act_idx_cs[3]]      <= pack_score(act_data);
                 score_ready_cs[act_idx_cs[3]] <= 1'b1;
             end
@@ -957,15 +958,15 @@ module CA_DataPath #(
             // q/k/v_mem ← PoT
             if (pot_valid) begin
                 case (pot_tag_cs[4])
-                    PT_Q: begin
+                    MT_Q: begin
                         q_mem[pot_idx_cs[4][1:0]]      <= pot_data;
                         q_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
                     end
-                    PT_K: begin
+                    MT_K: begin
                         k_mem[pot_idx_cs[4][1:0]]      <= pot_data;
                         k_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
                     end
-                    PT_V: begin
+                    MT_V: begin
                         v_mem[pot_idx_cs[4][1:0]]      <= pot_data;
                         v_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
                     end
@@ -1283,7 +1284,10 @@ module Mult_3Stage_Parallel (
 
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [4:0]  s5_t;  // A operand: sign- or zero-extended 4-bit
-    typedef logic signed [8:0]  s9_t;  // product: s5 × s4 → s9 (max ±120)
+    // 範圍分析: sel_a ∈ [-8, 15], sel_b ∈ [-8, 7]
+    //   → product ∈ [15×-8, 15×7] = [-120, 105]，落在 s8 [-128, 127] 內
+    // 比 s9 多省 64×9 = 576 flops（prod_cs），比原 s16 共省 4608 flops。
+    typedef logic signed [7:0]  s8_t;  // product: s5 × s4 → s8 (max ±120 fits)
     typedef logic signed [15:0] s16_t;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
@@ -1366,10 +1370,11 @@ module Mult_3Stage_Parallel (
 
     // Stage 0: input buffer (operands + control). Decouples the upstream issue mux
     //          from the partial-product combinational cone.
-    // Stage 1: 576 partial products s5×s4=s9, then register (4032 fewer flops vs s16).
+    // Stage 1: 576 partial products s5×s4 truncated to s8, then register
+    //          (4608 fewer flops vs s16, 576 fewer vs s9; range fits [-120, 105]).
     // Stage 2: per-lane 9-input add tree → s16 sum, then register.
     logic         in_valid_cs;
-    logic [1:0]   op_cs;
+    // op 在一個 job 內為常數（exec_op 已 latch 在 Control），不需要 input register。
     logic         b_transpose_cs;
     logic         a_unsigned_cs;
     logic         head_mask_cs;
@@ -1379,20 +1384,20 @@ module Mult_3Stage_Parallel (
 
     logic stage1_valid_cs;
     logic stage2_valid_cs;
-    s9_t  prod_cs   [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s8_t  prod_cs   [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s16_t sum_cs    [0:MAT_SIZE-1];
 
-    s9_t  prod_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s8_t  prod_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s16_t sum_next  [0:MAT_SIZE-1];
 
     always_comb begin
         for (int row = 0; row < ROW_ELEM; row++) begin
             for (int lane = 0; lane < ROW_ELEM; lane++) begin
                 for (int tap = 0; tap < DOT_SIZE; tap++) begin
-                    prod_next[(row * ROW_ELEM) + lane][tap] = s9_t'(
-                        $signed(sel_a(in_data_A_cs, op_cs, a_unsigned_cs,
+                    prod_next[(row * ROW_ELEM) + lane][tap] = s8_t'(
+                        $signed(sel_a(in_data_A_cs, op, a_unsigned_cs,
                                       head_mask_cs, head_sel_cs, row, lane, tap)) *
-                        $signed(sel_b(in_data_B_cs, op_cs, b_transpose_cs,
+                        $signed(sel_b(in_data_B_cs, op, b_transpose_cs,
                                       head_mask_cs, head_sel_cs, lane, tap)));
                 end
             end
@@ -1418,7 +1423,6 @@ module Mult_3Stage_Parallel (
         end
         else begin
             in_valid_cs     <= in_valid;
-            op_cs           <= op;
             b_transpose_cs  <= b_transpose;
             a_unsigned_cs   <= a_unsigned;
             head_mask_cs    <= head_mask;
@@ -1443,7 +1447,6 @@ module Mult_3Stage_Parallel (
         for (int i = 0; i < MAT_SIZE; i++)
             out_data[1023 - (i * 16) -: 16] = sum_cs[i];
     end
-
 endmodule
 
 module ACT_4Stage_Parallel (
@@ -1467,7 +1470,8 @@ module ACT_4Stage_Parallel (
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
     typedef logic signed [15:0] s16_t;
-    typedef logic signed [19:0] s20_t;
+    typedef logic signed [17:0] s18_t;  // psum: 4×s16 → range ±131K, fits s18
+    typedef logic signed [19:0] s20_t;  // 留給 stage-1 中間 (part_sum01/23, BAT 和)
 
     // Input buffer (decouples upstream dispatch mux from psum tree; ACT 從外面
     // 看是 4-stage：input_buf → psum → threshold → apply)。
@@ -1485,19 +1489,20 @@ module ACT_4Stage_Parallel (
     // them into per-chunk thresholds. Splitting the BAT 16-element sum into a
     // partial + combine keeps every adder tree at depth 2, so BAT no longer has
     // a longer path than RAT/CAT.
-    s20_t          psum_cs   [0:NUM_CHUNK-1][0:3];
-    s20_t          thr_a_cs  [0:NUM_CHUNK-1];
-    s20_t          thr_b_cs  [0:NUM_CHUNK-1];
+    // psum 用 s18（4×s16 的最大累加 ±131K）；thr 經 >>>3 或 >>>4 後 range ±32K，s16 即可。
+    s18_t          psum_cs   [0:NUM_CHUNK-1][0:3];
+    s16_t          thr_a_cs  [0:NUM_CHUNK-1];
+    s16_t          thr_b_cs  [0:NUM_CHUNK-1];
 
-    s20_t          psum_ns   [0:NUM_CHUNK-1][0:3];
-    s20_t          thr_a_ns  [0:NUM_CHUNK-1];
-    s20_t          thr_b_ns  [0:NUM_CHUNK-1];
+    s18_t          psum_ns   [0:NUM_CHUNK-1][0:3];
+    s16_t          thr_a_ns  [0:NUM_CHUNK-1];
+    s16_t          thr_b_ns  [0:NUM_CHUNK-1];
     logic [1023:0] apply_ns;
 
     s20_t          part_sum01;
     s20_t          part_sum23;
     integer        apply_idx;
-    s20_t          apply_thr;
+    s16_t          apply_thr;
 
     assign out_valid = valid_cs[ACT_STAGES-1];
     assign out_data  = matrix_cs[ACT_STAGES-1];
@@ -1506,14 +1511,14 @@ module ACT_4Stage_Parallel (
         get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
-    function automatic s20_t ext20(input s16_t value);
-        ext20 = {{4{value[15]}}, value};
+    function automatic s18_t ext18(input s16_t value);
+        ext18 = {{2{value[15]}}, value};
     endfunction
 
     // One partial sum = 4 elements: a half-row (RAT), a half-column (CAT), or a
     // block row (BAT). p in 0..3 selects which group within the chunk. Depth-2
     // adder tree; the stage-1 combine adds the partials back together.
-    function automatic s20_t chunk_partial_sum(
+    function automatic s18_t chunk_partial_sum(
         input logic [1023:0] matrix,
         input logic [1:0]    act_sel,
         input integer        chunk,
@@ -1524,50 +1529,50 @@ module ACT_4Stage_Parallel (
         integer base_row;
         integer base_col;
         integer blk_row;
-        s20_t   e0;
-        s20_t   e1;
-        s20_t   e2;
-        s20_t   e3;
+        s18_t   e0;
+        s18_t   e1;
+        s18_t   e2;
+        s18_t   e3;
         begin
-            e0 = 20'sd0;
-            e1 = 20'sd0;
-            e2 = 20'sd0;
-            e3 = 20'sd0;
+            e0 = 18'sd0;
+            e1 = 18'sd0;
+            e2 = 18'sd0;
+            e3 = 18'sd0;
 
             case (act_sel)
                 2'b01: begin  // RAT: row = 2*chunk + (p>>1), cols = (p&1)*4 + 0..3
                     row = (chunk * 2) + (p / 2);
                     col = (p % 2) * 4;
-                    e0  = ext20(get_s16(matrix, (row * ROW_ELEM) + col + 0));
-                    e1  = ext20(get_s16(matrix, (row * ROW_ELEM) + col + 1));
-                    e2  = ext20(get_s16(matrix, (row * ROW_ELEM) + col + 2));
-                    e3  = ext20(get_s16(matrix, (row * ROW_ELEM) + col + 3));
+                    e0  = ext18(get_s16(matrix, (row * ROW_ELEM) + col + 0));
+                    e1  = ext18(get_s16(matrix, (row * ROW_ELEM) + col + 1));
+                    e2  = ext18(get_s16(matrix, (row * ROW_ELEM) + col + 2));
+                    e3  = ext18(get_s16(matrix, (row * ROW_ELEM) + col + 3));
                 end
 
                 2'b10: begin  // CAT: col = 2*chunk + (p>>1), rows = (p&1)*4 + 0..3
                     col = (chunk * 2) + (p / 2);
                     row = (p % 2) * 4;
-                    e0  = ext20(get_s16(matrix, ((row + 0) * ROW_ELEM) + col));
-                    e1  = ext20(get_s16(matrix, ((row + 1) * ROW_ELEM) + col));
-                    e2  = ext20(get_s16(matrix, ((row + 2) * ROW_ELEM) + col));
-                    e3  = ext20(get_s16(matrix, ((row + 3) * ROW_ELEM) + col));
+                    e0  = ext18(get_s16(matrix, ((row + 0) * ROW_ELEM) + col));
+                    e1  = ext18(get_s16(matrix, ((row + 1) * ROW_ELEM) + col));
+                    e2  = ext18(get_s16(matrix, ((row + 2) * ROW_ELEM) + col));
+                    e3  = ext18(get_s16(matrix, ((row + 3) * ROW_ELEM) + col));
                 end
 
                 2'b11: begin  // BAT: 4x4 block, p selects the block row (4 elements)
                     base_row = (chunk / 2) * 4;
                     base_col = (chunk % 2) * 4;
                     blk_row  = base_row + p;
-                    e0 = ext20(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 0));
-                    e1 = ext20(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 1));
-                    e2 = ext20(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 2));
-                    e3 = ext20(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 3));
+                    e0 = ext18(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 0));
+                    e1 = ext18(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 1));
+                    e2 = ext18(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 2));
+                    e3 = ext18(get_s16(matrix, (blk_row * ROW_ELEM) + base_col + 3));
                 end
 
                 default: begin
-                    e0 = 20'sd0;
-                    e1 = 20'sd0;
-                    e2 = 20'sd0;
-                    e3 = 20'sd0;
+                    e0 = 18'sd0;
+                    e1 = 18'sd0;
+                    e2 = 18'sd0;
+                    e3 = 18'sd0;
                 end
             endcase
 
@@ -1609,11 +1614,11 @@ module ACT_4Stage_Parallel (
         end
     endfunction
 
-    function automatic s20_t select_threshold(
+    function automatic s16_t select_threshold(
         input logic [1:0] act_sel,
         input integer     lane,
-        input s20_t       threshold_a,
-        input s20_t       threshold_b
+        input s16_t       threshold_a,
+        input s16_t       threshold_b
     );
         begin
             case (act_sel)
@@ -1630,7 +1635,7 @@ module ACT_4Stage_Parallel (
                 end
 
                 default: begin
-                    select_threshold = 20'sd0;
+                    select_threshold = 16'sd0;
                 end
             endcase
         end
@@ -1640,7 +1645,7 @@ module ACT_4Stage_Parallel (
         input s16_t       value,
         input logic [1:0] act_sel,
         input logic [1:0] mode_sel,
-        input s20_t       threshold
+        input s16_t       threshold
     );
         begin
             case (mode_sel)
@@ -1653,7 +1658,7 @@ module ACT_4Stage_Parallel (
                         activate_value = (value < 0) ? 16'sd0 : value;
                     end
                     else begin
-                        activate_value = (ext20(value) < threshold) ? (value >>> 3) : value;
+                        activate_value = (value < threshold) ? (value >>> 3) : value;
                     end
                 end
             endcase
@@ -1685,8 +1690,8 @@ module ACT_4Stage_Parallel (
                     thr_b_ns[chunk] = thr_a_ns[chunk];
                 end
                 default: begin
-                    thr_a_ns[chunk] = 20'sd0;
-                    thr_b_ns[chunk] = 20'sd0;
+                    thr_a_ns[chunk] = 16'sd0;
+                    thr_b_ns[chunk] = 16'sd0;
                 end
             endcase
         end
@@ -1722,9 +1727,9 @@ module ACT_4Stage_Parallel (
                 matrix_cs[i] <= 1024'd0;
             end
             for (int c = 0; c < NUM_CHUNK; c++) begin
-                for (int p = 0; p < 4; p++) psum_cs[c][p] <= 20'sd0;
-                thr_a_cs[c] <= 20'sd0;
-                thr_b_cs[c] <= 20'sd0;
+                for (int p = 0; p < 4; p++) psum_cs[c][p] <= 18'sd0;
+                thr_a_cs[c] <= 16'sd0;
+                thr_b_cs[c] <= 16'sd0;
             end
         end
         else begin
@@ -1760,7 +1765,6 @@ module ACT_4Stage_Parallel (
             matrix_cs[2] <= apply_ns;
         end
     end
-
 endmodule
 
 
@@ -1778,10 +1782,15 @@ module PoT_5Stage_Parallel (
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [15:0] s16_t;
 
-    // Extra input register to cut the critical path from DataPath mux/control
-    // into Matrix_Max's first-stage comparator tree.
+    // Input registers：
+    //   in_data_cs 走 src_pipe（quant 要 signed 原值）。
+    //   abs_cs 餵 Matrix_Max；abs comb 從 in_data 算（上游 act/mult Q 已 reg），
+    //   把 abs 的 ~15-gate carry chain 從 Matrix_Max stage 1 抽到 input edge，
+    //   切短原本 in_data_cs→abs→max4→max16_cs 的 critical path。
     logic          in_valid_cs;
     logic [1023:0] in_data_cs;
+    logic [1023:0] abs_cs;
+    logic [1023:0] abs_ns;
 
     logic          max_valid;
     logic [15:0]   max_abs;
@@ -1789,22 +1798,34 @@ module PoT_5Stage_Parallel (
     logic [3:0]    shift_next;
     logic [255:0]  out_data_ns;
 
+    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
+        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    endfunction
+
+    function automatic logic [15:0] abs16(input s16_t value);
+        abs16 = (value < 0) ? -value : value;
+    endfunction
+
+    // abs comb：對 64 lanes 同步算 absolute value，給下一拍 abs_cs。
+    always_comb begin
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            abs_ns[1023 - (i * 16) -: 16] = abs16(get_s16(in_data, i));
+        end
+    end
+
     // input register
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             in_valid_cs <= 1'b0;
         end
         else begin
-            // Do not gate in_data_cs with in_valid; avoiding the enable mux keeps
-            // the register D path simpler and gives synthesis more freedom.
+            // Do not gate with in_valid; avoiding the enable mux keeps the
+            // register D path simpler and gives synthesis more freedom.
             in_valid_cs <= in_valid;
             in_data_cs  <= in_data;
+            abs_cs      <= abs_ns;
         end
     end
-
-    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
-        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
-    endfunction
 
     function automatic logic [3:0] pot_shift(input logic [15:0] max_abs);
         logic [3:0] msb;
@@ -1867,7 +1888,7 @@ module PoT_5Stage_Parallel (
         .clk       (clk),
         .rst_n     (rst_n),
         .in_valid  (in_valid_cs),
-        .in_data   (in_data_cs),
+        .in_abs    (abs_cs),
         .out_valid (max_valid),
         .out_max   (max_abs)
     );
@@ -1901,7 +1922,6 @@ module PoT_5Stage_Parallel (
         end
     end
 
-
 endmodule
 
 
@@ -1909,7 +1929,7 @@ module Matrix_Max_3Stage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
-    input  logic [1023:0] in_data,
+    input  logic [1023:0] in_abs,   // 已是 64 lanes unsigned abs（PoT 上游算好）
     output logic          out_valid,
     output logic [15:0]   out_max
 );
@@ -1918,22 +1938,16 @@ module Matrix_Max_3Stage_Parallel (
     localparam int MAX16_COUNT = 16;
     localparam int MAX4_COUNT  = 4;
 
-    typedef logic signed [15:0] s16_t;
-
     logic          st1_valid;
     logic          st2_valid;
     logic [15:0]   max16_ns [0:MAX16_COUNT-1];
     logic [15:0]   max4_ns  [0:MAX4_COUNT-1];
-    logic [15:0]   max16_cs    [0:MAX16_COUNT-1];
-    logic [15:0]   max4_cs     [0:MAX4_COUNT-1];
+    logic [15:0]   max16_cs [0:MAX16_COUNT-1];
+    logic [15:0]   max4_cs  [0:MAX4_COUNT-1];
     logic [15:0]   out_max_ns;
 
-    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
-        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
-    endfunction
-
-    function automatic logic [15:0] abs16(input s16_t value);
-        abs16 = (value < 0) ? -value : value;
+    function automatic logic [15:0] get_u16(input logic [1023:0] vec, input integer idx);
+        get_u16 = vec[1023 - (idx * 16) -: 16];
     endfunction
 
     function automatic logic [15:0] max4_u16(
@@ -1951,34 +1965,29 @@ module Matrix_Max_3Stage_Parallel (
         end
     endfunction
 
-    function automatic logic [15:0] max4_abs(
-        input logic [1023:0] matrix,
-        input integer        base_idx
-    );
-        begin
-            max4_abs = max4_u16(abs16(get_s16(matrix, base_idx + 0)),
-                                abs16(get_s16(matrix, base_idx + 1)),
-                                abs16(get_s16(matrix, base_idx + 2)),
-                                abs16(get_s16(matrix, base_idx + 3)));
-        end
-    endfunction
-
+    // 3-stage 結構（abs 已在上游 PoT 完成，這裡純比較）：
+    //   Stage 1: 64 lanes → 16 個 max (max4 of 4)
+    //   Stage 2: 16 → 4 (max4 of 4)
+    //   Stage 3: 4 → 1 (max4)
     always_comb begin
         for (int i = 0; i < MAX16_COUNT; i++) begin
-            max16_ns[i] = max4_abs(in_data, i * 4);
+            max16_ns[i] = max4_u16(get_u16(in_abs, i*4 + 0),
+                                   get_u16(in_abs, i*4 + 1),
+                                   get_u16(in_abs, i*4 + 2),
+                                   get_u16(in_abs, i*4 + 3));
         end
 
         for (int i = 0; i < MAX4_COUNT; i++) begin
-            max4_ns[i] = max4_u16(max16_cs[(i * 4) + 0],
-                                    max16_cs[(i * 4) + 1],
-                                    max16_cs[(i * 4) + 2],
-                                    max16_cs[(i * 4) + 3]);
+            max4_ns[i] = max4_u16(max16_cs[(i*4) + 0],
+                                  max16_cs[(i*4) + 1],
+                                  max16_cs[(i*4) + 2],
+                                  max16_cs[(i*4) + 3]);
         end
 
         out_max_ns = max4_u16(max4_cs[0], max4_cs[1], max4_cs[2], max4_cs[3]);
     end
 
-    // valid pipeline
+    // valid pipeline (3 stages)
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st1_valid <= 1'b0;
