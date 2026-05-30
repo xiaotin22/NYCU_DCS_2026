@@ -194,7 +194,7 @@ module CA_Control #(
     logic [7:0]  wr_pre_pipe_cs;
     logic [7:0]  ha_group_base_cs;
     logic [4:0]  ha_phase_cnt_cs;
-    logic [13:0] ha_wr_pipe_cs;
+    logic [27:0] ha_wr_pipe_cs;
     logic        ha_prefetch_pending_cs;
     logic [1:0]  ha_pf_word_cs;
     logic        ha_pf_done_cs;
@@ -241,7 +241,11 @@ module CA_Control #(
     assign ha_final_start        = (state_cs == S_HA_ISSUE) && (ha_stage_cs == ST_FINAL) &&
                                     (ha_phase_cnt_cs == 5'd0);
     // FINAL nibble-accumulation triples the issue count: 4→12 (SHA), 8→24 (MHA).
-    assign ha_wr_fire            = (exec_op == 2'b11) ? ha_wr_pipe_cs[13] : ha_wr_pipe_cs[9];
+    // Interleaved order pushes the first of the 4 consecutive finals to phase 8
+    // (SHA) / 20 (MHA), i.e. +8 / +16 vs the original phase-0/4 single-issue
+    // design, so the write-command tap shifts by the same amount: [7]→[15],
+    // [11]→[27]. (Empirical alignment — re-verify on gate sim.)
+    assign ha_wr_fire            = (exec_op == 2'b11) ? ha_wr_pipe_cs[27] : ha_wr_pipe_cs[15];
     assign ha_next_group_base    = ha_group_base_cs + 8'd4;
     // Issue-phase upper bound:
     //   QKV: 12 phases (4 rows × Q/K/V)
@@ -307,13 +311,13 @@ module CA_Control #(
             wr_pre_pipe_cs          <= 8'd0;
             ha_group_base_cs       <= 8'd0;
             ha_phase_cnt_cs        <= 5'd0;
-            ha_wr_pipe_cs          <= 14'd0;
+            ha_wr_pipe_cs          <= 28'd0;
             ha_prefetch_pending_cs <= 1'b0;
             ha_pf_word_cs          <= 2'd0;
             ha_pf_done_cs          <= 1'b0;
         end
         else begin
-            ha_wr_pipe_cs <= {ha_wr_pipe_cs[12:0], ha_final_start};
+            ha_wr_pipe_cs <= {ha_wr_pipe_cs[26:0], ha_final_start};
 
             // Prefetched burst lands while the current group is still computing;
             // collect the 4 words then flag the next group's x_mem ready.
@@ -393,7 +397,7 @@ module CA_Control #(
                             rd_req_cnt_cs           <= 2'd0;
                             ha_rd_word_cnt_cs      <= 2'd0;
                             out_cnt_cs              <= 8'd0;
-                            ha_wr_pipe_cs          <= 14'd0;
+                            ha_wr_pipe_cs          <= 28'd0;
                             ha_prefetch_pending_cs <= 1'b0;
                             ha_pf_word_cs          <= 2'd0;
                             ha_pf_done_cs          <= 1'b0;
@@ -450,7 +454,7 @@ module CA_Control #(
                         ST_SV: begin
                             if (datapath_sv_ready) begin
                                 ha_phase_cnt_cs <= 5'd0;
-                                ha_wr_pipe_cs   <= 14'd0;
+                                ha_wr_pipe_cs   <= 28'd0;
                                 ha_stage_cs     <= ST_FINAL;
                                 state_cs         <= S_HA_ISSUE;
                             end
@@ -957,9 +961,15 @@ module Multiple_Processor #(
     logic [2:0] mult_idx_cs    [0:MULT_STAGES-1];
     logic [1:0] mult_nibble_cs [0:MULT_STAGES-1]; // nibble phase through pipeline
 
-    // Per-FINAL row/nibble counters (registered, valid for the current issue cycle)
-    logic [2:0] fin_row_cs;    // 0..3 (SHA) / 0..7 (MHA)
-    logic [1:0] fin_nibble_cs; // 0=lo, 1=mid, 2=hi
+    // FINAL counters (registered, valid for the current issue cycle). Issue order
+    // is INTERLEAVED so the 4 matrices' final results emerge on consecutive cycles
+    // (needed for the burst-4 write to stream wr_data correctly):
+    //   loop nesting = head (outer) > nibble (mid) > matrix (inner)
+    //   SHA: 4 mat × 3 nibble          = 12 issues
+    //   MHA: 2 head × 3 nibble × 4 mat = 24 issues
+    logic [1:0] fin_mat_cs;    // matrix within group 0..3 (innermost)
+    logic [1:0] fin_nibble_cs; // 0=lo, 1=mid, 2=hi (middle)
+    logic       fin_head_cs;   // MHA head 0/1 (outermost; SHA stays 0)
 
     // Extract one packed-4-bit nibble vector (64 lanes × 4 bit) from score_mem row.
     // phase 0: bits[3:0]  (unsigned nibble)
@@ -1045,15 +1055,15 @@ module Multiple_Processor #(
                 end
 
                 IM_FINAL: begin
-                    // Row/nibble from registered counters valid for this cycle.
+                    // head/nibble/matrix from registered counters (interleaved order).
                     mult_issue_idx        = (op == 2'b11) ?
-                                            {fin_row_cs[2], fin_row_cs[1:0]} :
-                                            {1'b0, fin_row_cs[1:0]};
+                                            {fin_head_cs, fin_mat_cs} :
+                                            {1'b0, fin_mat_cs};
                     mult_issue_a_unsigned = (fin_nibble_cs != 2'd2); // lo/mid unsigned
                     mult_issue_nibble     = fin_nibble_cs;
                     mult_issue_A          = extract_score_nibble(
                                                score_mem[mult_issue_idx], fin_nibble_cs);
-                    mult_issue_B          = v_mem[fin_row_cs[1:0]];
+                    mult_issue_B          = v_mem[fin_mat_cs];
                     // No head_mask in FINAL: MHA does a full 8-tap score×V dot;
                     // the per-head column split happens later in combine_mha_heads.
                     mult_issue_tag = MT_FINAL;
@@ -1066,24 +1076,34 @@ module Multiple_Processor #(
         end
     end
 
-    // ---- Per-FINAL row/nibble counters -------------------------------------
+    // ---- FINAL interleaved counters ----------------------------------------
+    // Nesting: matrix (inner) wraps into nibble (mid) wraps into head (outer).
+    // This emits matrix 0..3 back-to-back within each nibble round, so the
+    // nibble-2 round yields 4 consecutive final results.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            fin_row_cs    <= 3'd0;
+            fin_mat_cs    <= 2'd0;
             fin_nibble_cs <= 2'd0;
+            fin_head_cs   <= 1'b0;
         end
         else if (issue_valid) begin
             if (issue_mode == IM_FINAL) begin
-                if (fin_nibble_cs == 2'd2) begin
-                    fin_nibble_cs <= 2'd0;
-                    fin_row_cs    <= fin_row_cs + 1'b1;
+                if (fin_mat_cs == 2'd3) begin
+                    fin_mat_cs <= 2'd0;
+                    if (fin_nibble_cs == 2'd2) begin
+                        fin_nibble_cs <= 2'd0;
+                        fin_head_cs   <= fin_head_cs + 1'b1; // MHA: head0→head1
+                    end else begin
+                        fin_nibble_cs <= fin_nibble_cs + 1'b1;
+                    end
                 end else begin
-                    fin_nibble_cs <= fin_nibble_cs + 1'b1;
+                    fin_mat_cs <= fin_mat_cs + 1'b1;
                 end
             end else begin
                 // Reset at start of any non-FINAL issue (QKV / SV)
+                fin_mat_cs    <= 2'd0;
                 fin_nibble_cs <= 2'd0;
-                fin_row_cs    <= 3'd0;
+                fin_head_cs   <= 1'b0;
             end
         end
     end
@@ -1146,10 +1166,14 @@ module Multiple_Processor #(
     end
 
     // ---- Nibble accumulator (FINAL stage only) ------------------------------
-    // Three consecutive issues per row: phase 0 (lo, ×1), 1 (mid, ×16), 2 (hi, ×256).
-    // Accumulate per lane in s16 arithmetic; fire public mult_valid only on phase 2.
-    logic [1023:0] nibb_acc_cs;
+    // Interleaved: each matrix m has its own running accumulator. A matrix sees
+    // its 3 nibbles spaced 4 issues apart (lo ×1 → mid ×16 → hi ×256). The hi
+    // round (nibble 2) yields the 4 finals on consecutive cycles.
+    logic [1023:0] nibb_acc_cs [0:3];
     logic [1023:0] nibb_final_data;
+    logic [1:0]    fin_mat_out; // matrix index of the result currently emerging
+
+    assign fin_mat_out = mult_idx_cs[MULT_STAGES-1][1:0];
 
     // Per-lane shift helpers: multiply each 16-bit slot by 16 or 256.
     function automatic logic [1023:0] lanes_shift4(input logic [1023:0] src);
@@ -1170,18 +1194,19 @@ module Multiple_Processor #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            nibb_acc_cs <= 1024'd0;
+            for (int i = 0; i < 4; i++) nibb_acc_cs[i] <= 1024'd0;
         end else if (mult_raw_valid && (mult_tag_cs[MULT_STAGES-1] == MT_FINAL)) begin
             case (mult_nibble_cs[MULT_STAGES-1])
-                2'd0: nibb_acc_cs <= mult_raw_data;
-                2'd1: nibb_acc_cs <= nibb_acc_cs + lanes_shift4(mult_raw_data);
+                2'd0: nibb_acc_cs[fin_mat_out] <= mult_raw_data;
+                2'd1: nibb_acc_cs[fin_mat_out] <=
+                          nibb_acc_cs[fin_mat_out] + lanes_shift4(mult_raw_data);
                 default: ; // phase 2 handled combinationally; acc not updated
             endcase
         end
     end
 
-    // Combinational: phase 2 final lane-wise accumulation
-    assign nibb_final_data = nibb_acc_cs + lanes_shift8(mult_raw_data);
+    // Combinational: phase 2 final lane-wise accumulation for this matrix
+    assign nibb_final_data = nibb_acc_cs[fin_mat_out] + lanes_shift8(mult_raw_data);
 
     // Public outputs: non-FINAL passes through; FINAL only fires on phase 2.
     assign mult_valid   = mult_raw_valid &&
