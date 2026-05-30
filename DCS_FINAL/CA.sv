@@ -301,14 +301,14 @@ module CA_Control #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state_cs                <= S_IDLE;
+            state_cs               <= S_IDLE;
             ha_stage_cs            <= ST_QKV;
             ha_param_phase_cs      <= 1'b0;
-            rd_req_cnt_cs           <= 2'd0;
+            rd_req_cnt_cs          <= 2'd0;
             ha_rd_word_cnt_cs      <= 2'd0;
-            wr_cmd_cnt_cs           <= 8'd0;
-            out_cnt_cs              <= 8'd0;
-            wr_pre_pipe_cs          <= 8'd0;
+            wr_cmd_cnt_cs          <= 8'd0;
+            out_cnt_cs             <= 8'd0;
+            wr_pre_pipe_cs         <= 8'd0;
             ha_group_base_cs       <= 8'd0;
             ha_phase_cnt_cs        <= 5'd0;
             ha_wr_pipe_cs          <= 28'd0;
@@ -805,7 +805,7 @@ module CA_DataPath #(
         .mult_idx_out (mult_idx_out)
     );
 
-    ACT_ThreeStage_Parallel u_act (
+    ACT_3Stage_Parallel u_act (
         .clk       (clk),
         .rst_n     (rst_n),
         .in_valid  (act_in_valid_cs),
@@ -816,7 +816,7 @@ module CA_DataPath #(
         .out_data  (act_data)
     );
 
-    PoT_FiveStage_Parallel u_pot (
+    PoT_5Stage_Parallel u_pot (
         .clk       (clk),
         .rst_n     (rst_n),
         .in_valid  (pot_in_valid),
@@ -943,7 +943,7 @@ module Multiple_Processor #(
     output logic [2:0]     mult_idx_out
 );
 
-    // Stage 0 = registered operands; Stage 1/2 = multiplier internal pipeline.
+    // Matches Mult_3Stage_Parallel's internal depth (input buffer + 2 mult stages).
     localparam int MULT_STAGES = 3;
 
     logic          mult_issue_valid;
@@ -1108,52 +1108,26 @@ module Multiple_Processor #(
         end
     end
 
-    // ---- Stage 0: operand pipeline register --------------------------------
-    logic        op_valid_cs;
-    logic        op_btr_cs;
-    logic        op_aunsigned_cs;
-    logic        op_hmask_cs;
-    logic        op_hsel_cs;
-    logic [1:0]  op_op_cs;
-    logic [255:0] op_A_cs;
-    logic [255:0] op_B_cs;
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            op_valid_cs <= 1'b0;
-        end
-        else begin
-            op_valid_cs     <= mult_issue_valid;
-            op_btr_cs       <= mult_issue_b_transpose;
-            op_aunsigned_cs <= mult_issue_a_unsigned;
-            op_hmask_cs     <= mult_issue_head_mask;
-            op_hsel_cs      <= mult_issue_head_sel;
-            op_op_cs        <= op;
-            op_A_cs         <= mult_issue_A;
-            op_B_cs         <= mult_issue_B;
-        end
-    end
-
     // Raw multiplier outputs (before nibble accumulation)
     logic          mult_raw_valid;
     logic [1023:0] mult_raw_data;
 
-    Mult_2Stage_Parallel u_mult (
+    Mult_3Stage_Parallel u_mult (
         .clk         (clk),
         .rst_n       (rst_n),
-        .op          (op_op_cs),
-        .b_transpose (op_btr_cs),
-        .a_unsigned  (op_aunsigned_cs),
-        .head_mask   (op_hmask_cs),
-        .head_sel    (op_hsel_cs),
-        .in_valid    (op_valid_cs),
-        .in_data_A   (op_A_cs),
-        .in_data_B   (op_B_cs),
+        .op          (op),
+        .b_transpose (mult_issue_b_transpose),
+        .a_unsigned  (mult_issue_a_unsigned),
+        .head_mask   (mult_issue_head_mask),
+        .head_sel    (mult_issue_head_sel),
+        .in_valid    (mult_issue_valid),
+        .in_data_A   (mult_issue_A),
+        .in_data_B   (mult_issue_B),
         .out_valid   (mult_raw_valid),
         .out_data    (mult_raw_data)
     );
 
-    // Tag / nibble phase pipeline (mirrors operand pipeline depth = 3 stages)
+    // Tag / nibble phase pipeline (mirrors Mult_3Stage_Parallel's 3-stage depth)
     always_ff @(posedge clk) begin
         mult_tag_cs[0]    <= mult_issue_valid ? mult_issue_tag    : MT_NONE;
         mult_idx_cs[0]    <= mult_issue_idx;
@@ -1221,7 +1195,7 @@ module Multiple_Processor #(
 
 endmodule
 
-module Mult_2Stage_Parallel (
+module Mult_3Stage_Parallel (
     input  logic         clk,
     input  logic         rst_n,
     input  logic [1:0]   op,
@@ -1323,8 +1297,19 @@ module Mult_2Stage_Parallel (
         end
     endfunction
 
+    // Stage 0: input buffer (operands + control). Decouples the upstream issue mux
+    //          from the partial-product combinational cone.
     // Stage 1: 576 partial products s5×s4=s9, then register (4032 fewer flops vs s16).
     // Stage 2: per-lane 9-input add tree → s16 sum, then register.
+    logic         in_valid_cs;
+    logic [1:0]   op_cs;
+    logic         b_transpose_cs;
+    logic         a_unsigned_cs;
+    logic         head_mask_cs;
+    logic         head_sel_cs;
+    logic [255:0] in_data_A_cs;
+    logic [255:0] in_data_B_cs;
+
     logic stage1_valid_cs;
     logic stage2_valid_cs;
     s9_t  prod_cs   [0:MAT_SIZE-1][0:DOT_SIZE-1];
@@ -1338,10 +1323,10 @@ module Mult_2Stage_Parallel (
             for (int lane = 0; lane < ROW_ELEM; lane++) begin
                 for (int tap = 0; tap < DOT_SIZE; tap++) begin
                     prod_next[(row * ROW_ELEM) + lane][tap] = s9_t'(
-                        $signed(sel_a(in_data_A, op, a_unsigned,
-                                      head_mask, head_sel, row, lane, tap)) *
-                        $signed(sel_b(in_data_B, op, b_transpose,
-                                      head_mask, head_sel, lane, tap)));
+                        $signed(sel_a(in_data_A_cs, op_cs, a_unsigned_cs,
+                                      head_mask_cs, head_sel_cs, row, lane, tap)) *
+                        $signed(sel_b(in_data_B_cs, op_cs, b_transpose_cs,
+                                      head_mask_cs, head_sel_cs, lane, tap)));
                 end
             end
         end
@@ -1360,11 +1345,21 @@ module Mult_2Stage_Parallel (
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            in_valid_cs     <= 1'b0;
             stage1_valid_cs <= 1'b0;
             stage2_valid_cs <= 1'b0;
         end
         else begin
-            stage1_valid_cs <= in_valid;
+            in_valid_cs     <= in_valid;
+            op_cs           <= op;
+            b_transpose_cs  <= b_transpose;
+            a_unsigned_cs   <= a_unsigned;
+            head_mask_cs    <= head_mask;
+            head_sel_cs     <= head_sel;
+            in_data_A_cs    <= in_data_A;
+            in_data_B_cs    <= in_data_B;
+
+            stage1_valid_cs <= in_valid_cs;
             stage2_valid_cs <= stage1_valid_cs;
             for (int i = 0; i < MAT_SIZE; i++)
                 for (int t = 0; t < DOT_SIZE; t++)
@@ -1384,7 +1379,7 @@ module Mult_2Stage_Parallel (
 
 endmodule
 
-module ACT_ThreeStage_Parallel (
+module ACT_3Stage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
@@ -1684,7 +1679,8 @@ module ACT_ThreeStage_Parallel (
 
 endmodule
 
-module PoT_FiveStage_Parallel (
+
+module PoT_5Stage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
@@ -1707,12 +1703,12 @@ module PoT_FiveStage_Parallel (
     logic [15:0]   max_abs;
     logic [1023:0] src_pipe_cs [0:2];
     logic [3:0]    shift_next;
-    logic [255:0]  out_data_next;
+    logic [255:0]  out_data_ns;
 
+    // input register
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             in_valid_cs <= 1'b0;
-            in_data_cs  <= 1024'd0;
         end
         else begin
             // Do not gate in_data_cs with in_valid; avoiding the enable mux keeps
@@ -1784,8 +1780,8 @@ module PoT_FiveStage_Parallel (
     endfunction
 
     always_comb begin
-        shift_next    = pot_shift(max_abs);
-        out_data_next = quant_all(src_pipe_cs[2], shift_next);
+        shift_next   = pot_shift(max_abs);
+        out_data_ns  = quant_all(src_pipe_cs[2], shift_next);
     end
 
     Matrix_Max_3Stage_Parallel u_matrix_max (
@@ -1810,23 +1806,17 @@ module PoT_FiveStage_Parallel (
         end
     end
 
+    // clean timing output
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_valid <= 1'b0;
         end
         else begin
-            out_valid <= max_valid;
+            out_valid  <= max_valid;
+            out_data   <= out_data_ns;
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            out_data <= 256'd0;
-        end
-        else if (max_valid) begin
-            out_data <= out_data_next;
-        end
-    end
 
 endmodule
 
@@ -1917,37 +1907,25 @@ module Matrix_Max_3Stage_Parallel (
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 0; i < MAX16_COUNT; i++) begin
-                max16_cs[i] <= 16'd0;
-            end
-        end
-        else if (in_valid) begin
+
+    always_ff @(posedge clk) begin
+        if (in_valid) begin
             for (int i = 0; i < MAX16_COUNT; i++) begin
                 max16_cs[i] <= max16_ns[i];
             end
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 0; i < MAX4_COUNT; i++) begin
-                max4_cs[i] <= 16'd0;
-            end
-        end
-        else if (st1_valid) begin
+    always_ff @(posedge clk) begin
+        if (st1_valid) begin
             for (int i = 0; i < MAX4_COUNT; i++) begin
                 max4_cs[i] <= max4_ns[i];
             end
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            out_max <= 16'd0;
-        end
-        else if (st2_valid) begin
+    always_ff @(posedge clk) begin
+        if (st2_valid) begin
             out_max <= out_max_ns;
         end
     end
