@@ -7,8 +7,8 @@ m = mosspy.Moss(userid, "verilog")
 m.addBaseFile("DCS_FINAL/CA_TA.sv")
 
 # Submission Files
-m.addFile("DCS_FINAL/CA.sv")
-m.addFile("DCS_FINAL/CA_Neko.sv")
+m.addFile("../DCS_FINAL/CA.sv")
+m.addFile("../DCS_FINAL/CA_Neko.sv")
 #m.addFilesByWildcard("submission/a01-*.sv")
 
 url = m.send() # Submission Report URL
