@@ -1196,14 +1196,23 @@ module Multiple_Processor (
     );
 
     // Tag / nibble phase pipeline (mirrors Mult_3Stage_Parallel's 3-stage depth)
-    always_ff @(posedge clk) begin
-        mult_tag_cs[0]    <= mult_issue_valid ? mult_issue_tag    : MT_NONE;
-        mult_idx_cs[0]    <= mult_issue_idx;
-        mult_nibble_cs[0] <= mult_issue_nibble;
-        for (int i = 1; i < MULT_STAGES; i++) begin
-            mult_tag_cs[i]    <= mult_tag_cs[i - 1];
-            mult_idx_cs[i]    <= mult_idx_cs[i - 1];
-            mult_nibble_cs[i] <= mult_nibble_cs[i - 1];
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < MULT_STAGES; i++) begin
+                mult_tag_cs[i]    <= MT_NONE;
+                mult_idx_cs[i]    <= 3'd0;
+                mult_nibble_cs[i] <= 2'd0;
+            end
+        end
+        else begin
+            mult_tag_cs[0]    <= mult_issue_valid ? mult_issue_tag    : MT_NONE;
+            mult_idx_cs[0]    <= mult_issue_idx;
+            mult_nibble_cs[0] <= mult_issue_nibble;
+            for (int i = 1; i < MULT_STAGES; i++) begin
+                mult_tag_cs[i]    <= mult_tag_cs[i - 1];
+                mult_idx_cs[i]    <= mult_idx_cs[i - 1];
+                mult_nibble_cs[i] <= mult_nibble_cs[i - 1];
+            end
         end
     end
 
@@ -1374,7 +1383,7 @@ module Mult_3Stage_Parallel (
     //          (4608 fewer flops vs s16, 576 fewer vs s9; range fits [-120, 105]).
     // Stage 2: per-lane 9-input add tree → s16 sum, then register.
     logic         in_valid_cs;
-    // op 在一個 job 內為常數（exec_op 已 latch 在 Control），不需要 input register。
+    // op 在一個 job 內為常數（exec_op 已存在 Control），不需要 input register。
     logic         b_transpose_cs;
     logic         a_unsigned_cs;
     logic         head_mask_cs;
@@ -1699,7 +1708,7 @@ module ACT_4Stage_Parallel (
 
     // Stage 2 combinational: apply activation to all 64 lanes in parallel using
     // the stage-1 thresholds. chunk_idx fully partitions the matrix, so every
-    // element is written exactly once (no latch).
+    // element is written exactly once.
     always_comb begin
         apply_ns = matrix_cs[1];
         for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
