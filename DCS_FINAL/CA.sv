@@ -632,13 +632,13 @@ module CA_DataPath #(
     // 區塊 2：跨 issue 的中間儲存（這些是 DataPath 的「狀態」，必須留在這層）
     // ------------------------------------------------------------------------
     // x/q/k/v_mem: 4 個 256-bit slot；score_mem: 8 個 (11-bit × 64) slot。
-    // mha_out0_mem: MHA head0 FINAL 部份積，等 head1 算完再 combine。
+    // MHA head0 FINAL 部份積借用 q_mem/k_mem（SV 完 Q/K 已死），480-bit packed
+    // 拆成 q_mem(256) + k_mem[255:32](224)，省 1920 flops。
     logic [255:0]              x_mem        [0:3];
     logic [255:0]              q_mem        [0:3];
     logic [255:0]              k_mem        [0:3];
     logic [255:0]              v_mem        [0:3];
     logic [SCORE_PACK_W-1:0]   score_mem    [0:7];
-    logic [MHA_OUT_PACK_W-1:0] mha_out0_mem [0:3];
 
     logic [3:0]                q_ready_cs;
     logic [3:0]                k_ready_cs;
@@ -686,9 +686,10 @@ module CA_DataPath #(
     mult_tag_t     pot_in_tag;
     logic [2:0]    pot_in_idx;
 
-    logic          mha_comb_valid;
-    logic [1023:0] mha_comb_data;
-    logic [2:0]    mha_comb_idx;
+    logic                      mha_comb_valid;
+    logic [1023:0]             mha_comb_data;
+    logic [2:0]                mha_comb_idx;
+    logic [MHA_OUT_PACK_W-1:0] mha_head0_pack;  // packed 480-bit head0 partial
 
     logic          use_act_for_pot;
 
@@ -720,11 +721,17 @@ module CA_DataPath #(
         end
     endfunction
 
-    function automatic logic [SCORE_PACK_W-1:0] pack_score(input logic [1023:0] src);
+    // 把 attention activation (x<0 → x>>2) 跟 16→11 bit truncation 都搬到這裡
+    // combinational 做掉，SCORE 直接從 mult_data 寫進 score_mem，不過 ACT pipeline。
+    function automatic logic [SCORE_PACK_W-1:0] pack_attention_score(input logic [1023:0] src);
+        logic signed [15:0] elem;
+        logic signed [15:0] activated;
         begin
             for (int i = 0; i < 64; i++) begin
-                pack_score[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W] =
-                    src[1023 - (i * 16) - (16 - SCORE_ELEM_W) -: SCORE_ELEM_W];
+                elem      = $signed(src[1023 - (i * 16) -: 16]);
+                activated = (elem < 0) ? (elem >>> 2) : elem;
+                pack_attention_score[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W] =
+                    activated[SCORE_ELEM_W-1:0];
             end
         end
     endfunction
@@ -766,37 +773,39 @@ module CA_DataPath #(
                            (pot_tag_cs[4] == MT_FINAL));
 
     // ========================================================================
-    // 區塊 8：Mult-output dispatch (mult → ACT 或 PoT 或 mha_out0_mem)
+    // 區塊 8：Mult-output dispatch (mult → ACT / PoT / score_mem / q_mem-k_mem)
     //
-    //   MT_NORM            → ACT (USER mode, tag=MT_NORM)
-    //   MT_SCORE           → ACT (SPECIAL mode, tag=MT_SCORE)
-    //   MT_FINAL (SHA)     → ACT (USER mode, tag=MT_FINAL)
-    //   MT_FINAL (MHA h0)  → 存進 mha_out0_mem，不送 ACT
-    //   MT_FINAL (MHA h1)  → 跟 mha_out0_mem combine 後送 ACT (tag=MT_FINAL)
+    //   MT_NORM            → ACT (tag=MT_NORM)
+    //   MT_SCORE           → score_mem 直接（comb pack_attention_score，省 4 cycles）
+    //   MT_FINAL (SHA)     → ACT (tag=MT_FINAL)
+    //   MT_FINAL (MHA h0)  → 拆進 q_mem/k_mem 當 scratch，不送 ACT
+    //   MT_FINAL (MHA h1)  → 跟 q_mem/k_mem 裡的 head0 combine 後送 ACT
     //   MT_Q/K/V           → PoT (直接，不過 ACT)
     // ========================================================================
     assign mha_comb_valid = mult_valid && (op == 2'b11) &&
                             (mult_tag_out == MT_FINAL) && mult_idx_out[2];
     assign mha_comb_idx   = {1'b0, mult_idx_out[1:0]};
-    assign mha_comb_data  = combine_mha_heads(unpack_mha_out(mha_out0_mem[mult_idx_out[1:0]]),
-                                              mult_data);
+    // Head0 write packed (給 always_ff 切成 q_mem / k_mem)
+    assign mha_head0_pack = pack_mha_out(mult_data);
+    // Head0 read：從 q_mem/k_mem 拼回 480-bit（q=[479:224]、k[255:32]=[223:0]）
+    assign mha_comb_data  = combine_mha_heads(
+        unpack_mha_out({q_mem[mult_idx_out[1:0]], k_mem[mult_idx_out[1:0]][255:32]}),
+        mult_data);
 
+    // SCORE 直接走 mult → score_mem 不過 ACT，因此 ACT 入口只剩 NORM / FINAL(SHA) / MHA combined。
     assign act_in_valid = mha_comb_valid ||
                           (mult_valid &&
                            ((mult_tag_out == MT_NORM) ||
-                            (mult_tag_out == MT_SCORE) ||
                             ((mult_tag_out == MT_FINAL) && (op != 2'b11))));
     assign act_in_data  = mha_comb_valid ? mha_comb_data : mult_data;
-    assign act_in_idx   = mha_comb_valid                       ? mha_comb_idx :
-                          ((mult_tag_out == MT_FINAL) ||
-                           (mult_tag_out == MT_SCORE))         ? mult_idx_out :
-                                                                 3'd0;
+    assign act_in_idx   = mha_comb_valid              ? mha_comb_idx :
+                          (mult_tag_out == MT_FINAL)  ? mult_idx_out :
+                                                        3'd0;
 
     always_comb begin
-        // For NORM/SCORE the tag passes through; for FINAL we suppress head0
-        // of MHA (it's only stored, not sent to ACT). act_in_tag value is
-        // ignored when act_in_valid=0 (Q/K/V path), so default is harmless.
-        act_in_mode = (mult_tag_out == MT_SCORE) ? ACT_SPECIAL : ACT_USER;
+        // ACT 永遠 USER mode（SCORE 的 SPECIAL act 已內嵌進 pack_attention_score）。
+        // FINAL MHA head0 不送 ACT；其它 tag 直通。
+        act_in_mode = ACT_USER;
         act_in_tag  = ((mult_tag_out == MT_FINAL) && (op == 2'b11) && !mha_comb_valid)
                       ? MT_NONE : mult_tag_out;
     end
@@ -806,7 +815,7 @@ module CA_DataPath #(
     //
     //   MT_NORM/MT_FINAL (after ACT) → PoT (走 ACT→PoT 路徑)
     //   MT_Q/K/V (from mult, bypass ACT) → PoT 直接
-    //   MT_SCORE (after ACT) → score_mem (不走 PoT)
+    //   (MT_SCORE 已不走 ACT，直接從 mult 寫 score_mem——見區塊 11)
     // ========================================================================
     assign use_act_for_pot = act_valid &&
                              ((act_tag_cs[3] == MT_NORM) || (act_tag_cs[3] == MT_FINAL));
@@ -870,7 +879,7 @@ module CA_DataPath #(
     // 區塊 11：所有狀態更新 (always_ff)
     //   1. Issue / capture 入口 buffer
     //   2. Sideband pipeline (act_*_cs / pot_*_cs)
-    //   3. Memory writes (x/q/k/v/score/mha_out0_mem + ready flags)
+    //   3. Memory writes (x/q/k/v/score + ready flags；MHA head0 借 q/k_mem)
     //   4. Output buffer (wr_data / out_valid / out_data)
     // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
@@ -943,16 +952,19 @@ module CA_DataPath #(
                 score_ready_cs <= 8'd0;
             end
 
-            // score_mem ← ACT (MT_SCORE)
-            if (act_valid && (act_tag_cs[3] == MT_SCORE)) begin
-                score_mem[act_idx_cs[3]]      <= pack_score(act_data);
-                score_ready_cs[act_idx_cs[3]] <= 1'b1;
+            // score_mem ← Mult (MT_SCORE) — attention activation 內嵌於 pack_attention_score
+            // 省掉 ACT pipeline 4 cycles（SCORE 是 SV→FINAL 的 critical path）。
+            if (mult_valid && (mult_tag_out == MT_SCORE)) begin
+                score_mem[mult_idx_out]      <= pack_attention_score(mult_data);
+                score_ready_cs[mult_idx_out] <= 1'b1;
             end
 
-            // mha_out0_mem ← Mult (MHA FINAL head0)
+            // MHA head0 partial → 借用 q_mem/k_mem（這時 Q/K 已死，下一組 QKV
+            // 才會覆蓋）。480-bit packed: top 256 → q_mem, bottom 224 → k_mem[255:32]。
             if (mult_valid && (mult_tag_out == MT_FINAL) &&
                 (op == 2'b11) && !mult_idx_out[2]) begin
-                mha_out0_mem[mult_idx_out[1:0]] <= pack_mha_out(mult_data);
+                q_mem[mult_idx_out[1:0]] <= mha_head0_pack[MHA_OUT_PACK_W-1 -: 256];
+                k_mem[mult_idx_out[1:0]] <= {mha_head0_pack[MHA_OUT_PACK_W-257:0], 32'd0};
             end
 
             // q/k/v_mem ← PoT
