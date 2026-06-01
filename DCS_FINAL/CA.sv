@@ -166,6 +166,10 @@ module CA_Control #(
     localparam logic [BURST_BIT-1:0] BURST_4   = 3'd2;
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
+    localparam logic [4:0] HA_RESTART_SHA = 5'd15;
+    localparam logic [4:0] HA_RESTART_MHA = 5'd27;
+    localparam logic [4:0] HA_WR_SHA      = 5'd19;
+    localparam logic [4:0] HA_WR_MHA      = 5'd31;
 
     typedef enum logic [2:0] {
         S_IDLE,
@@ -191,12 +195,14 @@ module CA_Control #(
     logic [1:0]  ha_rd_word_cnt_cs;
     logic [7:0]  wr_cmd_cnt_cs;
     logic [7:0]  out_cnt_cs;
-    logic [11:0] wr_pre_pipe_cs;  // 12-bit：Multiple_Processor 輸出 reg 再加 1 拍 → tap [11]
+    logic [11:0] wr_pre_pipe_cs;  // Multiple_Processor output reg plus one cycle: tap [11].
     logic [7:0]  ha_group_base_cs;
+    // Stored at FINAL start so write-back stays on the draining group while
+    // ha_group_base_cs can advance to the next compute group.
+    logic [7:0]  ha_write_base_cs;
     logic [4:0]  ha_phase_cnt_cs;
-    // 把原本 28-bit shift register 換成 5-bit counter + run flag：
-    // ha_final_start 每組只 fire 一次，shift reg 同時最多只有 1 bit 為 1，
-    // 用 counter 等效但省 ~22 flops。
+    // Counter equivalent of the old ha_wr_pipe shift register.
+    // ha_final_start launches one timer per group; ha_wr_fire stops it.
     logic [4:0]  ha_wr_cnt_cs;
     logic        ha_wr_run_cs;
     logic        ha_prefetch_pending_cs;
@@ -208,9 +214,15 @@ module CA_Control #(
     logic        wr_pre_fire;
     logic        wr_cmd_fire;
     logic        rd_cmd_fire;
+    logic        fast_first_rd_fire;
     logic        ha_read_fire;
+    logic        ha_first_read_fire;
     logic        ha_prefetch_fire;
     logic        ha_pf_capture;
+    logic        ha_has_next_group;
+    logic        ha_next_group_fire;
+    logic        ha_wait_qkv_to_sv_fire;
+    logic        ha_wait_sv_to_final_fire;
     logic        result_last;
     logic        ha_final_start;
     logic        ha_wr_fire;
@@ -223,11 +235,15 @@ module CA_Control #(
     assign wr_pre_fire            = wr_pre_pipe_cs[11];
     assign wr_cmd_fire            = (state_cs == S_FAST_RUN) && wr_pre_fire;
     assign rd_cmd_fire            = (state_cs == S_FAST_RUN) && (rd_req_cnt_cs < 2'd2) && rd_ready;
+    assign fast_first_rd_fire     = job_start && !ha_start && rd_ready;
     assign ha_read_fire          = (state_cs == S_HA_READ) &&
                                     !ha_prefetch_pending_cs &&
                                     !ha_pf_done_cs &&
                                     (rd_req_cnt_cs == 2'd0) &&
                                     rd_ready;
+    assign ha_first_read_fire     = (state_cs == S_HA_PARAM) && in_valid &&
+                                    ha_param_phase_cs && rd_ready;
+    assign ha_has_next_group      = (ha_group_base_cs != 8'd252);
     // x_mem is released once QKV has issued, so the one-group-ahead prefetch can
     // fire as early as the QKV issue (rd_ready permitting); the 50-cycle data
     // return still lands well after QKV has finished reading x_mem.
@@ -236,24 +252,33 @@ module CA_Control #(
                                     (ha_stage_cs == ST_QKV) &&
                                     !ha_prefetch_pending_cs &&
                                     !ha_pf_done_cs &&
-                                    (ha_group_base_cs != 8'd252) &&
+                                    ha_has_next_group &&
                                     rd_ready;
     // Prefetched words land in x_mem as soon as they arrive: x_mem is free once
     // the QKV issue is done (only QKV reads it), so capture is decoupled from the
     // FSM state and the fixed 50-cycle read latency hides behind the current group.
     assign ha_pf_capture         = ha_prefetch_pending_cs && !ha_pf_done_cs && rd_valid;
-    assign ha_final_start        = (state_cs == S_HA_ISSUE) && (ha_stage_cs == ST_FINAL) &&
-                                    (ha_phase_cnt_cs == 5'd0);
-    // FINAL nibble-accumulation triples the issue count: 4→12 (SHA), 8→24 (MHA).
-    // Interleaved order pushes the first of the 4 consecutive finals to phase 8
-    // (SHA) / 20 (MHA), i.e. +8 / +16 vs the original phase-0/4 single-issue
-    // design, so the write-command tap shifts by the same amount: [7]→[15],
-    // [11]→[27]. (Empirical alignment — re-verify on gate sim.)
-    // Counter equivalent of original ha_wr_pipe_cs[15]/[27]: ha_final_start
-    // sets run=1 + cnt=0; cnt increments per cycle; fire when cnt hits target.
-    // Mult +2 + ACT +1 + Mult 輸出 reg +1 = +4 cycles，tap +4 → 31 (MHA) / 19 (SHA)。
+    assign ha_wait_qkv_to_sv_fire = (state_cs == S_HA_WAIT) &&
+                                    (ha_stage_cs == ST_QKV) &&
+                                    datapath_qkv_ready;
+    assign ha_wait_sv_to_final_fire = (state_cs == S_HA_WAIT) &&
+                                      (ha_stage_cs == ST_SV) &&
+                                      datapath_sv_ready;
+    assign ha_final_start        = ((state_cs == S_HA_ISSUE) &&
+                                    (ha_stage_cs == ST_FINAL) &&
+                                    (ha_phase_cnt_cs == 5'd0)) ||
+                                    ha_wait_sv_to_final_fire;
+    assign ha_next_group_fire    = ha_wr_run_cs &&
+                                    (ha_wr_cnt_cs == ((exec_op == 2'b11) ?
+                                                     HA_RESTART_MHA : HA_RESTART_SHA));
+    // FINAL emits useful outputs only after the high-nibble round. The next-group
+    // launch tap waits until the draining group's FINAL inputs have moved far
+    // enough through ACT/PoT that the next group's Q/K/V PoT inputs cannot collide.
+    // The write tap is later because RAM write data appears WRITE_LATENCY cycles
+    // after wr_en; ha_write_base_cs keeps the draining group's address stable.
     assign ha_wr_fire            = ha_wr_run_cs &&
-                                    (ha_wr_cnt_cs == ((exec_op == 2'b11) ? 5'd31 : 5'd19));
+                                    (ha_wr_cnt_cs == ((exec_op == 2'b11) ?
+                                                     HA_WR_MHA : HA_WR_SHA));
     assign ha_next_group_base    = ha_group_base_cs + 8'd4;
     // Issue-phase upper bound:
     //   QKV: 12 phases (4 rows × Q/K/V)
@@ -295,6 +320,19 @@ module CA_Control #(
                 endcase
             end
 
+            S_HA_WAIT: begin
+                if (ha_wait_qkv_to_sv_fire) begin
+                    datapath_issue_valid = 1'b1;
+                    datapath_issue_mode  = IM_SV;
+                    datapath_issue_idx   = 5'd0;
+                end
+                else if (ha_wait_sv_to_final_fire) begin
+                    datapath_issue_valid = 1'b1;
+                    datapath_issue_mode  = IM_FINAL;
+                    datapath_issue_idx   = 5'd0;
+                end
+            end
+
             default: begin
             end
         endcase
@@ -316,8 +354,9 @@ module CA_Control #(
             ha_rd_word_cnt_cs      <= 2'd0;
             wr_cmd_cnt_cs          <= 8'd0;
             out_cnt_cs             <= 8'd0;
-            wr_pre_pipe_cs         <= 9'd0;
+            wr_pre_pipe_cs         <= 12'd0;
             ha_group_base_cs       <= 8'd0;
+            ha_write_base_cs       <= 8'd0;
             ha_phase_cnt_cs        <= 5'd0;
             ha_wr_cnt_cs           <= 5'd0;
             ha_wr_run_cs           <= 1'b0;
@@ -326,12 +365,12 @@ module CA_Control #(
             ha_pf_done_cs          <= 1'b0;
         end
         else begin
-            // Counter update (replaces ha_wr_pipe shift register).
-            // 優先級：ha_final_start > ha_wr_fire > 計數中。state-based 清零
-            // 在 case block 內以後寫覆蓋 (SV "last assignment wins")。
+            // Timer update for next-group and write taps. State-specific resets
+            // below intentionally override these defaults in this always_ff block.
             if (ha_final_start) begin
-                ha_wr_run_cs <= 1'b1;
-                ha_wr_cnt_cs <= 5'd0;
+                ha_wr_run_cs     <= 1'b1;
+                ha_wr_cnt_cs     <= 5'd0;
+                ha_write_base_cs <= ha_group_base_cs;
             end
             else if (ha_wr_fire) begin
                 ha_wr_run_cs <= 1'b0;
@@ -368,7 +407,7 @@ module CA_Control #(
 
                         // FAST_RUN counters only; attention-specific state is
                         // initialised in S_HA_PARAM right before S_HA_READ.
-                        rd_req_cnt_cs  <= 2'd0;
+                        rd_req_cnt_cs  <= fast_first_rd_fire ? 2'd1 : 2'd0;
                         wr_cmd_cnt_cs  <= 8'd0;
                         out_cnt_cs     <= 8'd0;
                         wr_pre_pipe_cs <= 12'd0;
@@ -415,7 +454,8 @@ module CA_Control #(
                         else begin
                             exec_weight_v          <= param;
                             ha_group_base_cs       <= 8'd0;
-                            rd_req_cnt_cs           <= 2'd0;
+                            ha_write_base_cs       <= 8'd0;
+                            rd_req_cnt_cs           <= ha_first_read_fire ? 2'd1 : 2'd0;
                             ha_rd_word_cnt_cs      <= 2'd0;
                             out_cnt_cs              <= 8'd0;
                             ha_wr_cnt_cs           <= 5'd0;
@@ -467,7 +507,7 @@ module CA_Control #(
                     case (ha_stage_cs)
                         ST_QKV: begin
                             if (datapath_qkv_ready) begin
-                                ha_phase_cnt_cs <= 5'd0;
+                                ha_phase_cnt_cs <= 5'd1;
                                 ha_stage_cs     <= ST_SV;
                                 state_cs         <= S_HA_ISSUE;
                             end
@@ -475,31 +515,32 @@ module CA_Control #(
 
                         ST_SV: begin
                             if (datapath_sv_ready) begin
-                                ha_phase_cnt_cs <= 5'd0;
-                                ha_wr_cnt_cs    <= 5'd0;
-                                ha_wr_run_cs    <= 1'b0;
-                                ha_stage_cs     <= ST_FINAL;
+                                ha_phase_cnt_cs  <= 5'd1;
+                                ha_wr_cnt_cs     <= 5'd0;
+                                ha_wr_run_cs     <= 1'b1;
+                                ha_write_base_cs <= ha_group_base_cs;
+                                ha_stage_cs      <= ST_FINAL;
                                 state_cs         <= S_HA_ISSUE;
                             end
                         end
 
-                        default: begin  // ST_FINAL: write back, advance group / finish.
-                            if (datapath_result_valid) begin
-                                if (out_cnt_cs[1:0] == 2'd3) begin
-                                    if (ha_group_base_cs == 8'd252) begin
-                                        state_cs <= S_IDLE;
-                                    end
-                                    else begin
-                                        ha_group_base_cs  <= ha_next_group_base;
-                                        rd_req_cnt_cs      <= ha_prefetch_pending_cs ? 2'd1 : 2'd0;
-                                        ha_rd_word_cnt_cs <= 2'd0;
-                                        state_cs           <= S_HA_READ;
-                                    end
+                        default: begin  // ST_FINAL: drain current result while next group starts.
+                            if (ha_has_next_group && ha_next_group_fire) begin
+                                ha_group_base_cs  <= ha_next_group_base;
+                                rd_req_cnt_cs      <= ha_prefetch_pending_cs ? 2'd1 : 2'd0;
+                                ha_rd_word_cnt_cs <= 2'd0;
+                                ha_phase_cnt_cs   <= 5'd0;
+                                ha_stage_cs       <= ST_QKV;
+                                if (ha_pf_done_cs) begin
+                                    ha_pf_done_cs    <= 1'b0;
+                                    state_cs        <= S_HA_ISSUE;
                                 end
-
-                                if (out_cnt_cs != 8'd255) begin
-                                    out_cnt_cs <= out_cnt_cs + 1'b1;
+                                else begin
+                                    state_cs <= S_HA_READ;
                                 end
+                            end
+                            else if (!ha_has_next_group && result_last) begin
+                                state_cs <= S_IDLE;
                             end
                         end
                     endcase
@@ -509,11 +550,15 @@ module CA_Control #(
                     state_cs <= S_IDLE;
                 end
             endcase
+
+            if (exec_op[1] && datapath_result_valid && (out_cnt_cs != 8'd255)) begin
+                out_cnt_cs <= out_cnt_cs + 1'b1;
+            end
         end
     end
 
-    // All RAM-read command outputs (rd_en/rd_burst/rd_addr) live here. The three
-    // fire conditions are mutually exclusive (each gated on a distinct state), so
+    // All RAM-read command outputs (rd_en/rd_burst/rd_addr) live here. The fire
+    // conditions are mutually exclusive (each gated on a distinct state), so
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rd_en <= 1'b0;
@@ -521,10 +566,20 @@ module CA_Control #(
         else begin
             rd_en    <= 1'b0;
             rd_burst <= '0;
-            if (rd_cmd_fire) begin
+            if (fast_first_rd_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_128;
+                rd_addr  <= '0;
+            end
+            else if (rd_cmd_fire) begin
                 rd_en    <= 1'b1;
                 rd_burst <= BURST_128;
                 rd_addr  <= rd_req_cnt_cs[0] ? HALF_ADDR : '0;
+            end
+            else if (ha_first_read_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_4;
+                rd_addr  <= '0;
             end
             else if (ha_read_fire) begin
                 rd_en    <= 1'b1;
@@ -553,7 +608,7 @@ module CA_Control #(
             // Attention: one BURST_4 per group, timed by ha_wr_cnt_cs.
             if (ha_wr_fire) begin
                 wr_en    <= 1'b1;
-                wr_addr  <= ha_group_base_cs[ADDR_W-1:0];
+                wr_addr  <= ha_write_base_cs[ADDR_W-1:0];
                 wr_burst <= BURST_4;
             end
 
@@ -643,6 +698,10 @@ module CA_DataPath #(
     logic [3:0]                k_ready_cs;
     logic [3:0]                v_ready_cs;
     logic [7:0]                score_ready_cs;
+    logic [3:0]                q_ready_ns;
+    logic [3:0]                k_ready_ns;
+    logic [3:0]                v_ready_ns;
+    logic [7:0]                score_ready_ns;
 
     // ------------------------------------------------------------------------
     // 區塊 3：Submodule output 線（comb，從各 submodule 出來的訊號）
@@ -765,8 +824,28 @@ module CA_DataPath #(
     // ========================================================================
     // 區塊 7：Ready / result_valid 給 Control 看的回報訊號
     // ========================================================================
-    assign qkv_ready    = (&q_ready_cs) && (&k_ready_cs) && (&v_ready_cs);
-    assign sv_ready     = (op == 2'b11) ? (&score_ready_cs) : (&score_ready_cs[3:0]);
+    always_comb begin
+        q_ready_ns     = q_ready_cs;
+        k_ready_ns     = k_ready_cs;
+        v_ready_ns     = v_ready_cs;
+        score_ready_ns = score_ready_cs;
+
+        if (pot_valid) begin
+            case (pot_tag_cs[4])
+                MT_Q: q_ready_ns[pot_idx_cs[4][1:0]] = 1'b1;
+                MT_K: k_ready_ns[pot_idx_cs[4][1:0]] = 1'b1;
+                MT_V: v_ready_ns[pot_idx_cs[4][1:0]] = 1'b1;
+                default: begin end
+            endcase
+        end
+
+        if (mult_valid && (mult_tag_out == MT_SCORE)) begin
+            score_ready_ns[mult_idx_out] = 1'b1;
+        end
+    end
+
+    assign qkv_ready    = (&q_ready_ns) && (&k_ready_ns) && (&v_ready_ns);
+    assign sv_ready     = (op == 2'b11) ? (&score_ready_ns) : (&score_ready_ns[3:0]);
     assign result_valid = pot_valid &&
                           ((pot_tag_cs[4] == MT_NORM) ||
                            (pot_tag_cs[4] == MT_FINAL));
@@ -1029,10 +1108,9 @@ module Multiple_Processor (
 
     logic          mult_issue_valid;
     logic          mult_issue_b_transpose;
-    logic          mult_issue_a_unsigned;  // 1 = lo/mid nibble (zero-extend A)
     logic [255:0]  mult_issue_A;           // raw 4-bit packed (before s5 extension)
     logic [255:0]  mult_issue_B;
-    logic [319:0]  mult_issue_A_s5;        // 5-bit packed: a_unsigned applied here
+    logic [319:0]  mult_issue_A_s5;        // 5-bit packed A for the multiplier
     mult_tag_t     mult_issue_tag;
     logic [2:0]    mult_issue_idx;
     logic [1:0]    mult_issue_nibble;      // FINAL nibble phase 0/1/2
@@ -1051,11 +1129,20 @@ module Multiple_Processor (
     logic [1:0] fin_nibble_cs; // 0=lo, 1=mid, 2=hi (middle)
     logic       fin_head_cs;   // MHA head 0/1 (outermost; SHA stays 0)
 
-    // Extract one packed-4-bit nibble vector (64 lanes × 4 bit) from score_mem row.
-    // phase 0: bits[3:0]  (unsigned nibble)
-    // phase 1: bits[7:4]  (unsigned nibble)
-    // phase 2: sign_extend(bits[10:8] from 3-bit to 4-bit)  (signed nibble)
-    function automatic logic [255:0] extract_score_nibble(
+    // Signed 4-bit packed vector to the multiplier's 5-bit A format.
+    function automatic logic [319:0] sign_extend_s4_vec(input logic [255:0] src);
+        begin
+            for (int e = 0; e < 64; e++) begin
+                sign_extend_s4_vec[319 - (e * 5) -: 5] = {
+                    src[255 - (e * 4)], src[255 - (e * 4) -: 4]
+                };
+            end
+        end
+    endfunction
+
+    // Extract one score nibble vector directly as 5-bit packed A.
+    // phase 0/1 are unsigned nibbles; phase 2 is signed bits[10:8].
+    function automatic logic [319:0] extract_score_nibble_s5(
         input logic [703:0] src,
         input logic [1:0]   phase
     );
@@ -1064,9 +1151,15 @@ module Multiple_Processor (
             for (int s = 0; s < 64; s++) begin
                 ls = src[703 - (s * 11) -: 11];
                 case (phase)
-                    2'd0:    extract_score_nibble[255 - (s * 4) -: 4] = ls[3:0];
-                    2'd1:    extract_score_nibble[255 - (s * 4) -: 4] = ls[7:4];
-                    default: extract_score_nibble[255 - (s * 4) -: 4] = {ls[10], ls[10:8]};
+                    2'd0: begin
+                        extract_score_nibble_s5[319 - (s * 5) -: 5] = {1'b0, ls[3:0]};
+                    end
+                    2'd1: begin
+                        extract_score_nibble_s5[319 - (s * 5) -: 5] = {1'b0, ls[7:4]};
+                    end
+                    default: begin
+                        extract_score_nibble_s5[319 - (s * 5) -: 5] = {{2{ls[10]}}, ls[10:8]};
+                    end
                 endcase
             end
         end
@@ -1075,8 +1168,8 @@ module Multiple_Processor (
     always_comb begin
         mult_issue_valid       = 1'b0;
         mult_issue_b_transpose = 1'b0;
-        mult_issue_a_unsigned  = 1'b0;
         mult_issue_A           = 256'd0;
+        mult_issue_A_s5        = 320'd0;
         mult_issue_B           = 256'd0;
         mult_issue_tag         = MT_NONE;
         mult_issue_idx         = 3'd0;
@@ -1088,6 +1181,7 @@ module Multiple_Processor (
             case (issue_mode)
                 IM_NORM: begin
                     mult_issue_A   = rd_data;
+                    mult_issue_A_s5 = sign_extend_s4_vec(rd_data);
                     mult_issue_B   = param;
                     mult_issue_tag = MT_NORM;
                 end
@@ -1100,6 +1194,7 @@ module Multiple_Processor (
                         default:             mult_issue_idx = 3'd3;
                     endcase
                     mult_issue_A = x_mem[mult_issue_idx[1:0]];
+                    mult_issue_A_s5 = sign_extend_s4_vec(mult_issue_A);
 
                     case (issue_idx)
                         5'd0, 5'd3, 5'd6, 5'd9: begin
@@ -1141,6 +1236,7 @@ module Multiple_Processor (
                     else begin
                         mult_issue_idx = {1'b0, issue_idx[1:0]};
                     end
+                    mult_issue_A_s5        = sign_extend_s4_vec(mult_issue_A);
                     mult_issue_b_transpose = 1'b1;
                     mult_issue_tag         = MT_SCORE;
                 end
@@ -1150,9 +1246,8 @@ module Multiple_Processor (
                     mult_issue_idx        = (op == 2'b11) ?
                                             {fin_head_cs, fin_mat_cs} :
                                             {1'b0, fin_mat_cs};
-                    mult_issue_a_unsigned = (fin_nibble_cs != 2'd2); // lo/mid unsigned
                     mult_issue_nibble     = fin_nibble_cs;
-                    mult_issue_A          = extract_score_nibble(
+                    mult_issue_A_s5       = extract_score_nibble_s5(
                                                score_mem[mult_issue_idx], fin_nibble_cs);
                     mult_issue_B          = v_mem[fin_mat_cs];
                     // No head_mask in FINAL: MHA does a full 8-tap score×V dot;
@@ -1196,21 +1291,6 @@ module Multiple_Processor (
                 fin_nibble_cs <= 2'd0;
                 fin_head_cs   <= 1'b0;
             end
-        end
-    end
-
-    // Pre-extend mat_A to 5-bit packed at issue stage so the multiplier no longer
-    // sees a_unsigned / head_mask MUX in front of the partial-product cone.
-    //   a_unsigned=1 (FINAL lo/mid): MSB = 0 (zero-extend nibble)
-    //   a_unsigned=0:                MSB = raw4[3] (sign-extend)
-    always_comb begin
-        mult_issue_A_s5 = 320'd0;
-        for (int e = 0; e < 64; e++) begin
-            // {MSB, raw4}：a_unsigned=1 → MSB=0；否則 MSB = nibble[3] (sign bit)
-            mult_issue_A_s5[319 - e*5 -: 5] = {
-                mult_issue_a_unsigned ? 1'b0 : mult_issue_A[255 - e*4],
-                mult_issue_A[255 - e*4 -: 4]
-            };
         end
     end
 
@@ -1563,6 +1643,10 @@ module ACT_4Stage_Parallel (
     // 看是 4-stage：input_buf → psum → threshold → apply)。
     logic          in_valid_buf;
     logic [1:0]    act_buf;
+    // Duplicated stage-0 selects reduce fanout from the ACT selector into the
+    // pair-sum mux/add logic. Keep them separate so synthesis does not merge
+    // the equivalent registers back into one high-fanout driver.
+    (* dont_touch = "true" *) logic [1:0] act_chunk_buf [0:NUM_CHUNK-1];
     logic [1:0]    mode_buf;
     logic [1023:0] in_data_buf;
 
@@ -1785,8 +1869,10 @@ module ACT_4Stage_Parallel (
     always_comb begin
         for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
             for (int p = 0; p < 4; p++) begin
-                pair_a_ns[chunk][p] = chunk_half_sum(in_data_buf, act_buf, chunk, p, 0);
-                pair_b_ns[chunk][p] = chunk_half_sum(in_data_buf, act_buf, chunk, p, 1);
+                pair_a_ns[chunk][p] = chunk_half_sum(
+                    in_data_buf, act_chunk_buf[chunk], chunk, p, 0);
+                pair_b_ns[chunk][p] = chunk_half_sum(
+                    in_data_buf, act_chunk_buf[chunk], chunk, p, 1);
             end
         end
     end
@@ -1850,6 +1936,7 @@ module ACT_4Stage_Parallel (
                 matrix_cs[i] <= 1024'd0;
             end
             for (int c = 0; c < NUM_CHUNK; c++) begin
+                act_chunk_buf[c] <= 2'd0;
                 for (int p = 0; p < 4; p++) begin
                     pair_a_cs[c][p] <= 17'sd0;
                     pair_b_cs[c][p] <= 17'sd0;
@@ -1865,6 +1952,9 @@ module ACT_4Stage_Parallel (
             act_buf      <= act;
             mode_buf     <= act_mode;
             in_data_buf  <= in_data;
+            for (int c = 0; c < NUM_CHUNK; c++) begin
+                act_chunk_buf[c] <= act;
+            end
 
             // Stage 0: pair sums (act-MUX + 1 add level)，capture matrix。
             valid_cs[0]  <= in_valid_buf;
