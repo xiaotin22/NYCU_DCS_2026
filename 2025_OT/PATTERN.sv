@@ -19,6 +19,7 @@ logic signed [7:0] gold_out [0:`TOTAL_NUM-1];
 
 integer out_count;
 integer latency;
+integer total_latency;
 
 // ============================================================
 // Clock Generation
@@ -36,15 +37,13 @@ initial begin
     // 2. 執行 Reset 
     reset_task();
     
-    // 3. 開始餵資料
-    drive_inputs();
+    fork
+        // 3. 開始餵資料
+        drive_inputs();
 
-    // 4. 等待並檢查輸出
-    wait_and_check_outputs();
-    
-    // 5. 全部正確結束
-    YOU_PASS_TASK();
-    $finish;
+        // 4. 等待並檢查輸出
+        wait_and_check_outputs();
+    join
 end
 
 // ============================================================
@@ -111,9 +110,9 @@ begin
     
     // 檢查 Reset 後輸出是否皆為 0
     if (out_valid !== 1'b0 || out_data !== 8'd0) begin
-        $display("=================================================");
+        $display("======================================================================================================================");
         $display(" MISTAKE: Output is not zero after reset.");
-        $display("=================================================");
+        $display("======================================================================================================================");
         $finish;
     end
     
@@ -142,17 +141,20 @@ task automatic wait_and_check_outputs();
 begin
     out_count = 0;
     latency = 0;
+    wait (in_valid === 1'b1);
+    total_latency = 0;
     
     // 檢查第一筆輸出前的 Latency (不可超過 100 cycles)
     while (out_valid !== 1'b1) begin
         if (in_valid === 1'b1) latency++;
         if (latency > 100) begin
             YOU_FAIL_TASK();
-            $display("=================================================");
+            $display("======================================================================================================================");
             $display(" MISTAKE: Execution latency > 100 cycles.");
-            $display("=================================================");
+            $display("======================================================================================================================");
             $finish;
         end
+        total_latency++;
         @(negedge clk);
     end
     
@@ -160,36 +162,44 @@ begin
     while (out_count < `TOTAL_NUM) begin
         if (out_valid !== 1'b1) begin
             YOU_FAIL_TASK();
-            $display("=================================================");
+            $display("======================================================================================================================");
             $display(" MISTAKE: out_valid drops at cycle %0d", out_count);
-            $display("=================================================");
+            $display("======================================================================================================================");
             $finish;
         end
         
         if (out_data !== gold_out[out_count]) begin
             YOU_FAIL_TASK();
-            $display("=================================================");
+            $display("======================================================================================================================");
             $display(" WRONG ANSWER at data index: %0d", out_count);
             $display(" Expected: %d, but got: %d", gold_out[out_count], out_data);
-            $display("=================================================");
+            $display("======================================================================================================================");
             $finish;
         end else begin
-            $display("\033[32mPASS\033[0m data index: %0d, output: %d", out_count, out_data);
+            $display("\033[32m PASS PATTERN: %0d, \033[0m Data index: %0d", out_count / 8 , out_count[2:0]);
         end
         
         out_count++;
+        total_latency++;
         @(negedge clk);
     end
     
     // 檢查輸出完成後是否乖乖降下 valid 且歸零
     if (out_valid !== 1'b0 || out_data !== 8'd0) begin
         YOU_FAIL_TASK();
-        $display("=================================================");
+        $display("======================================================================================================================");
         $display(" MISTAKE: out_valid or out_data not reset to 0 after finishing.");
-        $display("=================================================");
+        $display("======================================================================================================================");
         $finish;
     end
 
+    YOU_PASS_TASK();
+    $display ("----------------------------------------------------------------------------------------------------------------------");
+    $display ("                                                  Congratulations!                 					             ");
+    $display ("                                           You have passed all patterns!          					             ");
+    $display ("                                Cycle Time = %.1f ns , execution cycles = %6d cycles        					         ", `CLK_CYCLE ,total_latency);
+    $display ("----------------------------------------------------------------------------------------------------------------------");
+    $finish;    
 end
 endtask
 
