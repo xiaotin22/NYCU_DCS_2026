@@ -77,10 +77,13 @@ assign det_inv = inv_mod64(arshift6_w12(det_r, det_tz));
 assign sol1    = mul_mod64(arshift6_w16(num_x1_r, det_tz), det_inv);
 assign sol2    = mul_mod64(arshift6_w16(num_x2_r, det_tz), det_inv);
 
-logic signed [9:0] x0_num;
+// x0_num holds a0*x0 (the only value that matters), |a0*x0| <= 124 -> 8 bits.
+// Intermediate terms can overflow 8 bits, but the final result is in range so
+// the 2's-complement (mod-256) truncation is exact.
+logic signed [7:0] x0_num;
 logic signed [5:0] sol0;
 
-assign x0_num = $signed({{3{d0_r[6]}}, d0_r}) - b0_r*sol1 - c0_r*sol2;
+assign x0_num = $signed({d0_r[6], d0_r}) - b0_r*sol1 - c0_r*sol2;
 assign sol0   = div_by_pivot(x0_num, a0_r);
 
 assign a0 = in_data_eq0[2:0];
@@ -204,7 +207,7 @@ function automatic [5:0] inv_mod64(input [5:0] v);
     end
 endfunction
 
-function automatic signed [5:0] div_by_pivot(input signed [9:0] num, input signed [2:0] a0);
+function automatic signed [5:0] div_by_pivot(input signed [7:0] num, input signed [2:0] a0);
     begin
         case (a0)
             3'b001: div_by_pivot = num[5:0];                  // /(+1)
@@ -221,7 +224,7 @@ endfunction
 
 
 //-------------------------------------------------------------------------
-// FSM + pipeline registers (single block: the structure DC optimizes best)
+// DFF Update
 //-------------------------------------------------------------------------
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -234,15 +237,11 @@ always_ff @(posedge clk or negedge rst_n) begin
             out_valid <= 1'b1;
         end else if (in_valid) begin
             state_cs      <= S_OUT;
-            a0_r          <= a0;
-            b0_r          <= b0;
-            c0_r          <= c0;
-            d0_r          <= d0;
-            det_r         <= det;
-            num_x1_r      <= num_x1;
-            num_x2_r      <= num_x2;
-            row1_contra_r <= row1_contra;
-            row2_contra_r <= row2_contra;
+            a0_r <= a0; b0_r<= b0;
+            c0_r <= c0; d0_r <= d0;
+            det_r <= det;
+            num_x1_r <= num_x1; num_x2_r <= num_x2;
+            row1_contra_r <= row1_contra; row2_contra_r <= row2_contra;
         end
     end
 end
