@@ -628,12 +628,12 @@ endmodule
 // 角色：純路由 + 中間儲存 + 三個 compute submodule 的 dispatch / collect
 //
 // Pipeline 全圖（從 issue/capture 進來算起）：
-//   Multiple_Processor: in→[1 issue buf]→[3 mult stages]            → mult_valid  (cycle 4)
-//   ACT_4Stage_Parallel: in→[1 input buf]→[3 act stages]            → act_valid   (cycle 4)
+//   Multiple_Processor: in→[1 issue buf]→[5 mult stages]→[1 output reg] → mult_valid
+//   ACT_5Stage_Parallel: in→[1 input buf]→[4 act stages]                → act_valid
 //   PoT_5Stage_Parallel: in+abs→[1 input buf]→[3 max stages]→[1 final] → pot_valid (cycle 5)
 //
 // Sideband (tag/idx) pipeline 長度跟著走：
-//   act_*_cs[0..3]  → 4 級 (對齊 ACT 4-stage)
+//   act_*_cs[0..4]  → 5 級 (對齊 ACT 5-stage)
 //   pot_*_cs[0..4]  → 5 級 (對齊 PoT 5-stage)
 //
 // FF 分配原則：
@@ -753,7 +753,7 @@ module CA_DataPath #(
 
     // ------------------------------------------------------------------------
     // 區塊 6：Sideband pipeline (跟 ACT/PoT 的延遲對齊)
-    //   act_*_cs: 4 級 (input buf + 3 stages)
+    //   act_*_cs: 5 級 (input buf + 4 stages)
     //   pot_*_cs: 5 級 (input buf + Matrix_Max 3 stages + final 1 stage)
     // ------------------------------------------------------------------------
     mult_tag_t     act_tag_cs [0:4];  // ACT 5-stage (input_buf + pair + psum + thr + apply)
@@ -933,7 +933,7 @@ module CA_DataPath #(
         .mult_idx_out (mult_idx_out)
     );
 
-    ACT_4Stage_Parallel u_act (
+    ACT_5Stage_Parallel u_act (
         .clk       (clk),
         .rst_n     (rst_n),
         .in_valid  (act_in_valid),   // comb 直接進，input buffer 在 ACT 內
@@ -1298,7 +1298,7 @@ module Multiple_Processor (
     logic          mult_raw_valid;
     logic [1023:0] mult_raw_data;
 
-    Mult_3Stage_Parallel u_mult (
+    Mult_5Stage_Parallel u_mult (
         .clk         (clk),
         .rst_n       (rst_n),
         .op          (op),
@@ -1408,7 +1408,7 @@ module Multiple_Processor (
 
 endmodule
 
-module Mult_3Stage_Parallel (
+module Mult_5Stage_Parallel (
     input  logic         clk,
     input  logic         rst_n,
     input  logic [1:0]   op,
@@ -1614,7 +1614,7 @@ module Mult_3Stage_Parallel (
     end
 endmodule
 
-module ACT_4Stage_Parallel (
+module ACT_5Stage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
