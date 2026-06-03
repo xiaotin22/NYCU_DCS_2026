@@ -55,7 +55,7 @@ module CA #(
 
     logic          datapath_issue_valid;
     issue_mode_t   datapath_issue_mode;
-    logic [3:0]    datapath_issue_idx;
+    logic [4:0]    datapath_issue_idx;
     logic          datapath_capture_valid;
     logic [1:0]    datapath_capture_idx;
     logic          datapath_qkv_ready;
@@ -150,7 +150,7 @@ module CA_Control #(
     output logic [255:0]                    exec_weight_v,
     output logic                            datapath_issue_valid,
     output issue_mode_t                     datapath_issue_mode,
-    output logic [3:0]                      datapath_issue_idx,
+    output logic [4:0]                      datapath_issue_idx,
     output logic                            datapath_capture_valid,
     output logic [1:0]                      datapath_capture_idx,
 
@@ -166,95 +166,136 @@ module CA_Control #(
     localparam logic [BURST_BIT-1:0] BURST_4   = 3'd2;
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
+    localparam logic [4:0] HA_RESTART_SHA = 5'd15;
+    localparam logic [4:0] HA_RESTART_MHA = 5'd27;
+    localparam logic [4:0] HA_WR_SHA      = 5'd19;
+    localparam logic [4:0] HA_WR_MHA      = 5'd31;
 
     typedef enum logic [2:0] {
         S_IDLE,
         S_FAST_RUN,
-        S_ATT_PARAM,
-        S_ATT_READ,
-        S_ATT_ISSUE,
-        S_ATT_WAIT
+        S_HA_PARAM,
+        S_HA_READ,
+        S_HA_ISSUE,
+        S_HA_WAIT
     } state_t;
 
-    // QKV / score / context all share one issue+wait skeleton; att_stage_q says
-    // which matmul stage S_ATT_ISSUE/S_ATT_WAIT are currently running.
+    // QKV / score / context all share one issue+wait skeleton; ha_stage_cs says
+    // which matmul stage S_HA_ISSUE/S_HA_WAIT are currently running.
     typedef enum logic [1:0] {
         ST_QKV,
         ST_SV,
         ST_FINAL
-    } att_stage_t;
+    } ha_stage_t;
 
-    state_t      state_q;
-    att_stage_t  att_stage_q;
-    logic        att_param_phase_q;
-    logic [1:0]  rd_req_cnt_q;
-    logic [1:0]  att_rd_word_cnt_q;
-    logic [7:0]  wr_cmd_cnt_q;
-    logic [7:0]  out_cnt_q;
-    logic [9:0]  wr_pre_pipe_q;
-    logic [7:0]  att_group_base_q;
-    logic [3:0]  att_phase_cnt_q;
-    logic [13:0] att_wr_pipe_q;
-    logic        att_prefetch_pending_q;
-    logic [1:0]  att_pf_word_q;
-    logic        att_pf_done_q;
+    state_t      state_cs;
+    ha_stage_t  ha_stage_cs;
+    logic        ha_param_phase_cs;
+    logic [1:0]  rd_req_cnt_cs;
+    logic [1:0]  ha_rd_word_cnt_cs;
+    logic [7:0]  wr_cmd_cnt_cs;
+    logic [7:0]  out_cnt_cs;
+    logic [11:0] wr_pre_pipe_cs;  // Multiple_Processor output reg plus one cycle: tap [11].
+    logic [7:0]  ha_group_base_cs;
+    // Stored at FINAL start so write-back stays on the draining group while
+    // ha_group_base_cs can advance to the next compute group.
+    logic [7:0]  ha_write_base_cs;
+    logic [4:0]  ha_phase_cnt_cs;
+    // Counter equivalent of the old ha_wr_pipe shift register.
+    // ha_final_start launches one timer per group; ha_wr_fire stops it.
+    logic [4:0]  ha_wr_cnt_cs;
+    logic        ha_wr_run_cs;
+    logic        ha_prefetch_pending_cs;
+    logic [1:0]  ha_pf_word_cs;
+    logic        ha_pf_done_cs;
 
     logic        job_start;
-    logic        attention_start;
+    logic        ha_start;
     logic        wr_pre_fire;
     logic        wr_cmd_fire;
     logic        rd_cmd_fire;
-    logic        att_read_fire;
-    logic        att_prefetch_fire;
-    logic        att_pf_capture;
+    logic        fast_first_rd_fire;
+    logic        ha_read_fire;
+    logic        ha_first_read_fire;
+    logic        ha_prefetch_fire;
+    logic        ha_pf_capture;
+    logic        ha_has_next_group;
+    logic        ha_next_group_fire;
+    logic        ha_wait_qkv_to_sv_fire;
+    logic        ha_wait_sv_to_final_fire;
     logic        result_last;
-    logic        att_final_start;
-    logic        att_wr_fire;
-    logic [7:0]  att_next_group_base;
-    logic [3:0]  att_phase_last;
+    logic        ha_final_start;
+    logic        ha_wr_fire;
+    logic [7:0]  ha_next_group_base;
+    logic [4:0]  ha_phase_last;
 
-    assign job_start              = (state_q == S_IDLE) && mem_set && in_valid;
-    assign attention_start        = job_start && ((op == 2'b10) || (op == 2'b11));
-    assign result_last            = datapath_result_valid && (out_cnt_q == 8'd255);
-    assign wr_pre_fire            = wr_pre_pipe_q[9];
-    assign wr_cmd_fire            = (state_q == S_FAST_RUN) && wr_pre_fire;
-    assign rd_cmd_fire            = (state_q == S_FAST_RUN) && (rd_req_cnt_q < 2'd2) && rd_ready;
-    assign att_read_fire          = (state_q == S_ATT_READ) &&
-                                    !att_prefetch_pending_q &&
-                                    !att_pf_done_q &&
-                                    (rd_req_cnt_q == 2'd0) &&
+    assign job_start              = (state_cs == S_IDLE) && mem_set && in_valid;
+    assign ha_start        = job_start && ((op == 2'b10) || (op == 2'b11));
+    assign result_last            = datapath_result_valid && (out_cnt_cs == 8'd255);
+    assign wr_pre_fire            = wr_pre_pipe_cs[11];
+    assign wr_cmd_fire            = (state_cs == S_FAST_RUN) && wr_pre_fire;
+    assign rd_cmd_fire            = (state_cs == S_FAST_RUN) && (rd_req_cnt_cs < 2'd2) && rd_ready;
+    assign fast_first_rd_fire     = job_start && !ha_start && rd_ready;
+    assign ha_read_fire          = (state_cs == S_HA_READ) &&
+                                    !ha_prefetch_pending_cs &&
+                                    !ha_pf_done_cs &&
+                                    (rd_req_cnt_cs == 2'd0) &&
                                     rd_ready;
-    // x_buf is released once QKV has issued, so the one-group-ahead prefetch can
+    assign ha_first_read_fire     = (state_cs == S_HA_PARAM) && in_valid &&
+                                    ha_param_phase_cs && rd_ready;
+    assign ha_has_next_group      = (ha_group_base_cs != 8'd252);
+    // x_mem is released once QKV has issued, so the one-group-ahead prefetch can
     // fire as early as the QKV issue (rd_ready permitting); the 50-cycle data
-    // return still lands well after QKV has finished reading x_buf.
-    assign att_prefetch_fire      = ((state_q == S_ATT_ISSUE) ||
-                                     (state_q == S_ATT_WAIT)) &&
-                                    (att_stage_q == ST_QKV) &&
-                                    !att_prefetch_pending_q &&
-                                    !att_pf_done_q &&
-                                    (att_group_base_q != 8'd252) &&
+    // return still lands well after QKV has finished reading x_mem.
+    assign ha_prefetch_fire      = ((state_cs == S_HA_ISSUE) ||
+                                     (state_cs == S_HA_WAIT)) &&
+                                    (ha_stage_cs == ST_QKV) &&
+                                    !ha_prefetch_pending_cs &&
+                                    !ha_pf_done_cs &&
+                                    ha_has_next_group &&
                                     rd_ready;
-    // Prefetched words land in x_buf as soon as they arrive: x_buf is free once
+    // Prefetched words land in x_mem as soon as they arrive: x_mem is free once
     // the QKV issue is done (only QKV reads it), so capture is decoupled from the
     // FSM state and the fixed 50-cycle read latency hides behind the current group.
-    assign att_pf_capture         = att_prefetch_pending_q && !att_pf_done_q && rd_valid;
-    assign att_final_start        = (state_q == S_ATT_ISSUE) && (att_stage_q == ST_FINAL) &&
-                                    (att_phase_cnt_q == 4'd0);
-    assign att_wr_fire            = (exec_op == 2'b11) ? att_wr_pipe_q[13] : att_wr_pipe_q[9];
-    assign att_next_group_base    = att_group_base_q + 8'd4;
-    // Issue-phase upper bound: QKV always issues 12 phases (4 rows × Q/K/V);
-    // SV/FINAL issue 8 for MHA (2 heads × 4 rows) or 4 for SHA.
-    assign att_phase_last         = (att_stage_q == ST_QKV) ? 4'd11 :
-                                    (exec_op == 2'b11)      ? 4'd7  : 4'd3;
+    assign ha_pf_capture         = ha_prefetch_pending_cs && !ha_pf_done_cs && rd_valid;
+    assign ha_wait_qkv_to_sv_fire = (state_cs == S_HA_WAIT) &&
+                                    (ha_stage_cs == ST_QKV) &&
+                                    datapath_qkv_ready;
+    assign ha_wait_sv_to_final_fire = (state_cs == S_HA_WAIT) &&
+                                      (ha_stage_cs == ST_SV) &&
+                                      datapath_sv_ready;
+    assign ha_final_start        = ((state_cs == S_HA_ISSUE) &&
+                                    (ha_stage_cs == ST_FINAL) &&
+                                    (ha_phase_cnt_cs == 5'd0)) ||
+                                    ha_wait_sv_to_final_fire;
+    assign ha_next_group_fire    = ha_wr_run_cs &&
+                                    (ha_wr_cnt_cs == ((exec_op == 2'b11) ?
+                                                     HA_RESTART_MHA : HA_RESTART_SHA));
+    // FINAL emits useful outputs only after the high-nibble round. The next-group
+    // launch tap waits until the draining group's FINAL inputs have moved far
+    // enough through ACT/PoT that the next group's Q/K/V PoT inputs cannot collide.
+    // The write tap is later because RAM write data appears WRITE_LATENCY cycles
+    // after wr_en; ha_write_base_cs keeps the draining group's address stable.
+    assign ha_wr_fire            = ha_wr_run_cs &&
+                                    (ha_wr_cnt_cs == ((exec_op == 2'b11) ?
+                                                     HA_WR_MHA : HA_WR_SHA));
+    assign ha_next_group_base    = ha_group_base_cs + 8'd4;
+    // Issue-phase upper bound:
+    //   QKV: 12 phases (4 rows × Q/K/V)
+    //   SV:  SHA=4, MHA=8  (rows × heads)
+    //   FINAL: SHA=12, MHA=24 (× 3 nibble phases per row)
+    assign ha_phase_last         = (ha_stage_cs == ST_QKV)  ? 5'd11 :
+                                    (ha_stage_cs == ST_SV)   ? ((exec_op == 2'b11) ? 5'd7  : 5'd3) :
+                                    /* ST_FINAL */              ((exec_op == 2'b11) ? 5'd23 : 5'd11);
 
     always_comb begin
         datapath_issue_valid   = 1'b0;
         datapath_issue_mode    = IM_NONE;
-        datapath_issue_idx     = 4'd0;
+        datapath_issue_idx     = 5'd0;
         datapath_capture_valid = 1'b0;
-        datapath_capture_idx   = att_rd_word_cnt_q;
+        datapath_capture_idx   = ha_rd_word_cnt_cs;
 
-        case (state_q)
+        case (state_cs)
             S_FAST_RUN: begin
                 if (rd_valid) begin
                     datapath_issue_valid = 1'b1;
@@ -262,75 +303,102 @@ module CA_Control #(
                 end
             end
 
-            S_ATT_READ: begin
-                if (!att_prefetch_pending_q && !att_pf_done_q && rd_valid) begin
+            S_HA_READ: begin
+                if (!ha_prefetch_pending_cs && !ha_pf_done_cs && rd_valid) begin
                     datapath_capture_valid = 1'b1;
-                    datapath_capture_idx   = att_rd_word_cnt_q;
+                    datapath_capture_idx   = ha_rd_word_cnt_cs;
                 end
             end
 
-            S_ATT_ISSUE: begin
+            S_HA_ISSUE: begin
                 datapath_issue_valid = 1'b1;
-                datapath_issue_idx   = att_phase_cnt_q;
-                case (att_stage_q)
+                datapath_issue_idx   = ha_phase_cnt_cs;
+                case (ha_stage_cs)
                     ST_QKV:  datapath_issue_mode = IM_QKV;
                     ST_SV:   datapath_issue_mode = IM_SV;
                     default: datapath_issue_mode = IM_FINAL;
                 endcase
             end
 
+            S_HA_WAIT: begin
+                if (ha_wait_qkv_to_sv_fire) begin
+                    datapath_issue_valid = 1'b1;
+                    datapath_issue_mode  = IM_SV;
+                    datapath_issue_idx   = 5'd0;
+                end
+                else if (ha_wait_sv_to_final_fire) begin
+                    datapath_issue_valid = 1'b1;
+                    datapath_issue_mode  = IM_FINAL;
+                    datapath_issue_idx   = 5'd0;
+                end
+            end
+
             default: begin
             end
         endcase
 
-        // Prefetched words are captured wherever they arrive (x_buf is already
+        // Prefetched words are captured wherever they arrive (x_mem is already
         // free), independent of FSM state. Takes priority over the in-state read.
-        if (att_pf_capture) begin
+        if (ha_pf_capture) begin
             datapath_capture_valid = 1'b1;
-            datapath_capture_idx   = att_pf_word_q;
+            datapath_capture_idx   = ha_pf_word_cs;
         end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state_q                <= S_IDLE;
-            att_stage_q            <= ST_QKV;
-            att_param_phase_q      <= 1'b0;
-            rd_req_cnt_q           <= 2'd0;
-            att_rd_word_cnt_q      <= 2'd0;
-            wr_cmd_cnt_q           <= 8'd0;
-            out_cnt_q              <= 8'd0;
-            wr_pre_pipe_q          <= 10'd0;
-            att_group_base_q       <= 8'd0;
-            att_phase_cnt_q        <= 4'd0;
-            att_wr_pipe_q          <= 14'd0;
-            att_prefetch_pending_q <= 1'b0;
-            att_pf_word_q          <= 2'd0;
-            att_pf_done_q          <= 1'b0;
+            state_cs               <= S_IDLE;
+            ha_stage_cs            <= ST_QKV;
+            ha_param_phase_cs      <= 1'b0;
+            rd_req_cnt_cs          <= 2'd0;
+            ha_rd_word_cnt_cs      <= 2'd0;
+            wr_cmd_cnt_cs          <= 8'd0;
+            out_cnt_cs             <= 8'd0;
+            wr_pre_pipe_cs         <= 12'd0;
+            ha_group_base_cs       <= 8'd0;
+            ha_write_base_cs       <= 8'd0;
+            ha_phase_cnt_cs        <= 5'd0;
+            ha_wr_cnt_cs           <= 5'd0;
+            ha_wr_run_cs           <= 1'b0;
+            ha_prefetch_pending_cs <= 1'b0;
+            ha_pf_word_cs          <= 2'd0;
+            ha_pf_done_cs          <= 1'b0;
         end
         else begin
-            att_wr_pipe_q <= {att_wr_pipe_q[12:0], att_final_start};
+            // Timer update for next-group and write taps. State-specific resets
+            // below intentionally override these defaults in this always_ff block.
+            if (ha_final_start) begin
+                ha_wr_run_cs     <= 1'b1;
+                ha_wr_cnt_cs     <= 5'd0;
+                ha_write_base_cs <= ha_group_base_cs;
+            end
+            else if (ha_wr_fire) begin
+                ha_wr_run_cs <= 1'b0;
+            end
+            else if (ha_wr_run_cs) begin
+                ha_wr_cnt_cs <= ha_wr_cnt_cs + 1'b1;
+            end
 
             // Prefetched burst lands while the current group is still computing;
-            // collect the 4 words then flag the next group's x_buf ready.
-            if (att_pf_capture) begin
-                if (att_pf_word_q == 2'd3) begin
-                    att_pf_done_q          <= 1'b1;
-                    att_prefetch_pending_q <= 1'b0;
+            // collect the 4 words then flag the next group's x_mem ready.
+            if (ha_pf_capture) begin
+                if (ha_pf_word_cs == 2'd3) begin
+                    ha_pf_done_cs          <= 1'b1;
+                    ha_prefetch_pending_cs <= 1'b0;
                 end
                 else begin
-                    att_pf_word_q <= att_pf_word_q + 1'b1;
+                    ha_pf_word_cs <= ha_pf_word_cs + 1'b1;
                 end
             end
 
-            // One-group-ahead prefetch (fires while att_stage_q == ST_QKV, see wire).
+            // One-group-ahead prefetch (fires while ha_stage_cs == ST_QKV, see wire).
             // rd_addr/rd_en/rd_burst for this read are driven in the RAM-read block.
-            if (att_prefetch_fire) begin
-                att_prefetch_pending_q <= 1'b1;
-                att_pf_word_q          <= 2'd0;
+            if (ha_prefetch_fire) begin
+                ha_prefetch_pending_cs <= 1'b1;
+                ha_pf_word_cs          <= 2'd0;
             end
 
-            case (state_q)
+            case (state_cs)
                 S_IDLE: begin
                     if (job_start) begin
                         exec_op   <= op;
@@ -338,152 +406,159 @@ module CA_Control #(
                         exec_param <= param;
 
                         // FAST_RUN counters only; attention-specific state is
-                        // initialised in S_ATT_PARAM right before S_ATT_READ.
-                        rd_req_cnt_q  <= 2'd0;
-                        wr_cmd_cnt_q  <= 8'd0;
-                        out_cnt_q     <= 8'd0;
-                        wr_pre_pipe_q <= 10'd0;
+                        // initialised in S_HA_PARAM right before S_HA_READ.
+                        rd_req_cnt_cs  <= fast_first_rd_fire ? 2'd1 : 2'd0;
+                        wr_cmd_cnt_cs  <= 8'd0;
+                        out_cnt_cs     <= 8'd0;
+                        wr_pre_pipe_cs <= 12'd0;
 
-                        if (attention_start) begin
-                            att_param_phase_q <= 1'b0;
-                            state_q           <= S_ATT_PARAM;
+                        if (ha_start) begin
+                            ha_param_phase_cs <= 1'b0;
+                            state_cs           <= S_HA_PARAM;
                         end
                         else begin
-                            state_q <= S_FAST_RUN;
+                            state_cs <= S_FAST_RUN;
                         end
                     end
                 end
 
                 S_FAST_RUN: begin
-                    wr_pre_pipe_q <= {wr_pre_pipe_q[8:0], datapath_issue_valid};
+                    wr_pre_pipe_cs <= {wr_pre_pipe_cs[10:0], datapath_issue_valid};
 
                     if (rd_cmd_fire) begin
-                        rd_req_cnt_q <= rd_req_cnt_q + 1'b1;
+                        rd_req_cnt_cs <= rd_req_cnt_cs + 1'b1;
                     end
 
                     // wr_en/wr_addr/wr_burst for this write are driven in the
                     // RAM-write block; here we only advance the command counter.
                     if (wr_cmd_fire) begin
-                        wr_cmd_cnt_q <= wr_cmd_cnt_q + 1'b1;
+                        wr_cmd_cnt_cs <= wr_cmd_cnt_cs + 1'b1;
                     end
 
                     if (datapath_result_valid) begin
                         if (result_last) begin
-                            state_q <= S_IDLE;
+                            state_cs <= S_IDLE;
                         end
                         else begin
-                            out_cnt_q <= out_cnt_q + 1'b1;
+                            out_cnt_cs <= out_cnt_cs + 1'b1;
                         end
                     end
                 end
 
-                S_ATT_PARAM: begin
+                S_HA_PARAM: begin
                     if (in_valid) begin
-                        if (!att_param_phase_q) begin
+                        if (!ha_param_phase_cs) begin
                             exec_weight_k     <= param;
-                            att_param_phase_q <= 1'b1;
+                            ha_param_phase_cs <= 1'b1;
                         end
                         else begin
                             exec_weight_v          <= param;
-                            att_group_base_q       <= 8'd0;
-                            rd_req_cnt_q           <= 2'd0;
-                            att_rd_word_cnt_q      <= 2'd0;
-                            out_cnt_q              <= 8'd0;
-                            att_wr_pipe_q          <= 14'd0;
-                            att_prefetch_pending_q <= 1'b0;
-                            att_pf_word_q          <= 2'd0;
-                            att_pf_done_q          <= 1'b0;
-                            state_q                <= S_ATT_READ;
+                            ha_group_base_cs       <= 8'd0;
+                            ha_write_base_cs       <= 8'd0;
+                            rd_req_cnt_cs           <= ha_first_read_fire ? 2'd1 : 2'd0;
+                            ha_rd_word_cnt_cs      <= 2'd0;
+                            out_cnt_cs              <= 8'd0;
+                            ha_wr_cnt_cs           <= 5'd0;
+                            ha_wr_run_cs           <= 1'b0;
+                            ha_prefetch_pending_cs <= 1'b0;
+                            ha_pf_word_cs          <= 2'd0;
+                            ha_pf_done_cs          <= 1'b0;
+                            state_cs                <= S_HA_READ;
                         end
                     end
                 end
 
-                S_ATT_READ: begin
-                    if (att_read_fire) begin
-                        rd_req_cnt_q <= 2'd1;
+                S_HA_READ: begin
+                    if (ha_read_fire) begin
+                        rd_req_cnt_cs <= 2'd1;
                     end
 
-                    if (att_pf_done_q) begin
-                        // Next group's input was already prefetched into x_buf.
-                        att_pf_done_q   <= 1'b0;
-                        att_phase_cnt_q <= 4'd0;
-                        att_stage_q     <= ST_QKV;
-                        state_q         <= S_ATT_ISSUE;
+                    if (ha_pf_done_cs) begin
+                        // Next group's input was already prefetched into x_mem.
+                        ha_pf_done_cs   <= 1'b0;
+                        ha_phase_cnt_cs <= 5'd0;
+                        ha_stage_cs     <= ST_QKV;
+                        state_cs        <= S_HA_ISSUE;
                     end
-                    else if (!att_prefetch_pending_q && rd_valid) begin
+                    else if (!ha_prefetch_pending_cs && rd_valid) begin
                         // First group (no prefetch yet): capture the burst here.
-                        if (att_rd_word_cnt_q == 2'd3) begin
-                            att_rd_word_cnt_q <= 2'd0;
-                            att_phase_cnt_q   <= 4'd0;
-                            att_stage_q       <= ST_QKV;
-                            state_q           <= S_ATT_ISSUE;
+                        if (ha_rd_word_cnt_cs == 2'd3) begin
+                            ha_rd_word_cnt_cs <= 2'd0;
+                            ha_phase_cnt_cs   <= 5'd0;
+                            ha_stage_cs       <= ST_QKV;
+                            state_cs           <= S_HA_ISSUE;
                         end
                         else begin
-                            att_rd_word_cnt_q <= att_rd_word_cnt_q + 1'b1;
+                            ha_rd_word_cnt_cs <= ha_rd_word_cnt_cs + 1'b1;
                         end
                     end
                 end
 
-                S_ATT_ISSUE: begin
-                    if (att_phase_cnt_q == att_phase_last) begin
-                        state_q <= S_ATT_WAIT;
+                S_HA_ISSUE: begin
+                    if (ha_phase_cnt_cs == ha_phase_last) begin
+                        state_cs <= S_HA_WAIT;
                     end
                     else begin
-                        att_phase_cnt_q <= att_phase_cnt_q + 1'b1;
+                        ha_phase_cnt_cs <= ha_phase_cnt_cs + 1'b1;
                     end
                 end
 
-                S_ATT_WAIT: begin
-                    case (att_stage_q)
+                S_HA_WAIT: begin
+                    case (ha_stage_cs)
                         ST_QKV: begin
                             if (datapath_qkv_ready) begin
-                                att_phase_cnt_q <= 4'd0;
-                                att_stage_q     <= ST_SV;
-                                state_q         <= S_ATT_ISSUE;
+                                ha_phase_cnt_cs <= 5'd1;
+                                ha_stage_cs     <= ST_SV;
+                                state_cs         <= S_HA_ISSUE;
                             end
                         end
 
                         ST_SV: begin
                             if (datapath_sv_ready) begin
-                                att_phase_cnt_q <= 4'd0;
-                                att_wr_pipe_q   <= 14'd0;
-                                att_stage_q     <= ST_FINAL;
-                                state_q         <= S_ATT_ISSUE;
+                                ha_phase_cnt_cs  <= 5'd1;
+                                ha_wr_cnt_cs     <= 5'd0;
+                                ha_wr_run_cs     <= 1'b1;
+                                ha_write_base_cs <= ha_group_base_cs;
+                                ha_stage_cs      <= ST_FINAL;
+                                state_cs         <= S_HA_ISSUE;
                             end
                         end
 
-                        default: begin  // ST_FINAL: write back, advance group / finish.
-                            if (datapath_result_valid) begin
-                                if (out_cnt_q[1:0] == 2'd3) begin
-                                    if (att_group_base_q == 8'd252) begin
-                                        state_q <= S_IDLE;
-                                    end
-                                    else begin
-                                        att_group_base_q  <= att_next_group_base;
-                                        rd_req_cnt_q      <= att_prefetch_pending_q ? 2'd1 : 2'd0;
-                                        att_rd_word_cnt_q <= 2'd0;
-                                        state_q           <= S_ATT_READ;
-                                    end
+                        default: begin  // ST_FINAL: drain current result while next group starts.
+                            if (ha_has_next_group && ha_next_group_fire) begin
+                                ha_group_base_cs  <= ha_next_group_base;
+                                rd_req_cnt_cs      <= ha_prefetch_pending_cs ? 2'd1 : 2'd0;
+                                ha_rd_word_cnt_cs <= 2'd0;
+                                ha_phase_cnt_cs   <= 5'd0;
+                                ha_stage_cs       <= ST_QKV;
+                                if (ha_pf_done_cs) begin
+                                    ha_pf_done_cs    <= 1'b0;
+                                    state_cs        <= S_HA_ISSUE;
                                 end
-
-                                if (out_cnt_q != 8'd255) begin
-                                    out_cnt_q <= out_cnt_q + 1'b1;
+                                else begin
+                                    state_cs <= S_HA_READ;
                                 end
+                            end
+                            else if (!ha_has_next_group && result_last) begin
+                                state_cs <= S_IDLE;
                             end
                         end
                     endcase
                 end
 
                 default: begin
-                    state_q <= S_IDLE;
+                    state_cs <= S_IDLE;
                 end
             endcase
+
+            if (exec_op[1] && datapath_result_valid && (out_cnt_cs != 8'd255)) begin
+                out_cnt_cs <= out_cnt_cs + 1'b1;
+            end
         end
     end
 
-    // All RAM-read command outputs (rd_en/rd_burst/rd_addr) live here. The three
-    // fire conditions are mutually exclusive (each gated on a distinct state), so
-    // the if/else-if chain matches the original parallel assignments.
+    // All RAM-read command outputs (rd_en/rd_burst/rd_addr) live here. The fire
+    // conditions are mutually exclusive (each gated on a distinct state), so
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rd_en <= 1'b0;
@@ -491,30 +566,36 @@ module CA_Control #(
         else begin
             rd_en    <= 1'b0;
             rd_burst <= '0;
-            if (rd_cmd_fire) begin
+            if (fast_first_rd_fire) begin
                 rd_en    <= 1'b1;
                 rd_burst <= BURST_128;
-                rd_addr  <= rd_req_cnt_q[0] ? HALF_ADDR : '0;
+                rd_addr  <= '0;
             end
-            else if (att_read_fire) begin
+            else if (rd_cmd_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_128;
+                rd_addr  <= rd_req_cnt_cs[0] ? HALF_ADDR : '0;
+            end
+            else if (ha_first_read_fire) begin
                 rd_en    <= 1'b1;
                 rd_burst <= BURST_4;
-                rd_addr  <= att_group_base_q[ADDR_W-1:0];
+                rd_addr  <= '0;
             end
-            else if (att_prefetch_fire) begin
+            else if (ha_read_fire) begin
                 rd_en    <= 1'b1;
                 rd_burst <= BURST_4;
-                rd_addr  <= att_next_group_base[ADDR_W-1:0];
+                rd_addr  <= ha_group_base_cs[ADDR_W-1:0];
+            end
+            else if (ha_prefetch_fire) begin
+                rd_en    <= 1'b1;
+                rd_burst <= BURST_4;
+                rd_addr  <= ha_next_group_base[ADDR_W-1:0];
             end
         end
     end
 
     // All RAM-write command outputs (wr_en/wr_burst/wr_addr) live here. The two
     // write paths never overlap (attention write-back only fires in attention
-    // states; the FAST_RUN write only in S_FAST_RUN), so the separate ifs keep
-    // the original "last assignment wins" tie-break while staying mutually
-    // exclusive in practice. Counters (wr_cmd_cnt_q, att_wr_pipe_q) stay in the
-    // main FSM block and are only read here.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             wr_en    <= 1'b0;
@@ -524,17 +605,17 @@ module CA_Control #(
             wr_en    <= 1'b0;
             wr_burst <= '0;
 
-            // Attention: one BURST_4 per group, timed by att_wr_pipe_q.
-            if (att_wr_fire) begin
+            // Attention: one BURST_4 per group, timed by ha_wr_cnt_cs.
+            if (ha_wr_fire) begin
                 wr_en    <= 1'b1;
-                wr_addr  <= att_group_base_q[ADDR_W-1:0];
+                wr_addr  <= ha_write_base_cs[ADDR_W-1:0];
                 wr_burst <= BURST_4;
             end
 
             // FAST_RUN: a single BURST_128 covering all 256 results.
-            if (wr_cmd_fire && (wr_cmd_cnt_q[6:0] == 7'd0)) begin
+            if (wr_cmd_fire && (wr_cmd_cnt_cs[6:0] == 7'd0)) begin
                 wr_en    <= 1'b1;
-                wr_addr  <= wr_cmd_cnt_q[ADDR_W-1:0];
+                wr_addr  <= wr_cmd_cnt_cs[ADDR_W-1:0];
                 wr_burst <= BURST_128;
             end
         end
@@ -542,6 +623,23 @@ module CA_Control #(
 
 endmodule
 
+// ============================================================================
+// CA_DataPath
+// 角色：純路由 + 中間儲存 + 三個 compute submodule 的 dispatch / collect
+//
+// Pipeline 全圖（從 issue/capture 進來算起）：
+//   Multiple_Processor: in→[1 issue buf]→[3 mult stages]            → mult_valid  (cycle 4)
+//   ACT_4Stage_Parallel: in→[1 input buf]→[3 act stages]            → act_valid   (cycle 4)
+//   PoT_5Stage_Parallel: in+abs→[1 input buf]→[3 max stages]→[1 final] → pot_valid (cycle 5)
+//
+// Sideband (tag/idx) pipeline 長度跟著走：
+//   act_*_cs[0..3]  → 4 級 (對齊 ACT 4-stage)
+//   pot_*_cs[0..4]  → 5 級 (對齊 PoT 5-stage)
+//
+// FF 分配原則：
+//   * Multiple_Processor / ACT / PoT 自己的 input buffer 已搬進各自模組
+//   * DataPath 只留：①跨 issue 的中間儲存  ②sideband pipeline  ③output buffer
+// ============================================================================
 module CA_DataPath #(
     parameter RAM_WIDTH = 256
 )(
@@ -549,7 +647,7 @@ module CA_DataPath #(
     input  logic                 rst_n,
     input  logic                 issue_valid,
     input  issue_mode_t          issue_mode,
-    input  logic [3:0]           issue_idx,
+    input  logic [4:0]           issue_idx,
     input  logic                 capture_valid,
     input  logic [1:0]           capture_idx,
     input  logic [1:0]           op,
@@ -567,83 +665,105 @@ module CA_DataPath #(
     output logic [31:0]          out_data
 );
 
+    // ------------------------------------------------------------------------
+    // 區塊 1：型別 / 常數
+    // ------------------------------------------------------------------------
     localparam logic [1:0] ACT_USER    = 2'd0;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
-    typedef enum logic [2:0] {
-        PT_NONE,
-        PT_NORM,
-        PT_Q,
-        PT_K,
-        PT_V,
-        PT_SCORE,
-        PT_FINAL
-    } pipe_tag_t;
+    // Use top-level mult_tag_t for the whole DataPath sideband; values pass
+    // through unchanged from Multiple_Processor into ACT / PoT tag pipelines.
 
     localparam int SCORE_ELEM_W   = 11;
     localparam int SCORE_PACK_W   = SCORE_ELEM_W * 64;
     localparam int MHA_OUT_ELEM_W = 15;
-    localparam int MHA_OUT_PACK_W = MHA_OUT_ELEM_W * 64;
+    // combine_mha_heads 只取 head0 每 row 的 col 0-3，所以 FINAL head0 buffer
+    // 只存 32 lanes（col 4-7 計算後丟棄）。
+    localparam int MHA_OUT_LANES  = 32;
+    localparam int MHA_OUT_PACK_W = MHA_OUT_ELEM_W * MHA_OUT_LANES;
 
-    // Attention scores are activated before buffering: SHA fits in signed 11 bits.
-    // MHA head0 FINAL partial output can reach -16384, so it keeps 15-bit lanes.
-    logic [255:0]  x_buf_q        [0:3];
-    logic [255:0]  q_buf_q        [0:3];
-    logic [255:0]  k_buf_q        [0:3];
-    logic [255:0]  v_buf_q        [0:3];
-    logic [SCORE_PACK_W-1:0]   score_buf_q    [0:7];
-    logic [MHA_OUT_PACK_W-1:0] mha_out0_buf_q [0:3];
-    logic [3:0]    q_ready_q;
-    logic [3:0]    k_ready_q;
-    logic [3:0]    v_ready_q;
-    logic [7:0]    score_ready_q;
+    // ------------------------------------------------------------------------
+    // 區塊 2：跨 issue 的中間儲存（這些是 DataPath 的「狀態」，必須留在這層）
+    // ------------------------------------------------------------------------
+    // x/q/k/v_mem: 4 個 256-bit slot；score_mem: 8 個 (11-bit × 64) slot。
+    // MHA head0 FINAL 部份積借用 q_mem/k_mem（SV 完 Q/K 已死），480-bit packed
+    // 拆成 q_mem(256) + k_mem[255:32](224)，省 1920 flops。
+    logic [255:0]              x_mem        [0:3];
+    logic [255:0]              q_mem        [0:3];
+    logic [255:0]              k_mem        [0:3];
+    logic [255:0]              v_mem        [0:3];
+    logic [SCORE_PACK_W-1:0]   score_mem    [0:7];
 
+    logic [3:0]                q_ready_cs;
+    logic [3:0]                k_ready_cs;
+    logic [3:0]                v_ready_cs;
+    logic [7:0]                score_ready_cs;
+    logic [3:0]                q_ready_ns;
+    logic [3:0]                k_ready_ns;
+    logic [3:0]                v_ready_ns;
+    logic [7:0]                score_ready_ns;
+
+    // ------------------------------------------------------------------------
+    // 區塊 3：Submodule output 線（comb，從各 submodule 出來的訊號）
+    // ------------------------------------------------------------------------
     logic          mult_valid;
     logic [1023:0] mult_data;
     mult_tag_t     mult_tag_out;
     logic [2:0]    mult_idx_out;
 
+    logic          act_valid;
+    logic [1023:0] act_data;
+
+    logic          pot_valid;
+    logic [255:0]  pot_data;
+
+    // ------------------------------------------------------------------------
+    // 區塊 4：Issue / capture 入口 buffer
+    //   * issue path 給 Multiple_Processor，先打一拍切短上游 mux
+    //   * rd_data_cs 同時服務 capture (寫 x_mem) 和 IM_NORM (送進 MP)，
+    //     兩者互斥，所以共享一個 register 不衝突
+    // ------------------------------------------------------------------------
+    logic                 issue_valid_cs;
+    issue_mode_t          issue_mode_cs;
+    logic [4:0]           issue_idx_cs;
+    logic                 capture_valid_cs;
+    logic [1:0]           capture_idx_cs;
+    logic [RAM_WIDTH-1:0] rd_data_cs;
+
+    // ------------------------------------------------------------------------
+    // 區塊 5：Dispatch comb 線（mult → ACT / PoT 的分流）
+    // ------------------------------------------------------------------------
     logic          act_in_valid;
     logic [1:0]    act_in_mode;
     logic [1023:0] act_in_data;
-    pipe_tag_t     act_in_tag;
+    mult_tag_t     act_in_tag;
     logic [2:0]    act_in_idx;
-    logic          act_in_valid_q;
-    logic [1:0]    act_in_mode_q;
-    logic [1023:0] act_in_data_q;
-    pipe_tag_t     act_in_tag_q;
-    logic [2:0]    act_in_idx_q;
-    logic          act_valid;
-    logic [1023:0] act_data;
-    pipe_tag_t     act_tag_q [0:4];
-    logic [2:0]    act_idx_q [0:4];
 
     logic          pot_in_valid;
     logic [1023:0] pot_in_data;
-    pipe_tag_t     pot_in_tag;
+    mult_tag_t     pot_in_tag;
     logic [2:0]    pot_in_idx;
-    logic          pot_valid;
-    logic [255:0]  pot_data;
-    pipe_tag_t     pot_tag_q [0:4];
-    logic [2:0]    pot_idx_q [0:4];
 
-    logic          mha_comb_valid;
-    logic [1023:0] mha_comb_data;
-    logic [2:0]    mha_comb_idx;
+    logic                      mha_comb_valid;
+    logic [1023:0]             mha_comb_data;
+    logic [2:0]                mha_comb_idx;
+    logic [MHA_OUT_PACK_W-1:0] mha_head0_pack;  // packed 480-bit head0 partial
 
-    logic                 issue_valid_q;
-    issue_mode_t          issue_mode_q;
-    logic [3:0]           issue_idx_q;
-    logic                 capture_valid_q;
-    logic [1:0]           capture_idx_q;
-    logic [RAM_WIDTH-1:0] rd_data_q;
+    logic          use_act_for_pot;
 
-    assign qkv_ready = (&q_ready_q) && (&k_ready_q) && (&v_ready_q);
-    assign sv_ready  = (op == 2'b11) ? (&score_ready_q) : (&score_ready_q[3:0]);
-    assign result_valid = pot_valid &&
-                          ((pot_tag_q[4] == PT_NORM) ||
-                           (pot_tag_q[4] == PT_FINAL));
+    // ------------------------------------------------------------------------
+    // 區塊 6：Sideband pipeline (跟 ACT/PoT 的延遲對齊)
+    //   act_*_cs: 4 級 (input buf + 3 stages)
+    //   pot_*_cs: 5 級 (input buf + Matrix_Max 3 stages + final 1 stage)
+    // ------------------------------------------------------------------------
+    mult_tag_t     act_tag_cs [0:4];  // ACT 5-stage (input_buf + pair + psum + thr + apply)
+    logic [2:0]    act_idx_cs [0:4];
+    mult_tag_t     pot_tag_cs [0:4];
+    logic [2:0]    pot_idx_cs [0:4];
 
+    // ========================================================================
+    // 函式：MHA head 合併 / score 壓縮 / mha_out0 壓縮解壓
+    // ========================================================================
     function automatic logic [1023:0] combine_mha_heads(
         input logic [1023:0] head0,
         input logic [1023:0] head1
@@ -659,240 +779,293 @@ module CA_DataPath #(
         end
     endfunction
 
-    function automatic logic [SCORE_PACK_W-1:0] pack_score(input logic [1023:0] src);
+    // 把 attention activation (x<0 → x>>2) 跟 16→11 bit truncation 都搬到這裡
+    // combinational 做掉，SCORE 直接從 mult_data 寫進 score_mem，不過 ACT pipeline。
+    function automatic logic [SCORE_PACK_W-1:0] pack_attention_score(input logic [1023:0] src);
+        logic signed [15:0] elem;
+        logic signed [15:0] activated;
         begin
             for (int i = 0; i < 64; i++) begin
-                pack_score[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W] =
-                    src[1023 - (i * 16) - (16 - SCORE_ELEM_W) -: SCORE_ELEM_W];
+                elem      = $signed(src[1023 - (i * 16) -: 16]);
+                activated = (elem < 0) ? (elem >>> 2) : elem;
+                pack_attention_score[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W] =
+                    activated[SCORE_ELEM_W-1:0];
             end
         end
     endfunction
 
+    // Storage slot s in [0,31] maps to full 8x8 lane (row=s/4, col=s%4); only
+    // head0 cols 0-3 of each row survive into combine_mha_heads.
     function automatic logic [MHA_OUT_PACK_W-1:0] pack_mha_out(input logic [1023:0] src);
+        integer full_lane;
         begin
-            for (int i = 0; i < 64; i++) begin
-                pack_mha_out[MHA_OUT_PACK_W-1 - (i * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W] =
-                    src[1023 - (i * 16) - (16 - MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
+            for (int s = 0; s < MHA_OUT_LANES; s++) begin
+                full_lane = ((s / 4) * 8) + (s % 4);
+                pack_mha_out[MHA_OUT_PACK_W-1 - (s * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W] =
+                    src[1023 - (full_lane * 16) - (16 - MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
             end
         end
     endfunction
 
     function automatic logic [1023:0] unpack_mha_out(input logic [MHA_OUT_PACK_W-1:0] src);
         logic [MHA_OUT_ELEM_W-1:0] lane;
+        integer full_lane;
         begin
             unpack_mha_out = 1024'd0;
-            for (int i = 0; i < 64; i++) begin
-                lane = src[MHA_OUT_PACK_W-1 - (i * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
-                unpack_mha_out[1023 - (i * 16) -: 16] =
+            for (int s = 0; s < MHA_OUT_LANES; s++) begin
+                full_lane = ((s / 4) * 8) + (s % 4);
+                lane = src[MHA_OUT_PACK_W-1 - (s * MHA_OUT_ELEM_W) -: MHA_OUT_ELEM_W];
+                unpack_mha_out[1023 - (full_lane * 16) -: 16] =
                     {{(16-MHA_OUT_ELEM_W){lane[MHA_OUT_ELEM_W-1]}}, lane};
             end
         end
     endfunction
 
+    // ========================================================================
+    // 區塊 7：Ready / result_valid 給 Control 看的回報訊號
+    // ========================================================================
+    always_comb begin
+        q_ready_ns     = q_ready_cs;
+        k_ready_ns     = k_ready_cs;
+        v_ready_ns     = v_ready_cs;
+        score_ready_ns = score_ready_cs;
+
+        if (pot_valid) begin
+            case (pot_tag_cs[4])
+                MT_Q: q_ready_ns[pot_idx_cs[4][1:0]] = 1'b1;
+                MT_K: k_ready_ns[pot_idx_cs[4][1:0]] = 1'b1;
+                MT_V: v_ready_ns[pot_idx_cs[4][1:0]] = 1'b1;
+                default: begin end
+            endcase
+        end
+
+        if (mult_valid && (mult_tag_out == MT_SCORE)) begin
+            score_ready_ns[mult_idx_out] = 1'b1;
+        end
+    end
+
+    assign qkv_ready    = (&q_ready_ns) && (&k_ready_ns) && (&v_ready_ns);
+    assign sv_ready     = (op == 2'b11) ? (&score_ready_ns) : (&score_ready_ns[3:0]);
+    assign result_valid = pot_valid &&
+                          ((pot_tag_cs[4] == MT_NORM) ||
+                           (pot_tag_cs[4] == MT_FINAL));
+
+    // ========================================================================
+    // 區塊 8：Mult-output dispatch (mult → ACT / PoT / score_mem / q_mem-k_mem)
+    //
+    //   MT_NORM            → ACT (tag=MT_NORM)
+    //   MT_SCORE           → score_mem 直接（comb pack_attention_score，省 4 cycles）
+    //   MT_FINAL (SHA)     → ACT (tag=MT_FINAL)
+    //   MT_FINAL (MHA h0)  → 拆進 q_mem/k_mem 當 scratch，不送 ACT
+    //   MT_FINAL (MHA h1)  → 跟 q_mem/k_mem 裡的 head0 combine 後送 ACT
+    //   MT_Q/K/V           → PoT (直接，不過 ACT)
+    // ========================================================================
     assign mha_comb_valid = mult_valid && (op == 2'b11) &&
                             (mult_tag_out == MT_FINAL) && mult_idx_out[2];
     assign mha_comb_idx   = {1'b0, mult_idx_out[1:0]};
-    assign mha_comb_data  = combine_mha_heads(unpack_mha_out(mha_out0_buf_q[mult_idx_out[1:0]]),
-                                              mult_data);
+    // Head0 write packed (給 always_ff 切成 q_mem / k_mem)
+    assign mha_head0_pack = pack_mha_out(mult_data);
+    // Head0 read：從 q_mem/k_mem 拼回 480-bit（q=[479:224]、k[255:32]=[223:0]）
+    assign mha_comb_data  = combine_mha_heads(
+        unpack_mha_out({q_mem[mult_idx_out[1:0]], k_mem[mult_idx_out[1:0]][255:32]}),
+        mult_data);
 
+    // SCORE 直接走 mult → score_mem 不過 ACT，因此 ACT 入口只剩 NORM / FINAL(SHA) / MHA combined。
     assign act_in_valid = mha_comb_valid ||
                           (mult_valid &&
                            ((mult_tag_out == MT_NORM) ||
-                            (mult_tag_out == MT_SCORE) ||
                             ((mult_tag_out == MT_FINAL) && (op != 2'b11))));
     assign act_in_data  = mha_comb_valid ? mha_comb_data : mult_data;
-    assign act_in_idx   = mha_comb_valid                       ? mha_comb_idx :
-                          ((mult_tag_out == MT_FINAL) ||
-                           (mult_tag_out == MT_SCORE))         ? mult_idx_out :
-                                                                 3'd0;
+    assign act_in_idx   = mha_comb_valid              ? mha_comb_idx :
+                          (mult_tag_out == MT_FINAL)  ? mult_idx_out :
+                                                        3'd0;
 
     always_comb begin
-        act_in_tag  = PT_NONE;
+        // ACT 永遠 USER mode（SCORE 的 SPECIAL act 已內嵌進 pack_attention_score）。
+        // FINAL MHA head0 不送 ACT；其它 tag 直通。
         act_in_mode = ACT_USER;
-
-        case (mult_tag_out)
-            MT_NORM: begin
-                act_in_tag  = PT_NORM;
-                act_in_mode = ACT_USER;
-            end
-            MT_SCORE: begin
-                act_in_tag  = PT_SCORE;
-                act_in_mode = ACT_SPECIAL;
-            end
-            MT_FINAL: begin
-                act_in_tag  = ((op == 2'b11) && !mha_comb_valid) ? PT_NONE : PT_FINAL;
-                act_in_mode = ACT_USER;
-            end
-            default: begin
-            end
-        endcase
+        act_in_tag  = ((mult_tag_out == MT_FINAL) && (op == 2'b11) && !mha_comb_valid)
+                      ? MT_NONE : mult_tag_out;
     end
 
-    logic use_act_for_pot;
+    // ========================================================================
+    // 區塊 9：ACT-output / Mult-Q/K/V dispatch (→ PoT)
+    //
+    //   MT_NORM/MT_FINAL (after ACT) → PoT (走 ACT→PoT 路徑)
+    //   MT_Q/K/V (from mult, bypass ACT) → PoT 直接
+    //   (MT_SCORE 已不走 ACT，直接從 mult 寫 score_mem——見區塊 11)
+    // ========================================================================
     assign use_act_for_pot = act_valid &&
-                             ((act_tag_q[4] == PT_NORM) || (act_tag_q[4] == PT_FINAL));
+                             ((act_tag_cs[4] == MT_NORM) || (act_tag_cs[4] == MT_FINAL));
 
     assign pot_in_valid = use_act_for_pot ||
                           (mult_valid && ((mult_tag_out == MT_Q) ||
                                           (mult_tag_out == MT_K) ||
                                           (mult_tag_out == MT_V)));
     assign pot_in_data  = use_act_for_pot ? act_data       : mult_data;
-    assign pot_in_idx   = use_act_for_pot ? act_idx_q[4]   : mult_idx_out;
+    assign pot_in_idx   = use_act_for_pot ? act_idx_cs[4]  : mult_idx_out;
 
-    always_comb begin
-        if (use_act_for_pot) begin
-            pot_in_tag = act_tag_q[4];
-        end
-        else begin
-            case (mult_tag_out)
-                MT_Q:    pot_in_tag = PT_Q;
-                MT_K:    pot_in_tag = PT_K;
-                MT_V:    pot_in_tag = PT_V;
-                default: pot_in_tag = PT_NONE;
-            endcase
-        end
-    end
+    // tags pass through; Q/K/V branch gated by pot_in_valid downstream
+    assign pot_in_tag   = use_act_for_pot ? act_tag_cs[4]  : mult_tag_out;
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            issue_valid_q   <= 1'b0;
-            capture_valid_q <= 1'b0;
-        end
-        else begin
-            issue_valid_q   <= issue_valid;
-            issue_mode_q    <= issue_valid ? issue_mode : IM_NONE;
-            issue_idx_q     <= issue_valid ? issue_idx : 4'd0;
-            capture_valid_q <= capture_valid;
-            capture_idx_q   <= capture_idx;
-            rd_data_q       <= rd_data;
-        end
-    end
-
-    Multiple_Processor #(
-        .SCORE_ELEM_W (SCORE_ELEM_W),
-        .SCORE_PACK_W (SCORE_PACK_W)
-    ) u_mult_proc (
+    // ========================================================================
+    // 區塊 10：Submodule 例化（純連線，沒有額外邏輯）
+    // ========================================================================
+    Multiple_Processor u_mult_proc (
         .clk          (clk),
         .rst_n        (rst_n),
-        .issue_valid  (issue_valid_q),
-        .issue_mode   (issue_mode_q),
-        .issue_idx    (issue_idx_q),
+        .issue_valid  (issue_valid_cs),
+        .issue_mode   (issue_mode_cs),
+        .issue_idx    (issue_idx_cs),
         .op           (op),
         .param        (param),
         .weight_k     (weight_k),
         .weight_v     (weight_v),
-        .rd_data      (rd_data_q),
-        .x_buf        (x_buf_q),
-        .q_buf        (q_buf_q),
-        .k_buf        (k_buf_q),
-        .v_buf        (v_buf_q),
-        .score_buf    (score_buf_q),
+        .rd_data      (rd_data_cs),
+        .x_mem        (x_mem),
+        .q_mem        (q_mem),
+        .k_mem        (k_mem),
+        .v_mem        (v_mem),
+        .score_mem    (score_mem),
         .mult_valid   (mult_valid),
         .mult_data    (mult_data),
         .mult_tag_out (mult_tag_out),
         .mult_idx_out (mult_idx_out)
     );
 
-    ACT_FiveStage_Parallel u_act (
+    ACT_4Stage_Parallel u_act (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (act_in_valid_q),
+        .in_valid  (act_in_valid),   // comb 直接進，input buffer 在 ACT 內
         .act       (act),
-        .act_mode  (act_in_mode_q),
-        .in_data   (act_in_data_q),
+        .act_mode  (act_in_mode),
+        .in_data   (act_in_data),
         .out_valid (act_valid),
         .out_data  (act_data)
     );
 
-    PoT_FiveStage_Parallel u_pot (
+    PoT_5Stage_Parallel u_pot (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (pot_in_valid),
+        .in_valid  (pot_in_valid),   // comb 直接進，input buffer 在 PoT 內
         .in_data   (pot_in_data),
         .out_valid (pot_valid),
         .out_data  (pot_data)
     );
 
+    // ========================================================================
+    // 區塊 11：所有狀態更新 (always_ff)
+    //   1. Issue / capture 入口 buffer
+    //   2. Sideband pipeline (act_*_cs / pot_*_cs)
+    //   3. Memory writes (x/q/k/v/score + ready flags；MHA head0 借 q/k_mem)
+    //   4. Output buffer (wr_data / out_valid / out_data)
+    // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            q_ready_q     <= 4'd0;
-            k_ready_q     <= 4'd0;
-            v_ready_q     <= 4'd0;
-            score_ready_q <= 8'd0;
-            out_valid     <= 1'b0;
-            out_data      <= 32'd0;
-            act_in_valid_q <= 1'b0;
-            act_in_mode_q  <= ACT_USER;
-            act_in_data_q  <= 1024'd0;
-            act_in_tag_q   <= PT_NONE;
-            act_in_idx_q   <= 3'd0;
+            // (1) issue / capture buffer
+            issue_valid_cs   <= 1'b0;
+            issue_mode_cs    <= IM_NONE;
+            issue_idx_cs     <= 5'd0;
+            capture_valid_cs <= 1'b0;
+            capture_idx_cs   <= 2'd0;
+            rd_data_cs       <= '0;
+
+            // (2) sideband
+            for (int i = 0; i < 5; i++) begin
+                act_tag_cs[i] <= MT_NONE;
+                act_idx_cs[i] <= 3'd0;
+            end
+            for (int i = 0; i < 5; i++) begin
+                pot_tag_cs[i] <= MT_NONE;
+                pot_idx_cs[i] <= 3'd0;
+            end
+
+            // (3) ready flags
+            q_ready_cs     <= 4'd0;
+            k_ready_cs     <= 4'd0;
+            v_ready_cs     <= 4'd0;
+            score_ready_cs <= 8'd0;
+
+            // (4) output buffer
+            out_valid <= 1'b0;
+            out_data  <= 32'd0;
         end
         else begin
-            out_valid <= result_valid;
+            // ---------------- (1) Issue / capture buffer --------------------
+            issue_valid_cs   <= issue_valid;
+            issue_mode_cs    <= issue_valid ? issue_mode : IM_NONE;
+            issue_idx_cs     <= issue_valid ? issue_idx  : 5'd0;
+            capture_valid_cs <= capture_valid;
+            capture_idx_cs   <= capture_idx;
+            rd_data_cs       <= rd_data;
 
-            act_in_valid_q <= act_in_valid;
-            act_in_mode_q  <= act_in_mode;
-            act_in_data_q  <= act_in_data;
-            act_in_tag_q   <= act_in_valid ? act_in_tag : PT_NONE;
-            act_in_idx_q   <= act_in_idx;
-
-            // Clear the per-group ready flags at the first QKV issue (decoupled
-            // from x_buf capture, which now happens early via prefetch while the
-            // previous group still needs these flags in SV/FINAL).
-            if (issue_valid_q && (issue_mode_q == IM_QKV) && (issue_idx_q == 4'd0)) begin
-                q_ready_q     <= 4'd0;
-                k_ready_q     <= 4'd0;
-                v_ready_q     <= 4'd0;
-                score_ready_q <= 8'd0;
-            end
-
-            if (capture_valid_q) begin
-                x_buf_q[capture_idx_q] <= rd_data_q[255:0];
-            end
-
-            act_tag_q[0] <= act_in_tag_q;
-            act_idx_q[0] <= act_in_idx_q;
+            // ---------------- (2) Sideband pipeline -------------------------
+            // ACT path: 5 級 (input buf + pair + psum + thr + apply)
+            act_tag_cs[0] <= act_in_valid ? act_in_tag : MT_NONE;
+            act_idx_cs[0] <= act_in_idx;
             for (int i = 1; i < 5; i++) begin
-                act_tag_q[i] <= act_tag_q[i - 1];
-                act_idx_q[i] <= act_idx_q[i - 1];
+                act_tag_cs[i] <= act_tag_cs[i - 1];
+                act_idx_cs[i] <= act_idx_cs[i - 1];
             end
 
-            pot_tag_q[0] <= pot_in_valid ? pot_in_tag : PT_NONE;
-            pot_idx_q[0] <= pot_in_idx;
+            // PoT path: 5 級 (input buf + 3 max + 1 final)
+            pot_tag_cs[0] <= pot_in_valid ? pot_in_tag : MT_NONE;
+            pot_idx_cs[0] <= pot_in_idx;
             for (int i = 1; i < 5; i++) begin
-                pot_tag_q[i] <= pot_tag_q[i - 1];
-                pot_idx_q[i] <= pot_idx_q[i - 1];
+                pot_tag_cs[i] <= pot_tag_cs[i - 1];
+                pot_idx_cs[i] <= pot_idx_cs[i - 1];
             end
 
-            if (act_valid && (act_tag_q[4] == PT_SCORE)) begin
-                score_buf_q[act_idx_q[4]] <= pack_score(act_data);
-                score_ready_q[act_idx_q[4]] <= 1'b1;
+            // ---------------- (3) Memory writes -----------------------------
+            // x_mem capture (from RAM)
+            if (capture_valid_cs) begin
+                x_mem[capture_idx_cs] <= rd_data_cs[255:0];
             end
 
+            // 新 QKV 組開始：清掉前一組的 ready flags
+            if (issue_valid_cs && (issue_mode_cs == IM_QKV) && (issue_idx_cs == 5'd0)) begin
+                q_ready_cs     <= 4'd0;
+                k_ready_cs     <= 4'd0;
+                v_ready_cs     <= 4'd0;
+                score_ready_cs <= 8'd0;
+            end
+
+            // score_mem ← Mult (MT_SCORE) — attention activation 內嵌於 pack_attention_score
+            // 省掉 ACT pipeline 4 cycles（SCORE 是 SV→FINAL 的 critical path）。
+            if (mult_valid && (mult_tag_out == MT_SCORE)) begin
+                score_mem[mult_idx_out]      <= pack_attention_score(mult_data);
+                score_ready_cs[mult_idx_out] <= 1'b1;
+            end
+
+            // MHA head0 partial → 借用 q_mem/k_mem（這時 Q/K 已死，下一組 QKV
+            // 才會覆蓋）。480-bit packed: top 256 → q_mem, bottom 224 → k_mem[255:32]。
             if (mult_valid && (mult_tag_out == MT_FINAL) &&
                 (op == 2'b11) && !mult_idx_out[2]) begin
-                mha_out0_buf_q[mult_idx_out[1:0]] <= pack_mha_out(mult_data);
+                q_mem[mult_idx_out[1:0]] <= mha_head0_pack[MHA_OUT_PACK_W-1 -: 256];
+                k_mem[mult_idx_out[1:0]] <= {mha_head0_pack[MHA_OUT_PACK_W-257:0], 32'd0};
             end
 
+            // q/k/v_mem ← PoT
             if (pot_valid) begin
-                case (pot_tag_q[4])
-                    PT_Q: begin
-                        q_buf_q[pot_idx_q[4][1:0]] <= pot_data;
-                        q_ready_q[pot_idx_q[4][1:0]] <= 1'b1;
+                case (pot_tag_cs[4])
+                    MT_Q: begin
+                        q_mem[pot_idx_cs[4][1:0]]      <= pot_data;
+                        q_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
                     end
-                    PT_K: begin
-                        k_buf_q[pot_idx_q[4][1:0]] <= pot_data;
-                        k_ready_q[pot_idx_q[4][1:0]] <= 1'b1;
+                    MT_K: begin
+                        k_mem[pot_idx_cs[4][1:0]]      <= pot_data;
+                        k_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
                     end
-                    PT_V: begin
-                        v_buf_q[pot_idx_q[4][1:0]] <= pot_data;
-                        v_ready_q[pot_idx_q[4][1:0]] <= 1'b1;
+                    MT_V: begin
+                        v_mem[pot_idx_cs[4][1:0]]      <= pot_data;
+                        v_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
                     end
-                    default: begin
-                    end
+                    default: begin end
                 endcase
             end
 
+            // ---------------- (4) Output buffer -----------------------------
+            out_valid <= result_valid;
             if (result_valid) begin
                 wr_data  <= pot_data;
                 out_data <= pot_data[31:0];
@@ -902,16 +1075,13 @@ module CA_DataPath #(
 
 endmodule
 
-module Multiple_Processor #(
-    parameter int SCORE_ELEM_W = 11,
-    parameter int SCORE_PACK_W = SCORE_ELEM_W * 64
-)(
+module Multiple_Processor (
     input  logic           clk,
     input  logic           rst_n,
 
     input  logic           issue_valid,
     input  issue_mode_t    issue_mode,
-    input  logic [3:0]     issue_idx,
+    input  logic [4:0]     issue_idx,
 
     input  logic [1:0]     op,
     input  logic [255:0]   param,
@@ -919,11 +1089,11 @@ module Multiple_Processor #(
     input  logic [255:0]   weight_v,
     input  logic [255:0]   rd_data,
 
-    input  logic [255:0]   x_buf       [0:3],
-    input  logic [255:0]   q_buf       [0:3],
-    input  logic [255:0]   k_buf       [0:3],
-    input  logic [255:0]   v_buf       [0:3],
-    input  logic [SCORE_PACK_W-1:0] score_buf [0:7],
+    input  logic [255:0]   x_mem       [0:3],
+    input  logic [255:0]   q_mem       [0:3],
+    input  logic [255:0]   k_mem       [0:3],
+    input  logic [255:0]   v_mem       [0:3],
+    input  logic [703:0]   score_mem   [0:7],  // 11-bit × 64 lanes
 
     output logic           mult_valid,
     output logic [1023:0]  mult_data,
@@ -931,32 +1101,66 @@ module Multiple_Processor #(
     output logic [2:0]     mult_idx_out
 );
 
-    // Stage 0 = registered operands (issue-time selection mux is now off the
-    // multiplier critical path); Stage 1/2 = multiplier internal pipeline.
-    localparam int MULT_STAGES = 3;
+    // Matches Mult internal pipeline depth
+    //   (input buf + operand + prod + partial + sum = 5 stages，
+    //    operand reg 把 op-MUX 從 multiplier 的 input cone 移走)。
+    localparam int MULT_STAGES = 5;
 
     logic          mult_issue_valid;
     logic          mult_issue_b_transpose;
-    logic          mult_issue_a_wide;
-    logic          mult_issue_head_mask;
-    logic          mult_issue_head_sel;
-    logic [255:0]  mult_issue_A;
-    logic [SCORE_PACK_W-1:0] mult_issue_score;
+    logic [255:0]  mult_issue_A;           // raw 4-bit packed (before s5 extension)
     logic [255:0]  mult_issue_B;
+    logic [319:0]  mult_issue_A_s5;        // 5-bit packed A for the multiplier
     mult_tag_t     mult_issue_tag;
     logic [2:0]    mult_issue_idx;
+    logic [1:0]    mult_issue_nibble;      // FINAL nibble phase 0/1/2
 
-    mult_tag_t  mult_tag_q [0:MULT_STAGES-1];
-    logic [2:0] mult_idx_q [0:MULT_STAGES-1];
+    mult_tag_t  mult_tag_cs    [0:MULT_STAGES-1];
+    logic [2:0] mult_idx_cs    [0:MULT_STAGES-1];
+    logic [1:0] mult_nibble_cs [0:MULT_STAGES-1]; // nibble phase through pipeline
 
-    function automatic logic [1023:0] unpack_score(input logic [SCORE_PACK_W-1:0] src);
-        logic [SCORE_ELEM_W-1:0] lane;
+    // FINAL counters (registered, valid for the current issue cycle). Issue order
+    // is INTERLEAVED so the 4 matrices' final results emerge on consecutive cycles
+    // (needed for the burst-4 write to stream wr_data correctly):
+    //   loop nesting = head (outer) > nibble (mid) > matrix (inner)
+    //   SHA: 4 mat × 3 nibble          = 12 issues
+    //   MHA: 2 head × 3 nibble × 4 mat = 24 issues
+    logic [1:0] fin_mat_cs;    // matrix within group 0..3 (innermost)
+    logic [1:0] fin_nibble_cs; // 0=lo, 1=mid, 2=hi (middle)
+    logic       fin_head_cs;   // MHA head 0/1 (outermost; SHA stays 0)
+
+    // Signed 4-bit packed vector to the multiplier's 5-bit A format.
+    function automatic logic [319:0] sign_extend_s4_vec(input logic [255:0] src);
         begin
-            unpack_score = 1024'd0;
-            for (int i = 0; i < 64; i++) begin
-                lane = src[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W];
-                unpack_score[1023 - (i * 16) -: 16] =
-                    {{(16-SCORE_ELEM_W){lane[SCORE_ELEM_W-1]}}, lane};
+            for (int e = 0; e < 64; e++) begin
+                sign_extend_s4_vec[319 - (e * 5) -: 5] = {
+                    src[255 - (e * 4)], src[255 - (e * 4) -: 4]
+                };
+            end
+        end
+    endfunction
+
+    // Extract one score nibble vector directly as 5-bit packed A.
+    // phase 0/1 are unsigned nibbles; phase 2 is signed bits[10:8].
+    function automatic logic [319:0] extract_score_nibble_s5(
+        input logic [703:0] src,
+        input logic [1:0]   phase
+    );
+        logic [10:0] ls;
+        begin
+            for (int s = 0; s < 64; s++) begin
+                ls = src[703 - (s * 11) -: 11];
+                case (phase)
+                    2'd0: begin
+                        extract_score_nibble_s5[319 - (s * 5) -: 5] = {1'b0, ls[3:0]};
+                    end
+                    2'd1: begin
+                        extract_score_nibble_s5[319 - (s * 5) -: 5] = {1'b0, ls[7:4]};
+                    end
+                    default: begin
+                        extract_score_nibble_s5[319 - (s * 5) -: 5] = {{2{ls[10]}}, ls[10:8]};
+                    end
+                endcase
             end
         end
     endfunction
@@ -964,14 +1168,12 @@ module Multiple_Processor #(
     always_comb begin
         mult_issue_valid       = 1'b0;
         mult_issue_b_transpose = 1'b0;
-        mult_issue_a_wide      = 1'b0;
-        mult_issue_head_mask   = 1'b0;
-        mult_issue_head_sel    = 1'b0;
         mult_issue_A           = 256'd0;
-        mult_issue_score       = '0;
+        mult_issue_A_s5        = 320'd0;
         mult_issue_B           = 256'd0;
         mult_issue_tag         = MT_NONE;
         mult_issue_idx         = 3'd0;
+        mult_issue_nibble      = 2'd0;
 
         if (issue_valid) begin
             mult_issue_valid = 1'b1;
@@ -979,25 +1181,27 @@ module Multiple_Processor #(
             case (issue_mode)
                 IM_NORM: begin
                     mult_issue_A   = rd_data;
+                    mult_issue_A_s5 = sign_extend_s4_vec(rd_data);
                     mult_issue_B   = param;
                     mult_issue_tag = MT_NORM;
                 end
 
                 IM_QKV: begin
                     case (issue_idx)
-                        4'd0, 4'd1, 4'd2:    mult_issue_idx = 3'd0;
-                        4'd3, 4'd4, 4'd5:    mult_issue_idx = 3'd1;
-                        4'd6, 4'd7, 4'd8:    mult_issue_idx = 3'd2;
+                        5'd0, 5'd1, 5'd2:    mult_issue_idx = 3'd0;
+                        5'd3, 5'd4, 5'd5:    mult_issue_idx = 3'd1;
+                        5'd6, 5'd7, 5'd8:    mult_issue_idx = 3'd2;
                         default:             mult_issue_idx = 3'd3;
                     endcase
-                    mult_issue_A = x_buf[mult_issue_idx[1:0]];
+                    mult_issue_A = x_mem[mult_issue_idx[1:0]];
+                    mult_issue_A_s5 = sign_extend_s4_vec(mult_issue_A);
 
                     case (issue_idx)
-                        4'd0, 4'd3, 4'd6, 4'd9: begin
+                        5'd0, 5'd3, 5'd6, 5'd9: begin
                             mult_issue_B   = param;
                             mult_issue_tag = MT_Q;
                         end
-                        4'd1, 4'd4, 4'd7, 4'd10: begin
+                        5'd1, 5'd4, 5'd7, 5'd10: begin
                             mult_issue_B   = weight_k;
                             mult_issue_tag = MT_K;
                         end
@@ -1009,28 +1213,46 @@ module Multiple_Processor #(
                 end
 
                 IM_SV: begin
+                    // head_mask 改在 issue stage 套：MHA 時把對應 head 不要的
+                    // 4 個 nibble 直接清零，下游 sel_a/sel_b 無 head_mask 分支。
+                    // 每 row 32-bit (8 × nibble)，high 16 = tap 0..3, low 16 = tap 4..7
+                    mult_issue_A = q_mem[issue_idx[1:0]];
+                    mult_issue_B = k_mem[issue_idx[1:0]];
                     if (op == 2'b11) begin
-                        mult_issue_idx       = {issue_idx[2], issue_idx[1:0]};
-                        mult_issue_head_mask = 1'b1;
-                        mult_issue_head_sel  = issue_idx[2];
+                        mult_issue_idx = {issue_idx[2], issue_idx[1:0]};
+                        for (int r = 0; r < 8; r++) begin
+                            if (issue_idx[2] == 1'b0) begin
+                                // head 0：保留 tap 0..3，清 low 16-bit (tap 4..7)
+                                mult_issue_A[239 - 32*r -: 16] = 16'd0;
+                                mult_issue_B[239 - 32*r -: 16] = 16'd0;
+                            end
+                            else begin
+                                // head 1：保留 tap 4..7，清 high 16-bit (tap 0..3)
+                                mult_issue_A[255 - 32*r -: 16] = 16'd0;
+                                mult_issue_B[255 - 32*r -: 16] = 16'd0;
+                            end
+                        end
                     end
                     else begin
                         mult_issue_idx = {1'b0, issue_idx[1:0]};
                     end
-                    mult_issue_A           = q_buf[issue_idx[1:0]];
-                    mult_issue_B           = k_buf[issue_idx[1:0]];
+                    mult_issue_A_s5        = sign_extend_s4_vec(mult_issue_A);
                     mult_issue_b_transpose = 1'b1;
                     mult_issue_tag         = MT_SCORE;
                 end
 
                 IM_FINAL: begin
-                    mult_issue_idx    = (op == 2'b11) ?
-                                        {issue_idx[2], issue_idx[1:0]} :
-                                        {1'b0, issue_idx[1:0]};
-                    mult_issue_a_wide = 1'b1;
-                    mult_issue_score  = score_buf[mult_issue_idx];
-                    mult_issue_B      = v_buf[issue_idx[1:0]];
-                    mult_issue_tag    = MT_FINAL;
+                    // head/nibble/matrix from registered counters (interleaved order).
+                    mult_issue_idx        = (op == 2'b11) ?
+                                            {fin_head_cs, fin_mat_cs} :
+                                            {1'b0, fin_mat_cs};
+                    mult_issue_nibble     = fin_nibble_cs;
+                    mult_issue_A_s5       = extract_score_nibble_s5(
+                                               score_mem[mult_issue_idx], fin_nibble_cs);
+                    mult_issue_B          = v_mem[fin_mat_cs];
+                    // No head_mask in FINAL: MHA does a full 8-tap score×V dot;
+                    // the per-head column split happens later in combine_mha_heads.
+                    mult_issue_tag = MT_FINAL;
                 end
 
                 default: begin
@@ -1040,87 +1262,162 @@ module Multiple_Processor #(
         end
     end
 
-    // ---- Stage 0: operand pipeline register --------------------------------
-    // The issue-time selection (mode/idx muxing of x/q/k/v/score buffers) used
-    // to sit in series with the multiplier, costing ~1.4ns. Latch the selected
-    // operands so the multiplier starts each cycle from stable registers.
-    logic                    op_valid_q;
-    logic                    op_btr_q;
-    logic                    op_awide_q;
-    logic                    op_hmask_q;
-    logic                    op_hsel_q;
-    logic [1:0]              op_op_q;
-    logic [255:0]            op_A_q;
-    logic [255:0]            op_B_q;
-    logic [SCORE_PACK_W-1:0] op_score_q;
-    logic [1023:0]           op_A_wide;
+    // ---- FINAL interleaved counters ----------------------------------------
+    // Nesting: matrix (inner) wraps into nibble (mid) wraps into head (outer).
+    // This emits matrix 0..3 back-to-back within each nibble round, so the
+    // nibble-2 round yields 4 consecutive final results.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fin_mat_cs    <= 2'd0;
+            fin_nibble_cs <= 2'd0;
+            fin_head_cs   <= 1'b0;
+        end
+        else if (issue_valid) begin
+            if (issue_mode == IM_FINAL) begin
+                if (fin_mat_cs == 2'd3) begin
+                    fin_mat_cs <= 2'd0;
+                    if (fin_nibble_cs == 2'd2) begin
+                        fin_nibble_cs <= 2'd0;
+                        fin_head_cs   <= fin_head_cs + 1'b1; // MHA: head0→head1
+                    end else begin
+                        fin_nibble_cs <= fin_nibble_cs + 1'b1;
+                    end
+                end else begin
+                    fin_mat_cs <= fin_mat_cs + 1'b1;
+                end
+            end else begin
+                // Reset at start of any non-FINAL issue (QKV / SV)
+                fin_mat_cs    <= 2'd0;
+                fin_nibble_cs <= 2'd0;
+                fin_head_cs   <= 1'b0;
+            end
+        end
+    end
+
+    // Raw multiplier outputs (before nibble accumulation)
+    logic          mult_raw_valid;
+    logic [1023:0] mult_raw_data;
+
+    Mult_3Stage_Parallel u_mult (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .op          (op),
+        .b_transpose (mult_issue_b_transpose),
+        .in_valid    (mult_issue_valid),
+        .in_data_A   (mult_issue_A_s5),
+        .in_data_B   (mult_issue_B),
+        .out_valid   (mult_raw_valid),
+        .out_data    (mult_raw_data)
+    );
+
+    // Tag / nibble phase pipeline (mirrors Mult internal pipeline depth)
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < MULT_STAGES; i++) begin
+                mult_tag_cs[i]    <= MT_NONE;
+                mult_idx_cs[i]    <= 3'd0;
+                mult_nibble_cs[i] <= 2'd0;
+            end
+        end
+        else begin
+            mult_tag_cs[0]    <= mult_issue_valid ? mult_issue_tag    : MT_NONE;
+            mult_idx_cs[0]    <= mult_issue_idx;
+            mult_nibble_cs[0] <= mult_issue_nibble;
+            for (int i = 1; i < MULT_STAGES; i++) begin
+                mult_tag_cs[i]    <= mult_tag_cs[i - 1];
+                mult_idx_cs[i]    <= mult_idx_cs[i - 1];
+                mult_nibble_cs[i] <= mult_nibble_cs[i - 1];
+            end
+        end
+    end
+
+    // ---- Nibble accumulator (FINAL stage only) ------------------------------
+    // Interleaved: each matrix m has its own running accumulator. A matrix sees
+    // its 3 nibbles spaced 4 issues apart (lo ×1 → mid ×16 → hi ×256). The hi
+    // round (nibble 2) yields the 4 finals on consecutive cycles.
+    logic [1023:0] nibb_acc_cs [0:3];
+    logic [1023:0] nibb_final_data;
+    logic [1:0]    fin_mat_out; // matrix index of the result currently emerging
+
+    assign fin_mat_out = mult_idx_cs[MULT_STAGES-1][1:0];
+
+    // Per-lane shift-accumulate: each 16-bit slot does acc + (prod << sh)
+    // INDEPENDENTLY, truncated to 16 bits. Doing one 1024-bit add would let a
+    // lane overflow carry into the neighbouring lane (off-by-one corruption).
+    function automatic logic [1023:0] lane_shift_add(
+        input logic [1023:0] acc,
+        input logic [1023:0] prod,
+        input int            sh
+    );
+        logic signed [15:0] a;
+        logic signed [15:0] p;
+        begin
+            for (int i = 0; i < 64; i++) begin
+                a = acc [1023 - (i * 16) -: 16];
+                p = prod[1023 - (i * 16) -: 16];
+                lane_shift_add[1023 - (i * 16) -: 16] = a + (p <<< sh);
+            end
+        end
+    endfunction
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            op_valid_q <= 1'b0;
+            for (int i = 0; i < 4; i++) nibb_acc_cs[i] <= 1024'd0;
+        end else if (mult_raw_valid && (mult_tag_cs[MULT_STAGES-1] == MT_FINAL)) begin
+            case (mult_nibble_cs[MULT_STAGES-1])
+                2'd0: nibb_acc_cs[fin_mat_out] <= mult_raw_data;
+                2'd1: nibb_acc_cs[fin_mat_out] <=
+                          lane_shift_add(nibb_acc_cs[fin_mat_out], mult_raw_data, 4);
+                default: ; // phase 2 handled combinationally; acc not updated
+            endcase
+        end
+    end
+
+    // Combinational: phase 2 final per-lane accumulation for this matrix
+    assign nibb_final_data = lane_shift_add(nibb_acc_cs[fin_mat_out], mult_raw_data, 8);
+
+    // 內部 combinational 版本（這條 path：FINAL MUX + lane_shift_add 約 1.3 ns）
+    logic          mult_valid_comb;
+    logic [1023:0] mult_data_comb;
+    mult_tag_t     mult_tag_comb;
+    logic [2:0]    mult_idx_comb;
+
+    assign mult_valid_comb = mult_raw_valid &&
+                             ((mult_tag_cs[MULT_STAGES-1] != MT_FINAL) ||
+                              (mult_nibble_cs[MULT_STAGES-1] == 2'd2));
+    assign mult_data_comb  = (mult_tag_cs[MULT_STAGES-1] == MT_FINAL) ?
+                              nibb_final_data : mult_raw_data;
+    assign mult_tag_comb   = mult_tag_cs[MULT_STAGES-1];
+    assign mult_idx_comb   = mult_idx_cs[MULT_STAGES-1];
+
+    // 輸出 register：把 FINAL MUX cone 跟下游 ACT/PoT 的 abs/MUX cone 切到兩個
+    // cycle，clk 從原本的 ~3 ns 邊界繼續往下推。+1 cycle latency。
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mult_valid   <= 1'b0;
+            mult_tag_out <= MT_NONE;
+            mult_idx_out <= 3'd0;
         end
         else begin
-            op_valid_q <= mult_issue_valid;
-            op_btr_q   <= mult_issue_b_transpose;
-            op_awide_q <= mult_issue_a_wide;
-            op_hmask_q <= mult_issue_head_mask;
-            op_hsel_q  <= mult_issue_head_sel;
-            op_op_q    <= op;
-            op_A_q     <= mult_issue_A;
-            op_B_q     <= mult_issue_B;
-            op_score_q <= mult_issue_score;
+            mult_valid   <= mult_valid_comb;
+            mult_data    <= mult_data_comb;
+            mult_tag_out <= mult_tag_comb;
+            mult_idx_out <= mult_idx_comb;
         end
     end
-
-    // Sign-extension unpack is pure wiring; doing it after the register keeps
-    // the 8:1 score_buf mux off the multiplier path and saves 320 flops vs.
-    // registering the full 1024-bit unpacked form.
-    assign op_A_wide = unpack_score(op_score_q);
-
-    Mult_2Stage_Parallel u_mult (
-        .clk            (clk),
-        .rst_n          (rst_n),
-        .op             (op_op_q),
-        .b_transpose    (op_btr_q),
-        .a_wide         (op_awide_q),
-        .head_mask      (op_hmask_q),
-        .head_sel       (op_hsel_q),
-        .in_valid       (op_valid_q),
-        .in_data_A      (op_A_q),
-        .in_data_A_wide (op_A_wide),
-        .in_data_B      (op_B_q),
-        .out_valid      (mult_valid),
-        .out_data       (mult_data)
-    );
-
-    always_ff @(posedge clk) begin
-        mult_tag_q[0] <= mult_issue_valid ? mult_issue_tag : MT_NONE;
-        mult_idx_q[0] <= mult_issue_idx;
-        for (int i = 1; i < MULT_STAGES; i++) begin
-            mult_tag_q[i] <= mult_tag_q[i - 1];
-            mult_idx_q[i] <= mult_idx_q[i - 1];
-        end
-    end
-
-    assign mult_tag_out = mult_tag_q[MULT_STAGES-1];
-    assign mult_idx_out = mult_idx_q[MULT_STAGES-1];
 
 endmodule
 
-module Mult_2Stage_Parallel (
-    input  logic                 clk,
-    input  logic                 rst_n,
-    input  logic [1:0]           op,
-    input  logic                 b_transpose,
-    input  logic                 a_wide,
-    input  logic                 head_mask,
-    input  logic                 head_sel,
-    input  logic                 in_valid,
-    input  logic [255:0]         in_data_A,
-    input  logic [1023:0]        in_data_A_wide,
-    input  logic [255:0]         in_data_B,
-    output logic                 out_valid,
-    output logic [1023:0]        out_data
+module Mult_3Stage_Parallel (
+    input  logic         clk,
+    input  logic         rst_n,
+    input  logic [1:0]   op,
+    input  logic         b_transpose,
+    input  logic         in_valid,
+    input  logic [319:0] in_data_A,   // 5-bit packed (zero/sign-extend pre-applied upstream)
+    input  logic [255:0] in_data_B,
+    output logic         out_valid,
+    output logic [1023:0] out_data
 );
 
     localparam int ROW_ELEM = 8;
@@ -1128,35 +1425,41 @@ module Mult_2Stage_Parallel (
     localparam int DOT_SIZE = 9;
 
     typedef logic signed [3:0]  s4_t;
+    typedef logic signed [4:0]  s5_t;  // A operand: sign- or zero-extended 4-bit
+    // 範圍分析: sel_a ∈ [-8, 15], sel_b ∈ [-8, 7]
+    //   → product ∈ [15×-8, 15×7] = [-120, 105]，落在 s8 [-128, 127] 內
+    // 比 s9 多省 64×9 = 576 flops（prod_cs），比原 s16 共省 4608 flops。
+    typedef logic signed [7:0]  s8_t;   // product: s5 × s4 → s8 (max ±120 fits)
+    typedef logic signed [11:0] s12_t;  // partial sum: 5×s8 ≤ 600 fits s12
     typedef logic signed [15:0] s16_t;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
     endfunction
 
-    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
-        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
+    function automatic s5_t get_s5(input logic [319:0] vec, input integer idx);
+        get_s5 = $signed(vec[319 - (idx * 5) -: 5]);
     endfunction
 
-    function automatic s4_t get_pad_s4(input logic [255:0] vec, input integer row, input integer col);
-        if ((row < 0) || (row >= ROW_ELEM) || (col < 0) || (col >= ROW_ELEM)) begin
-            get_pad_s4 = 4'sd0;
-        end
-        else begin
-            get_pad_s4 = get_s4(vec, (row * ROW_ELEM) + col);
-        end
+    function automatic s5_t get_pad_s5(
+        input logic [319:0] vec, input integer row, input integer col
+    );
+        if ((row < 0) || (row >= ROW_ELEM) || (col < 0) || (col >= ROW_ELEM))
+            get_pad_s5 = 5'sd0;
+        else
+            get_pad_s5 = get_s5(vec, (row * ROW_ELEM) + col);
     endfunction
 
-    function automatic s16_t sel_a(
-        input logic [255:0]  mat_A,
-        input logic [1023:0] mat_A_wide,
-        input logic [1:0]    op_sel,
-        input logic          a_wide_sel,
-        input logic          head_mask_sel,
-        input logic          head_sel_sel,
-        input integer        row_idx,
-        input integer        lane,
-        input integer        tap
+    // Returns 5-bit signed A element.
+    //   Conv:    sign-extended padded 4-bit element (a_unsigned 永遠為 0)
+    //   tap==8:  zero (bias slot — non-Conv only;此分支對 Conv 不會命中)
+    //   normal:  upstream 已套 a_unsigned，直接拿 5-bit
+    function automatic s5_t sel_a(
+        input logic [319:0] mat_A,
+        input logic [1:0]   op_sel,
+        input integer       row_idx,
+        input integer       lane,
+        input integer       tap
     );
         integer idx;
         integer row;
@@ -1166,20 +1469,13 @@ module Mult_2Stage_Parallel (
                 idx   = (row_idx * ROW_ELEM) + lane;
                 row   = idx / ROW_ELEM;
                 col   = idx % ROW_ELEM;
-                sel_a = get_pad_s4(mat_A, row + (tap / 3) - 1, col + (tap % 3) - 1);
+                sel_a = get_pad_s5(mat_A, row + (tap / 3) - 1, col + (tap % 3) - 1);
             end
             else if (tap == 8) begin
-                sel_a = 16'sd0;
-            end
-            else if (head_mask_sel &&
-                     ((!head_sel_sel && (tap >= 4)) || (head_sel_sel && (tap < 4)))) begin
-                sel_a = 16'sd0;
-            end
-            else if (a_wide_sel) begin
-                sel_a = get_s16(mat_A_wide, (row_idx * ROW_ELEM) + tap);
+                sel_a = 5'sd0;
             end
             else begin
-                sel_a = get_s4(mat_A, (row_idx * ROW_ELEM) + tap);
+                sel_a = get_s5(mat_A, (row_idx * ROW_ELEM) + tap);
             end
         end
     endfunction
@@ -1188,96 +1484,137 @@ module Mult_2Stage_Parallel (
         input logic [255:0] mat_B,
         input logic [1:0]   op_sel,
         input logic         b_transpose_sel,
-        input logic         head_mask_sel,
-        input logic         head_sel_sel,
         input integer       lane,
         input integer       tap
     );
         begin
-            if (op_sel == 2'b01) begin
+            if (op_sel == 2'b01)
                 sel_b = get_s4(mat_B, tap);
-            end
-            else if (tap == 8) begin
+            else if (tap == 8)
                 sel_b = 4'sd0;
-            end
-            else if (head_mask_sel &&
-                     ((!head_sel_sel && (tap >= 4)) || (head_sel_sel && (tap < 4)))) begin
-                sel_b = 4'sd0;
-            end
-            else if (b_transpose_sel) begin
+            else if (b_transpose_sel)
                 sel_b = get_s4(mat_B, (lane * ROW_ELEM) + tap);
-            end
-            else begin
+            else
                 sel_b = get_s4(mat_B, (tap * ROW_ELEM) + lane);
-            end
         end
     endfunction
 
-    // Stage 1 = all 64*9 = 576 partial products combinational, then register.
-    // Stage 2 = per-lane 9-input add tree combinational, then register.
-    logic stage1_valid_q;
-    logic stage2_valid_q;
-    s16_t prod_q   [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s16_t sum_q    [0:MAT_SIZE-1];
+    // Stage 0: input buffer (operands + control)。Decouples upstream issue mux。
+    // Stage 1: 576 個 (s5_a, s4_b) operand pair：op-dependent sel_a/sel_b 在這級 register，
+    //          下一級的 prod_next cone 就跟 op 解耦了。
+    // Stage 2: 576 partial products s5×s4 → s8 (max ±120)。
+    // Stage 3: split 9-input sum 5+4 → 2 partial sums (s12)，加法樹深度切半。
+    // Stage 4: 2-input add → s16 sum。
+    // (從 4-stage 變 5-stage：把 op[1:0] 從 multiplier 的 input cone 移出去，clk 大幅縮短。)
+    logic         in_valid_cs;
+    // op 在一個 job 內為常數（exec_op 已存在 Control），不需要 input register。
+    logic         b_transpose_cs;
+    logic [319:0] in_data_A_cs;
+    logic [255:0] in_data_B_cs;
 
-    s16_t prod_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s16_t sum_next  [0:MAT_SIZE-1];
+    logic stage1_valid_cs;
+    logic stage2_valid_cs;
+    logic stage3_valid_cs;
+    logic stage4_valid_cs;
+    s5_t  operand_a_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s4_t  operand_b_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s8_t  prod_cs      [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s12_t partial_cs   [0:MAT_SIZE-1][0:1];
+    s16_t sum_cs       [0:MAT_SIZE-1];
 
+    s5_t  operand_a_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s4_t  operand_b_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s8_t  prod_next      [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s12_t partial_next   [0:MAT_SIZE-1][0:1];
+    s16_t sum_next       [0:MAT_SIZE-1];
+
+    // Stage 1: op-dependent operand selection (Conv vs FFN/SHA/MHA 位址)
     always_comb begin
         for (int row = 0; row < ROW_ELEM; row++) begin
             for (int lane = 0; lane < ROW_ELEM; lane++) begin
                 for (int tap = 0; tap < DOT_SIZE; tap++) begin
-                    prod_next[(row * ROW_ELEM) + lane][tap] =
-                        $signed(sel_a(in_data_A, in_data_A_wide, op,
-                                      a_wide, head_mask, head_sel,
-                                      row, lane, tap)) *
-                        $signed(sel_b(in_data_B, op, b_transpose,
-                                      head_mask, head_sel,
-                                      lane, tap));
+                    operand_a_next[(row * ROW_ELEM) + lane][tap] =
+                        sel_a(in_data_A_cs, op, row, lane, tap);
+                    operand_b_next[(row * ROW_ELEM) + lane][tap] =
+                        sel_b(in_data_B_cs, op, b_transpose_cs, lane, tap);
                 end
             end
         end
     end
 
+    // Stage 2: pure s5×s4 multiplier，input 已被 stage 1 register 隔開 op
     always_comb begin
         for (int i = 0; i < MAT_SIZE; i++) begin
-            sum_next[i] = ((prod_q[i][0] + prod_q[i][1]) + (prod_q[i][2] + prod_q[i][3])) +
-                          ((prod_q[i][4] + prod_q[i][5]) + (prod_q[i][6] + prod_q[i][7]) +
-                           prod_q[i][8]);
+            for (int t = 0; t < DOT_SIZE; t++) begin
+                prod_next[i][t] = s8_t'(
+                    $signed(operand_a_cs[i][t]) * $signed(operand_b_cs[i][t]));
+            end
+        end
+    end
+
+    // Stage 3: 5 + 4 partial sums (each in s12)
+    always_comb begin
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            partial_next[i][0] = s12_t'(prod_cs[i][0]) + s12_t'(prod_cs[i][1]) +
+                                 s12_t'(prod_cs[i][2]) + s12_t'(prod_cs[i][3]) +
+                                 s12_t'(prod_cs[i][4]);
+            partial_next[i][1] = s12_t'(prod_cs[i][5]) + s12_t'(prod_cs[i][6]) +
+                                 s12_t'(prod_cs[i][7]) + s12_t'(prod_cs[i][8]);
+        end
+    end
+
+    // Stage 4: combine 2 partials → s16
+    always_comb begin
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            sum_next[i] = s16_t'(partial_cs[i][0]) + s16_t'(partial_cs[i][1]);
         end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            stage1_valid_q <= 1'b0;
-            stage2_valid_q <= 1'b0;
+            in_valid_cs     <= 1'b0;
+            stage1_valid_cs <= 1'b0;
+            stage2_valid_cs <= 1'b0;
+            stage3_valid_cs <= 1'b0;
+            stage4_valid_cs <= 1'b0;
         end
         else begin
-            stage1_valid_q <= in_valid;
-            stage2_valid_q <= stage1_valid_q;
-            for (int i = 0; i < MAT_SIZE; i++) begin
+            in_valid_cs     <= in_valid;
+            b_transpose_cs  <= b_transpose;
+            in_data_A_cs    <= in_data_A;
+            in_data_B_cs    <= in_data_B;
+
+            stage1_valid_cs <= in_valid_cs;
+            stage2_valid_cs <= stage1_valid_cs;
+            stage3_valid_cs <= stage2_valid_cs;
+            stage4_valid_cs <= stage3_valid_cs;
+            for (int i = 0; i < MAT_SIZE; i++)
                 for (int t = 0; t < DOT_SIZE; t++) begin
-                    prod_q[i][t] <= prod_next[i][t];
+                    operand_a_cs[i][t] <= operand_a_next[i][t];
+                    operand_b_cs[i][t] <= operand_b_next[i][t];
                 end
-            end
+            for (int i = 0; i < MAT_SIZE; i++)
+                for (int t = 0; t < DOT_SIZE; t++)
+                    prod_cs[i][t] <= prod_next[i][t];
             for (int i = 0; i < MAT_SIZE; i++) begin
-                sum_q[i] <= sum_next[i];
+                partial_cs[i][0] <= partial_next[i][0];
+                partial_cs[i][1] <= partial_next[i][1];
             end
+            for (int i = 0; i < MAT_SIZE; i++)
+                sum_cs[i] <= sum_next[i];
         end
     end
 
-    assign out_valid = stage2_valid_q;
+    assign out_valid = stage4_valid_cs;
 
     always_comb begin
         out_data = 1024'd0;
-        for (int i = 0; i < MAT_SIZE; i++) begin
-            out_data[1023 - (i * 16) -: 16] = sum_q[i];
-        end
+        for (int i = 0; i < MAT_SIZE; i++)
+            out_data[1023 - (i * 16) -: 16] = sum_cs[i];
     end
-
 endmodule
 
-module ACT_FiveStage_Parallel (
+module ACT_4Stage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
@@ -1291,132 +1628,117 @@ module ACT_FiveStage_Parallel (
     localparam int MAT_SIZE   = 64;
     localparam int ROW_ELEM   = 8;
     localparam int CHUNK_SIZE = 16;
-    localparam int ACT_STAGES = 5;
+    localparam int NUM_CHUNK  = 4;
+    localparam int ACT_STAGES = 4;  // pair → psum → threshold → apply
 
     localparam logic [1:0] ACT_USER    = 2'd0;
     localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
     typedef logic signed [15:0] s16_t;
-    typedef logic signed [19:0] s20_t;
+    typedef logic signed [16:0] s17_t;  // pair: s16+s16 → ±65K, fits s17
+    typedef logic signed [17:0] s18_t;  // psum: 4×s16 → range ±131K, fits s18
+    typedef logic signed [19:0] s20_t;  // 留給 stage-1 中間 (part_sum01/23, BAT 和)
 
-    logic          valid_q  [0:ACT_STAGES-1];
-    logic [1:0]    act_q    [0:ACT_STAGES-1];
-    logic [1:0]    mode_q   [0:ACT_STAGES-1];
-    logic [1023:0] matrix_q [0:ACT_STAGES-1];
-    // thr_*_q only feeds stages 1..4 (each stage uses prev stage's threshold).
-    // Stage 4 is the last apply_chunk consumer, so we only need indices 0..3.
-    s20_t          thr_a_q  [0:ACT_STAGES-2];
-    s20_t          thr_b_q  [0:ACT_STAGES-2];
+    // Input buffer (decouples upstream dispatch mux from psum tree; ACT 從外面
+    // 看是 4-stage：input_buf → psum → threshold → apply)。
+    logic          in_valid_buf;
+    logic [1:0]    act_buf;
+    // Duplicated stage-0 selects reduce fanout from the ACT selector into the
+    // pair-sum mux/add logic. Keep them separate so synthesis does not merge
+    // the equivalent registers back into one high-fanout driver.
+    (* dont_touch = "true" *) logic [1:0] act_chunk_buf [0:NUM_CHUNK-1];
+    logic [1:0]    mode_buf;
+    logic [1023:0] in_data_buf;
 
-    logic [39:0]   thr0_pair;
-    logic [39:0]   thr1_pair;
-    logic [39:0]   thr2_pair;
-    logic [39:0]   thr3_pair;
+    logic          valid_cs  [0:ACT_STAGES-1];
+    logic [1:0]    act_cs    [0:ACT_STAGES-1];
+    logic [1:0]    mode_cs   [0:ACT_STAGES-1];
+    logic [1023:0] matrix_cs [0:ACT_STAGES-1];
 
-    assign out_valid = valid_q[ACT_STAGES-1];
-    assign out_data  = matrix_q[ACT_STAGES-1];
+    // Pipeline stages (after input_buf)：
+    //   Stage 0: pair sums per chunk×p×half = 16×2 (act-MUX + 1 add level，s17)
+    //   Stage 1: psum_cs = pair_a + pair_b (1 add level，s18)。切半原本 stage-0 加法樹深度。
+    //   Stage 2: thresholds from psum (RAT/CAT 2-input；BAT 4-input)
+    //   Stage 3: apply activation
+    s17_t          pair_a_cs [0:NUM_CHUNK-1][0:3];  // e0+e1
+    s17_t          pair_b_cs [0:NUM_CHUNK-1][0:3];  // e2+e3
+    s18_t          psum_cs   [0:NUM_CHUNK-1][0:3];
+    s16_t          thr_a_cs  [0:NUM_CHUNK-1];
+    s16_t          thr_b_cs  [0:NUM_CHUNK-1];
+
+    s17_t          pair_a_ns [0:NUM_CHUNK-1][0:3];
+    s17_t          pair_b_ns [0:NUM_CHUNK-1][0:3];
+    s18_t          psum_ns   [0:NUM_CHUNK-1][0:3];
+    s16_t          thr_a_ns  [0:NUM_CHUNK-1];
+    s16_t          thr_b_ns  [0:NUM_CHUNK-1];
+    logic [1023:0] apply_ns;
+
+    s20_t          part_sum01;
+    s20_t          part_sum23;
+
+    assign out_valid = valid_cs[ACT_STAGES-1];
+    assign out_data  = matrix_cs[ACT_STAGES-1];
 
     function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
         get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
-    function automatic s20_t ext20(input s16_t value);
-        ext20 = {{4{value[15]}}, value};
+    function automatic s18_t ext18(input s16_t value);
+        ext18 = {{2{value[15]}}, value};
     endfunction
 
-    // Balanced adder trees: depth log2(N) instead of serial accumulation.
-    function automatic s20_t reduce8(input s20_t a [0:7]);
-        s20_t l1 [0:3];
-        s20_t l2 [0:1];
-        begin
-            l1[0] = a[0] + a[1];
-            l1[1] = a[2] + a[3];
-            l1[2] = a[4] + a[5];
-            l1[3] = a[6] + a[7];
-            l2[0] = l1[0] + l1[1];
-            l2[1] = l1[2] + l1[3];
-            reduce8 = l2[0] + l2[1];
-        end
-    endfunction
-
-    function automatic s20_t reduce16(input s20_t a [0:15]);
-        s20_t l1 [0:7];
-        begin
-            for (int i = 0; i < 8; i++) l1[i] = a[2*i] + a[2*i+1];
-            reduce16 = reduce8(l1);
-        end
-    endfunction
-
-    function automatic logic [39:0] calc_threshold_pair(
+    // Half pair sum：把原本 chunk_partial_sum 4-element 切成 2 個 2-element pair。
+    //   half=0 → e0+e1；half=1 → e2+e3。stage 0 register 兩個 pair，stage 1 再合併。
+    //   每個 pair 是 s16+s16 = s17，最後 s17+s17=s18 跟原 psum 同 range。
+    function automatic s17_t chunk_half_sum(
         input logic [1023:0] matrix,
         input logic [1:0]    act_sel,
-        input integer        chunk
+        input integer        chunk,
+        input integer        p,
+        input integer        half  // 0 = e0+e1, 1 = e2+e3
     );
-        integer row0;
-        integer row1;
-        integer col0;
-        integer col1;
+        integer row;
+        integer col;
         integer base_row;
         integer base_col;
-        s20_t  terms_a  [0:7];
-        s20_t  terms_b  [0:7];
-        s20_t  terms16  [0:15];
-        s20_t  thr_a;
-        s20_t  thr_b;
+        integer blk_row;
+        s16_t   a;
+        s16_t   b;
         begin
-            thr_a = 20'sd0;
-            thr_b = 20'sd0;
-            for (int i = 0; i < 8;  i++) begin
-                terms_a[i] = 20'sd0;
-                terms_b[i] = 20'sd0;
-            end
-            for (int i = 0; i < 16; i++) terms16[i] = 20'sd0;
+            a = 16'sd0;
+            b = 16'sd0;
 
             case (act_sel)
-                2'b01: begin
-                    row0 = chunk * 2;
-                    row1 = row0 + 1;
-                    for (int c = 0; c < ROW_ELEM; c++) begin
-                        terms_a[c] = ext20(get_s16(matrix, (row0 * ROW_ELEM) + c));
-                        terms_b[c] = ext20(get_s16(matrix, (row1 * ROW_ELEM) + c));
-                    end
-                    thr_a = reduce8(terms_a) >>> 3;
-                    thr_b = reduce8(terms_b) >>> 3;
+                2'b01: begin  // RAT
+                    row = (chunk * 2) + (p / 2);
+                    col = (p % 2) * 4 + (half * 2);
+                    a = get_s16(matrix, (row * ROW_ELEM) + col + 0);
+                    b = get_s16(matrix, (row * ROW_ELEM) + col + 1);
                 end
 
-                2'b10: begin
-                    col0 = chunk * 2;
-                    col1 = col0 + 1;
-                    for (int r = 0; r < ROW_ELEM; r++) begin
-                        terms_a[r] = ext20(get_s16(matrix, (r * ROW_ELEM) + col0));
-                        terms_b[r] = ext20(get_s16(matrix, (r * ROW_ELEM) + col1));
-                    end
-                    thr_a = reduce8(terms_a) >>> 3;
-                    thr_b = reduce8(terms_b) >>> 3;
+                2'b10: begin  // CAT
+                    col = (chunk * 2) + (p / 2);
+                    row = (p % 2) * 4 + (half * 2);
+                    a = get_s16(matrix, ((row + 0) * ROW_ELEM) + col);
+                    b = get_s16(matrix, ((row + 1) * ROW_ELEM) + col);
                 end
 
-                2'b11: begin
+                2'b11: begin  // BAT
                     base_row = (chunk / 2) * 4;
                     base_col = (chunk % 2) * 4;
-                    for (int r = 0; r < 4; r++) begin
-                        for (int c = 0; c < 4; c++) begin
-                            terms16[(r * 4) + c] =
-                                ext20(get_s16(matrix,
-                                              ((base_row + r) * ROW_ELEM) +
-                                              (base_col + c)));
-                        end
-                    end
-                    thr_a = reduce16(terms16) >>> 4;
-                    thr_b = thr_a;
+                    blk_row  = base_row + p;
+                    col      = base_col + (half * 2);
+                    a = get_s16(matrix, (blk_row * ROW_ELEM) + col + 0);
+                    b = get_s16(matrix, (blk_row * ROW_ELEM) + col + 1);
                 end
 
                 default: begin
-                    thr_a = 20'sd0;
-                    thr_b = 20'sd0;
+                    a = 16'sd0;
+                    b = 16'sd0;
                 end
             endcase
 
-            calc_threshold_pair = {thr_a, thr_b};
+            chunk_half_sum = s17_t'(a) + s17_t'(b);
         end
     endfunction
 
@@ -1454,11 +1776,49 @@ module ACT_FiveStage_Parallel (
         end
     endfunction
 
-    function automatic s20_t select_threshold(
+    // Per-position threshold lookup（element-centric, 取代原 chunk_idx + select_threshold
+    // 的 (chunk, lane)→pos cross-bar MUX）。對每個 output position pos：
+    //   RAT/CAT/BAT 各對應一個固定的 thr_a[c] 或 thr_b[c]（compile-time）；
+    //   再用 act_sel 做 3-way MUX。write addr 是常數 pos，不需 cross-bar。
+    function automatic s16_t thr_for_position(
+        input logic [1:0] act_sel,
+        input integer     pos,
+        input s16_t       thr_a [0:NUM_CHUNK-1],
+        input s16_t       thr_b [0:NUM_CHUNK-1]
+    );
+        integer rat_chunk;
+        integer cat_chunk;
+        integer bat_chunk;
+        s16_t   rat_thr;
+        s16_t   cat_thr;
+        s16_t   bat_thr;
+        begin
+            // RAT: pos = chunk*16 + lane; lane<8 → thr_a
+            rat_chunk = pos / 16;
+            rat_thr   = ((pos % 16) < ROW_ELEM) ? thr_a[rat_chunk] : thr_b[rat_chunk];
+
+            // CAT: lane = (pos/8)*2 + pos%2; lane%2==0 ↔ pos%2==0 → thr_a
+            cat_chunk = (pos % ROW_ELEM) / 2;
+            cat_thr   = ((pos % 2) == 0) ? thr_a[cat_chunk] : thr_b[cat_chunk];
+
+            // BAT: 4x4 block; chunk = (row/4)*2 + col/4, all elements use thr_a
+            bat_chunk = ((pos / ROW_ELEM) / 4) * 2 + ((pos % ROW_ELEM) / 4);
+            bat_thr   = thr_a[bat_chunk];
+
+            case (act_sel)
+                2'b01:   thr_for_position = rat_thr;
+                2'b10:   thr_for_position = cat_thr;
+                2'b11:   thr_for_position = bat_thr;
+                default: thr_for_position = 16'sd0;
+            endcase
+        end
+    endfunction
+
+    function automatic s16_t select_threshold(
         input logic [1:0] act_sel,
         input integer     lane,
-        input s20_t       threshold_a,
-        input s20_t       threshold_b
+        input s16_t       threshold_a,
+        input s16_t       threshold_b
     );
         begin
             case (act_sel)
@@ -1475,7 +1835,7 @@ module ACT_FiveStage_Parallel (
                 end
 
                 default: begin
-                    select_threshold = 20'sd0;
+                    select_threshold = 16'sd0;
                 end
             endcase
         end
@@ -1485,7 +1845,7 @@ module ACT_FiveStage_Parallel (
         input s16_t       value,
         input logic [1:0] act_sel,
         input logic [1:0] mode_sel,
-        input s20_t       threshold
+        input s16_t       threshold
     );
         begin
             case (mode_sel)
@@ -1498,99 +1858,146 @@ module ACT_FiveStage_Parallel (
                         activate_value = (value < 0) ? 16'sd0 : value;
                     end
                     else begin
-                        activate_value = (ext20(value) < threshold) ? (value >>> 3) : value;
+                        activate_value = (value < threshold) ? (value >>> 3) : value;
                     end
                 end
             endcase
         end
     endfunction
 
-    function automatic logic [1023:0] apply_chunk(
-        input logic [1023:0] base_matrix,
-        input logic [1023:0] src_matrix,
-        input logic [1:0]    act_sel,
-        input logic [1:0]    mode_sel,
-        input integer        chunk,
-        input s20_t          threshold_a,
-        input s20_t          threshold_b
-    );
-        integer idx;
-        s20_t  threshold;
-        begin
-            apply_chunk = base_matrix;
-
-            for (int lane = 0; lane < CHUNK_SIZE; lane++) begin
-                idx       = chunk_idx(act_sel, mode_sel, chunk, lane);
-                threshold = select_threshold(act_sel, lane, threshold_a, threshold_b);
-                apply_chunk[1023 - (idx * 16) -: 16] =
-                    activate_value(get_s16(src_matrix, idx), act_sel, mode_sel, threshold);
+    // Stage 0 combinational: 16 chunks×p pair sums (e0+e1, e2+e3) — act-MUX + 1 add level
+    always_comb begin
+        for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
+            for (int p = 0; p < 4; p++) begin
+                pair_a_ns[chunk][p] = chunk_half_sum(
+                    in_data_buf, act_chunk_buf[chunk], chunk, p, 0);
+                pair_b_ns[chunk][p] = chunk_half_sum(
+                    in_data_buf, act_chunk_buf[chunk], chunk, p, 1);
             end
         end
-    endfunction
+    end
 
+    // Stage 1 combinational: combine pair_a + pair_b → psum (1 add level)
     always_comb begin
-        thr0_pair = calc_threshold_pair(in_data,     act,      0);
-        thr1_pair = calc_threshold_pair(matrix_q[0], act_q[0], 1);
-        thr2_pair = calc_threshold_pair(matrix_q[1], act_q[1], 2);
-        thr3_pair = calc_threshold_pair(matrix_q[2], act_q[2], 3);
+        for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
+            for (int p = 0; p < 4; p++) begin
+                psum_ns[chunk][p] = s18_t'(pair_a_cs[chunk][p]) +
+                                    s18_t'(pair_b_cs[chunk][p]);
+            end
+        end
+    end
+
+    // Stage 2 combinational: combine the registered partials into thresholds.
+    // RAT/CAT keep two thresholds per chunk (one per row/col); BAT shares one.
+    always_comb begin
+        for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
+            part_sum01 = psum_cs[chunk][0] + psum_cs[chunk][1];
+            part_sum23 = psum_cs[chunk][2] + psum_cs[chunk][3];
+            case (act_cs[1])
+                2'b01, 2'b10: begin
+                    thr_a_ns[chunk] = part_sum01 >>> 3;
+                    thr_b_ns[chunk] = part_sum23 >>> 3;
+                end
+                2'b11: begin
+                    thr_a_ns[chunk] = (part_sum01 + part_sum23) >>> 4;
+                    thr_b_ns[chunk] = thr_a_ns[chunk];
+                end
+                default: begin
+                    thr_a_ns[chunk] = 16'sd0;
+                    thr_b_ns[chunk] = 16'sd0;
+                end
+            endcase
+        end
+    end
+
+    // Stage 3 combinational: apply activation per output position（element-centric）。
+    // 每個 position 的 read/write 位址都是常數，act_sel 只在 threshold MUX 出現。
+    // 比原 (chunk, lane)→apply_idx 的 cross-bar 寫入結構淺。
+    always_comb begin
+        for (int pos = 0; pos < MAT_SIZE; pos++) begin
+            apply_ns[1023 - (pos * 16) -: 16] = activate_value(
+                get_s16(matrix_cs[2], pos),
+                act_cs[2],
+                mode_cs[2],
+                thr_for_position(act_cs[2], pos, thr_a_cs, thr_b_cs));
+        end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            in_valid_buf <= 1'b0;
+            act_buf      <= 2'd0;
+            mode_buf     <= ACT_USER;
+            in_data_buf  <= 1024'd0;
             for (int i = 0; i < ACT_STAGES; i++) begin
-                valid_q[i]  <= 1'b0;
-                act_q[i]    <= 2'd0;
-                mode_q[i]   <= ACT_USER;
-                matrix_q[i] <= 1024'd0;
+                valid_cs[i]  <= 1'b0;
+                act_cs[i]    <= 2'd0;
+                mode_cs[i]   <= ACT_USER;
+                matrix_cs[i] <= 1024'd0;
             end
-            for (int i = 0; i < ACT_STAGES - 1; i++) begin
-                thr_a_q[i] <= 20'sd0;
-                thr_b_q[i] <= 20'sd0;
+            for (int c = 0; c < NUM_CHUNK; c++) begin
+                act_chunk_buf[c] <= 2'd0;
+                for (int p = 0; p < 4; p++) begin
+                    pair_a_cs[c][p] <= 17'sd0;
+                    pair_b_cs[c][p] <= 17'sd0;
+                    psum_cs[c][p]   <= 18'sd0;
+                end
+                thr_a_cs[c] <= 16'sd0;
+                thr_b_cs[c] <= 16'sd0;
             end
         end
         else begin
-            valid_q[0]  <= in_valid;
-            act_q[0]    <= act;
-            mode_q[0]   <= act_mode;
-            matrix_q[0] <= in_data;
-            thr_a_q[0]  <= $signed(thr0_pair[39:20]);
-            thr_b_q[0]  <= $signed(thr0_pair[19:0]);
+            // Input buffer: 從上游 dispatch mux 切一拍進來。
+            in_valid_buf <= in_valid;
+            act_buf      <= act;
+            mode_buf     <= act_mode;
+            in_data_buf  <= in_data;
+            for (int c = 0; c < NUM_CHUNK; c++) begin
+                act_chunk_buf[c] <= act;
+            end
 
-            valid_q[1]  <= valid_q[0];
-            act_q[1]    <= act_q[0];
-            mode_q[1]   <= mode_q[0];
-            matrix_q[1] <= apply_chunk(matrix_q[0], matrix_q[0], act_q[0], mode_q[0],
-                                       0, thr_a_q[0], thr_b_q[0]);
-            thr_a_q[1]  <= $signed(thr1_pair[39:20]);
-            thr_b_q[1]  <= $signed(thr1_pair[19:0]);
+            // Stage 0: pair sums (act-MUX + 1 add level)，capture matrix。
+            valid_cs[0]  <= in_valid_buf;
+            act_cs[0]    <= act_buf;
+            mode_cs[0]   <= mode_buf;
+            matrix_cs[0] <= in_data_buf;
+            for (int c = 0; c < NUM_CHUNK; c++) begin
+                for (int p = 0; p < 4; p++) begin
+                    pair_a_cs[c][p] <= pair_a_ns[c][p];
+                    pair_b_cs[c][p] <= pair_b_ns[c][p];
+                end
+            end
 
-            valid_q[2]  <= valid_q[1];
-            act_q[2]    <= act_q[1];
-            mode_q[2]   <= mode_q[1];
-            matrix_q[2] <= apply_chunk(matrix_q[1], matrix_q[1], act_q[1], mode_q[1],
-                                       1, thr_a_q[1], thr_b_q[1]);
-            thr_a_q[2]  <= $signed(thr2_pair[39:20]);
-            thr_b_q[2]  <= $signed(thr2_pair[19:0]);
+            // Stage 1: pair_a + pair_b → psum (1 add level)，carry matrix。
+            valid_cs[1]  <= valid_cs[0];
+            act_cs[1]    <= act_cs[0];
+            mode_cs[1]   <= mode_cs[0];
+            matrix_cs[1] <= matrix_cs[0];
+            for (int c = 0; c < NUM_CHUNK; c++) begin
+                for (int p = 0; p < 4; p++) psum_cs[c][p] <= psum_ns[c][p];
+            end
 
-            valid_q[3]  <= valid_q[2];
-            act_q[3]    <= act_q[2];
-            mode_q[3]   <= mode_q[2];
-            matrix_q[3] <= apply_chunk(matrix_q[2], matrix_q[2], act_q[2], mode_q[2],
-                                       2, thr_a_q[2], thr_b_q[2]);
-            thr_a_q[3]  <= $signed(thr3_pair[39:20]);
-            thr_b_q[3]  <= $signed(thr3_pair[19:0]);
+            // Stage 2: combine partials into thresholds, carry the matrix.
+            valid_cs[2]  <= valid_cs[1];
+            act_cs[2]    <= act_cs[1];
+            mode_cs[2]   <= mode_cs[1];
+            matrix_cs[2] <= matrix_cs[1];
+            for (int c = 0; c < NUM_CHUNK; c++) begin
+                thr_a_cs[c] <= thr_a_ns[c];
+                thr_b_cs[c] <= thr_b_ns[c];
+            end
 
-            valid_q[4]  <= valid_q[3];
-            act_q[4]    <= act_q[3];
-            mode_q[4]   <= mode_q[3];
-            matrix_q[4] <= apply_chunk(matrix_q[3], matrix_q[3], act_q[3], mode_q[3],
-                                       3, thr_a_q[3], thr_b_q[3]);
+            // Stage 3: apply activation.
+            valid_cs[3]  <= valid_cs[2];
+            act_cs[3]    <= act_cs[2];
+            mode_cs[3]   <= mode_cs[2];
+            matrix_cs[3] <= apply_ns;
         end
     end
-
 endmodule
 
-module PoT_FiveStage_Parallel (
+
+module PoT_5Stage_Parallel (
     input  logic          clk,
     input  logic          rst_n,
     input  logic          in_valid,
@@ -1600,26 +2007,155 @@ module PoT_FiveStage_Parallel (
 );
 
     localparam int MAT_SIZE  = 64;
-    localparam int HALF_SIZE = MAT_SIZE / 2;
 
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [15:0] s16_t;
 
+    // Input registers：
+    //   in_data_cs 走 src_pipe（quant 要 signed 原值）。
+    //   abs_cs 餵 Matrix_Max；abs comb 從 in_data 算（上游 act/mult Q 已 reg），
+    //   把 abs 的 ~15-gate carry chain 從 Matrix_Max stage 1 抽到 input edge，
+    //   切短原本 in_data_cs→abs→max4→max16_cs 的 critical path。
+    logic          in_valid_cs;
+    logic [1023:0] in_data_cs;
+    logic [1023:0] abs_cs;
+    logic [1023:0] abs_ns;
+
     logic          max_valid;
-    logic [15:0]   max_abs;
-    logic [1023:0] src_pipe_q [0:2];
-    logic          quant_valid;
-    logic [3:0]    quant_shift;
-    logic [1023:0] quant_src;
-    logic [255:0]  quant_data;
-    logic [3:0]    shift_next;
-    logic [255:0]  quant_data_next;
-    logic [255:0]  out_data_next;
+    logic [3:0]    shift_from_max;  // Matrix_Max 已算好的 4-bit shift 量
+    logic [1023:0] src_pipe_cs [0:2];
+    logic [255:0]  out_data_ns;
 
     function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
         get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
     endfunction
 
+    function automatic logic [15:0] abs16(input s16_t value);
+        abs16 = (value < 0) ? -value : value;
+    endfunction
+
+    // abs comb：對 64 lanes 同步算 absolute value，給下一拍 abs_cs。
+    always_comb begin
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            abs_ns[1023 - (i * 16) -: 16] = abs16(get_s16(in_data, i));
+        end
+    end
+
+    // input register
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            in_valid_cs <= 1'b0;
+        end
+        else begin
+            // Do not gate with in_valid; avoiding the enable mux keeps the
+            // register D path simpler and gives synthesis more freedom.
+            in_valid_cs <= in_valid;
+            in_data_cs  <= in_data;
+            abs_cs      <= abs_ns;
+        end
+    end
+
+    function automatic s4_t clamp_s4(input s16_t value);
+        begin
+            if (value > 16'sd7) begin
+                clamp_s4 = 4'sd7;
+            end
+            else if (value < -16'sd8) begin
+                clamp_s4 = -4'sd8;
+            end
+            else begin
+                clamp_s4 = value[3:0];
+            end
+        end
+    endfunction
+
+    // Quantize all 64 elements in one stage: each lane is an independent
+    // arithmetic shift + clamp, so the two former phase-halves run in parallel
+    // without lengthening the per-lane path.
+    function automatic logic [255:0] quant_all(
+        input logic [1023:0] src_data,
+        input logic [3:0]    shift
+    );
+        s16_t scaled;
+        begin
+            quant_all = 256'd0;
+            for (int idx = 0; idx < MAT_SIZE; idx++) begin
+                scaled = get_s16(src_data, idx) >>> shift;
+                quant_all[255 - (idx * 4) -: 4] = clamp_s4(scaled);
+            end
+        end
+    endfunction
+
+    Matrix_Max_3Stage_Parallel u_matrix_max (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (in_valid_cs),
+        .in_abs    (abs_cs),
+        .out_valid (max_valid),
+        .out_shift (shift_from_max)
+    );
+
+    // pot_shift 已在 Matrix_Max 內 1-cycle 算完，PoT 這裡只剩 quant_all。
+    assign out_data_ns = quant_all(src_pipe_cs[2], shift_from_max);
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int stage = 0; stage < 3; stage++) begin
+                src_pipe_cs[stage] <= 1024'd0;
+            end
+        end
+        else begin
+            src_pipe_cs[0] <= in_data_cs;
+            src_pipe_cs[1] <= src_pipe_cs[0];
+            src_pipe_cs[2] <= src_pipe_cs[1];
+        end
+    end
+
+    // clean timing output
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            out_valid <= 1'b0;
+        end
+        else begin
+            out_valid  <= max_valid;
+            out_data   <= out_data_ns;
+        end
+    end
+
+endmodule
+
+
+module Matrix_Max_3Stage_Parallel (
+    input  logic          clk,
+    input  logic          rst_n,
+    input  logic          in_valid,
+    input  logic [1023:0] in_abs,    // 64 lanes unsigned abs（PoT 上游算好）
+    output logic          out_valid,
+    output logic [3:0]    out_shift  // PoT 所需的 arithmetic-shift 量（已算好）
+);
+
+    // PoT 只需要 max_abs 的 MSB 位置 → arithmetic-shift 量。
+    //   max_abs 的 MSB == OR_reduction(abs[]) 的 MSB（max 是其中一員），
+    //   所以 64-input bitwise OR 等價於 max 給 PoT。
+    // Stage 1: 64-input bitwise OR (per bit 6-level OR tree ≈ 0.6 ns)
+    // Stage 2: pot_shift priority-encode（從原本 PoT 端 1.26 ns critical path 搬到這）
+    // Stage 3: shift 量 register 用來 fanout 給 PoT 的 quant_all（64 lanes）
+    // 介面從 16-bit max 改成 4-bit shift：上游 1024-bit→16-bit→4-bit 還省 24 flops。
+    localparam int MAT_SIZE = 64;
+
+    logic        st1_valid;
+    logic        st2_valid;
+    logic [15:0] or_ns;
+    logic [15:0] or_cs;
+    logic [3:0]  shift_ns;
+    logic [3:0]  shift_cs;
+
+    function automatic logic [15:0] get_u16(input logic [1023:0] vec, input integer idx);
+        get_u16 = vec[1023 - (idx * 16) -: 16];
+    endfunction
+
+    // pot_shift：找 max_abs 最高位的 set bit，回傳 (msb - LOG2_OUT_MAX) clamped 至 0。
+    //   OUT_MAX = 7 → LOG2_OUT_MAX = 2，shift = max(msb - 2, 0)
     function automatic logic [3:0] pot_shift(input logic [15:0] max_abs);
         logic [3:0] msb;
         begin
@@ -1646,176 +2182,18 @@ module PoT_FiveStage_Parallel (
         end
     endfunction
 
-    function automatic s4_t clamp_s4(input s16_t value);
-        begin
-            if (value > 16'sd7) begin
-                clamp_s4 = 4'sd7;
-            end
-            else if (value < -16'sd8) begin
-                clamp_s4 = -4'sd8;
-            end
-            else begin
-                clamp_s4 = value[3:0];
-            end
-        end
-    endfunction
-
-    function automatic logic [255:0] quant_half(
-        input logic [255:0]  base_data,
-        input logic [1023:0] src_data,
-        input logic [3:0]    shift,
-        input logic          phase
-    );
-        integer idx;
-        s16_t   scaled;
-        begin
-            quant_half = base_data;
-
-            for (int lane = 0; lane < HALF_SIZE; lane++) begin
-                idx    = (phase ? HALF_SIZE : 0) + lane;
-                scaled = get_s16(src_data, idx) >>> shift;
-                quant_half[255 - (idx * 4) -: 4] = clamp_s4(scaled);
-            end
-        end
-    endfunction
-
+    // Stage 1: 64-input bitwise OR
     always_comb begin
-        shift_next      = pot_shift(max_abs);
-        quant_data_next = quant_half(256'd0, src_pipe_q[2], shift_next, 1'b0);
-        out_data_next   = quant_half(quant_data, quant_src, quant_shift, 1'b1);
-    end
-
-    Matrix_Max_3Stage_Parallel u_matrix_max (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .in_valid  (in_valid),
-        .in_data   (in_data),
-        .out_valid (max_valid),
-        .out_max   (max_abs)
-    );
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int stage = 0; stage < 3; stage++) begin
-                src_pipe_q[stage] <= 1024'd0;
-            end
-        end
-        else begin
-            src_pipe_q[0] <= in_data;
-            src_pipe_q[1] <= src_pipe_q[0];
-            src_pipe_q[2] <= src_pipe_q[1];
+        or_ns = 16'd0;
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            or_ns = or_ns | get_u16(in_abs, i);
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            quant_valid <= 1'b0;
-            out_valid   <= 1'b0;
-        end
-        else begin
-            quant_valid <= max_valid;
-            out_valid   <= quant_valid;
-        end
-    end
+    // Stage 2: pot_shift on OR-reduced value
+    assign shift_ns = pot_shift(or_cs);
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            quant_shift <= 4'd0;
-            quant_src   <= 1024'd0;
-            quant_data  <= 256'd0;
-        end
-        else if (max_valid) begin
-            quant_shift <= shift_next;
-            quant_src   <= src_pipe_q[2];
-            quant_data  <= quant_data_next;
-        end
-    end
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            out_data <= 256'd0;
-        end
-        else if (quant_valid) begin
-            out_data <= out_data_next;
-        end
-    end
-
-endmodule
-
-
-module Matrix_Max_3Stage_Parallel (
-    input  logic          clk,
-    input  logic          rst_n,
-    input  logic          in_valid,
-    input  logic [1023:0] in_data,
-    output logic          out_valid,
-    output logic [15:0]   out_max
-);
-
-    localparam int MAT_SIZE    = 64;
-    localparam int MAX16_COUNT = 16;
-    localparam int MAX4_COUNT  = 4;
-
-    typedef logic signed [15:0] s16_t;
-
-    logic          st1_valid;
-    logic          st2_valid;
-    logic [15:0]   max16_next [0:MAX16_COUNT-1];
-    logic [15:0]   max4_next  [0:MAX4_COUNT-1];
-    logic [15:0]   max16_q    [0:MAX16_COUNT-1];
-    logic [15:0]   max4_q     [0:MAX4_COUNT-1];
-    logic [15:0]   out_max_next;
-
-    function automatic s16_t get_s16(input logic [1023:0] vec, input integer idx);
-        get_s16 = $signed(vec[1023 - (idx * 16) -: 16]);
-    endfunction
-
-    function automatic logic [15:0] abs16(input s16_t value);
-        abs16 = (value < 0) ? -value : value;
-    endfunction
-
-    function automatic logic [15:0] max4_u16(
-        input logic [15:0] a,
-        input logic [15:0] b,
-        input logic [15:0] c,
-        input logic [15:0] d
-    );
-        logic [15:0] ab;
-        logic [15:0] cd;
-        begin
-            ab       = (a > b) ? a : b;
-            cd       = (c > d) ? c : d;
-            max4_u16 = (ab > cd) ? ab : cd;
-        end
-    endfunction
-
-    function automatic logic [15:0] max4_abs(
-        input logic [1023:0] matrix,
-        input integer        base_idx
-    );
-        begin
-            max4_abs = max4_u16(abs16(get_s16(matrix, base_idx + 0)),
-                                abs16(get_s16(matrix, base_idx + 1)),
-                                abs16(get_s16(matrix, base_idx + 2)),
-                                abs16(get_s16(matrix, base_idx + 3)));
-        end
-    endfunction
-
-    always_comb begin
-        for (int i = 0; i < MAX16_COUNT; i++) begin
-            max16_next[i] = max4_abs(in_data, i * 4);
-        end
-
-        for (int i = 0; i < MAX4_COUNT; i++) begin
-            max4_next[i] = max4_u16(max16_q[(i * 4) + 0],
-                                    max16_q[(i * 4) + 1],
-                                    max16_q[(i * 4) + 2],
-                                    max16_q[(i * 4) + 3]);
-        end
-
-        out_max_next = max4_u16(max4_q[0], max4_q[1], max4_q[2], max4_q[3]);
-    end
-
+    // valid pipeline (3 stages, 與原本一致)
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st1_valid <= 1'b0;
@@ -1829,39 +2207,11 @@ module Matrix_Max_3Stage_Parallel (
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 0; i < MAX16_COUNT; i++) begin
-                max16_q[i] <= 16'd0;
-            end
-        end
-        else if (in_valid) begin
-            for (int i = 0; i < MAX16_COUNT; i++) begin
-                max16_q[i] <= max16_next[i];
-            end
-        end
-    end
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 0; i < MAX4_COUNT; i++) begin
-                max4_q[i] <= 16'd0;
-            end
-        end
-        else if (st1_valid) begin
-            for (int i = 0; i < MAX4_COUNT; i++) begin
-                max4_q[i] <= max4_next[i];
-            end
-        end
-    end
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            out_max <= 16'd0;
-        end
-        else if (st2_valid) begin
-            out_max <= out_max_next;
-        end
+    // data pipeline (3 stages：OR → shift → shift_register for fanout)
+    always_ff @(posedge clk) begin
+        if (in_valid)  or_cs     <= or_ns;
+        if (st1_valid) shift_cs  <= shift_ns;
+        if (st2_valid) out_shift <= shift_cs;
     end
 
 endmodule

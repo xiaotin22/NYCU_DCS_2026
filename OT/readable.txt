@@ -1,0 +1,6000 @@
+=== Pattern 0 ===
+x1 - 4x2 - 3x3 = 9
+2x1 - 3x2 - x3 = -62
+3x2 + 2x3 = -19
+Answer: Unique integer solution -> x1=-26, x2=13, x3=-29
+
+=== Pattern 1 ===
+-x1 - 3x2 + 3x3 = -15
+-4x1 - 2x2 - x3 = -13
+2x1 - x2 - 4x3 = -10
+Answer: Unique integer solution -> x1=0, x2=6, x3=1
+
+=== Pattern 2 ===
+-4x1 - 2x2 = 8
+3x1 - 2x2 + 3x3 = -27
+-x1 - 4x2 + 3x3 = -18
+Answer: No solution
+
+=== Pattern 3 ===
+x1 - x2 + x3 = 5
+-3x1 + x2 - x3 = -1
+3x1 - x2 - 2x3 = 61
+Answer: Unique integer solution -> x1=-2, x2=-27, x3=-20
+
+=== Pattern 4 ===
+2x1 - x2 - 2x3 = -2
+2x1 + 2x3 = -18
+-x2 - 3x3 = 19
+Answer: Unique integer solution -> x1=-12, x2=-28, x3=3
+
+=== Pattern 5 ===
+-3x1 + 2x2 = 45
+-x1 - 4x2 - 3x3 = -29
+2x1 - 2x2 - 4x3 = -22
+Answer: Unique integer solution -> x1=-7, x2=12, x3=-4
+
+=== Pattern 6 ===
+-x1 + 2x2 + 3x3 = -38
+-x3 = -9
+-x1 + 2x2 + 2x3 = -49
+Answer: No solution
+
+=== Pattern 7 ===
+3x1 + 3x2 + 3x3 = -60
+-2x1 - 4x2 - 3x3 = 16
+x1 - x2 = -44
+Answer: Infinite solutions
+
+=== Pattern 8 ===
+-4x1 + 3x3 = -36
+2x1 - 3x3 = 24
+2x2 + 2x3 = -28
+Answer: Unique integer solution -> x1=6, x2=-10, x3=-4
+
+=== Pattern 9 ===
+x1 - x2 = 12
+-2x1 - x2 - 3x3 = 63
+-3x1 - 2x2 + 2x3 = 32
+Answer: Unique integer solution -> x1=-6, x2=-18, x3=-11
+
+=== Pattern 10 ===
+-2x1 + x2 + 3x3 = -17
+-2x1 - 4x3 = 26
+-4x1 + x2 - x3 = 8
+Answer: No solution
+
+=== Pattern 11 ===
+-4x1 + 2x2 = -34
+2x1 - 4x2 = 14
+-3x1 - x3 = -57
+Answer: Unique integer solution -> x1=9, x2=1, x3=30
+
+=== Pattern 12 ===
+-3x1 + 3x2 - 3x3 = 16
+2x1 - x2 + 3x3 = -28
+-x1 + 2x2 = -14
+Answer: No solution
+
+=== Pattern 13 ===
+-x1 - 3x2 + x3 = 57
+x1 + x2 - x3 = -19
+x1 - 3x2 = 37
+Answer: Unique integer solution -> x1=-20, x2=-19, x3=-20
+
+=== Pattern 14 ===
+-3x1 + x2 + 2x3 = -12
+2x1 - x2 - 2x3 = 12
+x1 - 3x2 - 3x3 = 0
+Answer: Unique integer solution -> x1=0, x2=12, x3=-12
+
+=== Pattern 15 ===
+-4x1 - 3x2 + 3x3 = -62
+x1 - 2x3 = -22
+3x2 - 2x3 = 3
+Answer: Unique integer solution -> x1=20, x2=15, x3=21
+
+=== Pattern 16 ===
+x1 - 3x2 = -24
+2x1 - 4x2 - 3x3 = 27
+2x1 + 2x3 = -54
+Answer: Unique integer solution -> x1=-6, x2=6, x3=-21
+
+=== Pattern 17 ===
+x1 + x2 = -15
+2x1 + 2x2 + x3 = -14
+x1 - 3x2 - 3x3 = 13
+Answer: Unique integer solution -> x1=4, x2=-19, x3=16
+
+=== Pattern 18 ===
+x1 - 3x2 - 4x3 = 18
+-2x1 + 3x2 + x3 = 47
+2x1 - 4x2 - 4x3 = -4
+Answer: Unique integer solution -> x1=4, x2=26, x3=-23
+
+=== Pattern 19 ===
+-4x1 - 3x2 + x3 = -37
+2x1 - 3x3 = 44
+x2 - 2x3 = 27
+Answer: Unique integer solution -> x1=4, x2=3, x3=-12
+
+=== Pattern 20 ===
+2x1 - 3x2 - 3x3 = -47
+-3x1 + x2 - x3 = -60
+3x1 + 3x2 = 27
+Answer: Unique integer solution -> x1=11, x2=-2, x3=25
+
+=== Pattern 21 ===
+-3x1 - 4x3 = 45
+-x1 + x2 + 2x3 = 8
+3x1 - x2 = -38
+Answer: Unique integer solution -> x1=-15, x2=-7, x3=0
+
+=== Pattern 22 ===
+-2x1 - 4x2 - 3x3 = 7
+x1 - 2x2 + 3x3 = -54
+-x1 - 3x2 = -35
+Answer: Unique integer solution -> x1=23, x2=4, x3=-23
+
+=== Pattern 23 ===
+-x1 - 2x2 + 2x3 = -12
+-3x1 + 2x2 + 3x3 = -30
+-x1 + x2 - 2x3 = 42
+Answer: Unique integer solution -> x1=-12, x2=-6, x3=-18
+
+=== Pattern 24 ===
+3x1 - x2 - 4x3 = 3
+-x3 = -6
+2x1 + x2 - 4x3 = 44
+Answer: Unique integer solution -> x1=19, x2=30, x3=6
+
+=== Pattern 25 ===
+-2x1 + 3x2 + x3 = -10
+3x2 = -63
+3x1 - 3x2 + 3x3 = 6
+Answer: Unique integer solution -> x1=-24, x2=-21, x3=5
+
+=== Pattern 26 ===
+-3x1 - x2 = -10
+3x1 - x2 + x3 = -34
+2x1 + x3 = -8
+Answer: Unique integer solution -> x1=-4, x2=22, x3=0
+
+=== Pattern 27 ===
+-4x1 + 2x2 - 3x3 = -9
+x1 - 2x3 = 15
+-2x1 - 2x2 - 4x3 = -62
+Answer: Unique integer solution -> x1=13, x2=20, x3=-1
+
+=== Pattern 28 ===
+-4x1 - 2x2 - 4x3 = -43
+2x1 - 2x2 + 3x3 = 1
+-2x1 - 4x2 - x3 = -44
+Answer: No solution
+
+=== Pattern 29 ===
+3x1 - 3x2 - 4x3 = -13
+-x2 - x3 = -18
+-4x1 - 4x3 = -44
+Answer: Unique integer solution -> x1=13, x2=20, x3=-2
+
+=== Pattern 30 ===
+2x1 - 4x2 - 4x3 = 54
+x2 + 3x3 = 47
+-3x1 - 2x2 = -25
+Answer: Unique integer solution -> x1=25, x2=-25, x3=24
+
+=== Pattern 31 ===
+2x1 - x3 = -60
+-2x1 + 3x2 - 4x3 = -10
+x1 + 3x2 - 2x3 = -9
+Answer: Unique integer solution -> x1=-17, x2=20, x3=26
+
+=== Pattern 32 ===
+-3x1 - 4x2 - 3x3 = -29
+2x1 = 18
+x1 + 2x2 - x3 = -55
+Answer: Unique integer solution -> x1=9, x2=-19, x3=26
+
+=== Pattern 33 ===
+-3x1 - x2 + 3x3 = -56
+-2x1 + 3x2 = 43
+2x1 + x2 - x3 = 21
+Answer: Unique integer solution -> x1=-5, x2=11, x3=-20
+
+=== Pattern 34 ===
+3x1 - 3x2 + 3x3 = -54
+-3x1 - 4x2 + 3x3 = 27
+-4x2 + 2x3 = -4
+Answer: Unique integer solution -> x1=-13, x2=-3, x3=-8
+
+=== Pattern 35 ===
+-x1 + x2 + 2x3 = 8
+-4x1 + x2 + 3x3 = -17
+-4x1 + 3x2 = 41
+Answer: Unique integer solution -> x1=7, x2=23, x3=-4
+
+=== Pattern 36 ===
+-2x1 + 3x2 = -23
+-3x1 - 2x2 - 3x3 = -1
+-4x1 + 2x2 - 2x3 = -26
+Answer: Unique integer solution -> x1=1, x2=-7, x3=4
+
+=== Pattern 37 ===
+3x1 - x3 = -47
+2x1 - x2 = -17
+-3x1 + x2 - x3 = 10
+Answer: Unique integer solution -> x1=-10, x2=-3, x3=17
+
+=== Pattern 38 ===
+-x1 + 2x2 - 2x3 = -8
+-2x1 + x2 + 2x3 = 14
+x1 + 2x2 + 3x3 = 13
+Answer: Unique integer solution -> x1=-2, x2=0, x3=5
+
+=== Pattern 39 ===
+-x1 - 3x2 + x3 = 4
+3x1 + 2x2 - 2x3 = -24
+3x1 + x2 - x3 = -6
+Answer: Unique integer solution -> x1=4, x2=5, x3=23
+
+=== Pattern 40 ===
+2x1 + 2x2 - 3x3 = 54
+x2 + x3 = -37
+-4x1 - 4x2 + x3 = -28
+Answer: Unique integer solution -> x1=24, x2=-21, x3=-16
+
+=== Pattern 41 ===
+-4x1 - 3x2 - x3 = 54
+-x1 - 4x2 + x3 = 16
+x1 - x3 = 24
+Answer: Unique integer solution -> x1=0, x2=-10, x3=-24
+
+=== Pattern 42 ===
+2x1 - x3 = -35
+-2x1 + 2x2 - 3x3 = -25
+-3x1 + 3x2 - 4x3 = -26
+Answer: Unique integer solution -> x1=-6, x2=16, x3=23
+
+=== Pattern 43 ===
+-x1 - x2 + 2x3 = 17
+-2x1 + 2x2 - 2x3 = -25
+-3x1 + x2 = -6
+Answer: No solution
+
+=== Pattern 44 ===
+-3x1 - x2 + 3x3 = 24
+2x1 + 3x2 = 7
+2x1 + 2x2 + 3x3 = 1
+Answer: Unique integer solution -> x1=-10, x2=9, x3=1
+
+=== Pattern 45 ===
+-3x1 - 2x2 - 2x3 = -25
+x1 - 3x2 - 2x3 = -37
+-3x1 + x2 = 11
+Answer: Unique integer solution -> x1=-1, x2=8, x3=6
+
+=== Pattern 46 ===
+-4x1 + 2x2 - 4x3 = 38
+-x1 + 3x3 = -11
+-x2 = -25
+Answer: Unique integer solution -> x1=5, x2=25, x3=-2
+
+=== Pattern 47 ===
+2x1 - 2x3 = -21
+x1 - x2 - x3 = -31
+3x1 - x2 - 3x3 = -51
+Answer: No solution
+
+=== Pattern 48 ===
+-x1 - 4x2 = -35
+x2 - x3 = 10
+x1 + 3x2 + 2x3 = 31
+Answer: Unique integer solution -> x1=-29, x2=16, x3=6
+
+=== Pattern 49 ===
+2x1 - 3x2 - 4x3 = -17
+-3x2 + x3 = 26
+-2x1 - x2 - x3 = 58
+Answer: Unique integer solution -> x1=-24, x2=-9, x3=-1
+
+=== Pattern 50 ===
+-4x1 - 2x2 - 4x3 = 52
+x1 + 2x3 = -27
+3x1 + x2 = -41
+Answer: Unique integer solution -> x1=-21, x2=22, x3=-3
+
+=== Pattern 51 ===
+-x1 - 3x2 + 2x3 = -13
+-x1 + 2x2 + 2x3 = 2
+-3x1 - x3 = 44
+Answer: Unique integer solution -> x1=-12, x2=3, x3=-8
+
+=== Pattern 52 ===
+-2x1 + 3x2 - 4x3 = 47
+-x1 - 2x2 - x3 = 57
+-2x1 - 3x2 + 2x3 = 53
+Answer: Unique integer solution -> x1=-19, x2=-13, x3=-12
+
+=== Pattern 53 ===
+2x1 - x3 = 7
+2x2 + 2x3 = -16
+-3x1 + x2 - 2x3 = 31
+Answer: Unique integer solution -> x1=-2, x2=3, x3=-11
+
+=== Pattern 54 ===
+-2x1 - x2 - 2x3 = -25
+-x1 + 3x2 - 3x3 = 21
+-3x1 - 3x2 = 6
+Answer: Unique integer solution -> x1=-27, x2=25, x3=27
+
+=== Pattern 55 ===
+3x1 - 4x2 = 27
+-2x1 - 4x2 = 42
+x1 - x2 - 2x3 = -10
+Answer: Unique integer solution -> x1=-3, x2=-9, x3=8
+
+=== Pattern 56 ===
+-x1 + 2x3 = -49
+-2x2 - 2x3 = 20
+x1 - 4x2 - 2x3 = 33
+Answer: Unique integer solution -> x1=21, x2=4, x3=-14
+
+=== Pattern 57 ===
+-4x1 + 3x2 - 4x3 = 27
+x1 + 3x2 = 54
+-4x1 - 2x2 + 2x3 = -40
+Answer: Unique integer solution -> x1=3, x2=17, x3=3
+
+=== Pattern 58 ===
+-x1 - x2 - 4x3 = 16
+3x2 = 25
+-x1 + 2x2 - 4x3 = 41
+Answer: Infinite solutions
+
+=== Pattern 59 ===
+3x1 + 2x3 = 37
+-2x1 + 2x2 - 2x3 = -29
+x1 + 2x2 = 7
+Answer: No solution
+
+=== Pattern 60 ===
+-4x1 - x2 - 4x3 = -24
+-2x1 - 3x2 - 2x3 = 28
+x1 + 3x2 + 3x3 = -18
+Answer: Unique integer solution -> x1=0, x2=-16, x3=10
+
+=== Pattern 61 ===
+-x1 - 2x2 + 2x3 = -22
+-4x1 - 3x2 - 3x3 = -19
+2x1 + 3x2 - 3x3 = 23
+Answer: Unique integer solution -> x1=-20, x2=27, x3=6
+
+=== Pattern 62 ===
+-3x1 - 2x2 + 2x3 = 32
+3x2 - 3x3 = 15
+2x2 - 3x3 = 35
+Answer: Unique integer solution -> x1=-14, x2=-20, x3=-25
+
+=== Pattern 63 ===
+2x1 + x2 - 3x3 = -16
+-2x1 - 4x3 = 60
+-2x1 + x2 + 3x3 = 34
+Answer: Unique integer solution -> x1=-20, x2=9, x3=-5
+
+=== Pattern 64 ===
+-2x1 = 4
+-3x1 - 4x2 + 3x3 = 62
+-3x1 + x3 = 30
+Answer: Unique integer solution -> x1=-2, x2=4, x3=24
+
+=== Pattern 65 ===
+-2x1 + x2 + x3 = 12
+-x1 - x2 - 3x3 = -15
+-2x3 = 6
+Answer: Unique integer solution -> x1=3, x2=21, x3=-3
+
+=== Pattern 66 ===
+-4x1 - 2x2 + x3 = 31
+x1 - x2 - 2x3 = 9
+-3x1 - 3x2 - x3 = 38
+Answer: No solution
+
+=== Pattern 67 ===
+3x1 + 3x2 + 2x3 = 47
+-x1 - 2x2 - 4x3 = -37
+2x1 + x2 - 2x3 = 11
+Answer: No solution
+
+=== Pattern 68 ===
+2x1 + 3x2 + 2x3 = -47
+-3x1 - 4x2 + 3x3 = 32
+-4x1 + 2x2 = -62
+Answer: Unique integer solution -> x1=7, x2=-17, x3=-5
+
+=== Pattern 69 ===
+-4x1 - x2 + 3x3 = -41
+2x1 - x2 - x3 = 63
+-2x1 - 2x2 + 2x3 = 20
+Answer: No solution
+
+=== Pattern 70 ===
+-x1 - 4x2 - 3x3 = -15
+-3x1 - 2x3 = 1
+x1 + x2 + 3x3 = 0
+Answer: Unique integer solution -> x1=1, x2=5, x3=-2
+
+=== Pattern 71 ===
+-2x1 + x2 + 3x3 = 25
+3x3 = 57
+3x1 - 2x2 - 4x3 = -27
+Answer: Unique integer solution -> x1=15, x2=-2, x3=19
+
+=== Pattern 72 ===
+-3x1 + 2x2 - x3 = -1
+-2x1 - x2 - x3 = -36
+-x1 - x2 - x3 = -20
+Answer: Unique integer solution -> x1=16, x2=17, x3=-13
+
+=== Pattern 73 ===
+x1 - x2 = 2
+3x1 - 2x2 + 3x3 = -14
+-3x1 - 4x2 + 2x3 = -4
+Answer: Unique integer solution -> x1=0, x2=-2, x3=-6
+
+=== Pattern 74 ===
+-x1 - 2x2 - 3x3 = 57
+-4x1 - 2x3 = 52
+x1 + x2 - x3 = -35
+Answer: Unique integer solution -> x1=-13, x2=-22, x3=0
+
+=== Pattern 75 ===
+-x1 - x2 + x3 = -8
+-2x1 + 2x3 = 28
+-3x1 - x2 + 3x3 = 18
+Answer: No solution
+
+=== Pattern 76 ===
+x1 + x2 - 2x3 = 6
+-3x2 - 2x3 = -50
+-x1 + x2 - x3 = -3
+Answer: Unique integer solution -> x1=8, x2=12, x3=7
+
+=== Pattern 77 ===
+-x1 + 3x3 = -57
+x1 - 2x2 + 2x3 = -3
+2x1 - 3x2 + 3x3 = -6
+Answer: Unique integer solution -> x1=-3, x2=-20, x3=-20
+
+=== Pattern 78 ===
+-3x1 + 3x2 - 4x3 = -12
+2x1 + 3x2 + x3 = -37
+-x1 + x2 = -12
+Answer: Unique integer solution -> x1=1, x2=-11, x3=-6
+
+=== Pattern 79 ===
+2x1 - x2 + x3 = -18
+-x2 + 3x3 = -64
+-x1 + 2x2 = 25
+Answer: Unique integer solution -> x1=7, x2=16, x3=-16
+
+=== Pattern 80 ===
+x1 - 4x3 = -36
+x1 + 2x3 = -18
+2x1 + 3x2 - x3 = 9
+Answer: Unique integer solution -> x1=-24, x2=20, x3=3
+
+=== Pattern 81 ===
+-2x1 + 2x2 - x3 = -14
+x1 + x2 = -2
+-2x1 + 2x2 + x3 = 14
+Answer: Unique integer solution -> x1=-1, x2=-1, x3=14
+
+=== Pattern 82 ===
+x1 - x2 = -14
+-4x1 + 2x2 - 2x3 = -3
+-3x1 + x2 - 2x3 = -17
+Answer: Infinite solutions
+
+=== Pattern 83 ===
+-2x1 + 2x2 - x3 = 41
+-x1 + 2x2 - 3x3 = 57
+x1 + x2 - 4x3 = 41
+Answer: Unique integer solution -> x1=-30, x2=-21, x3=-23
+
+=== Pattern 84 ===
+2x1 + 3x2 + x3 = -25
+-x1 - 2x2 + x3 = -10
+x1 + x2 + 2x3 = -35
+Answer: Infinite solutions
+
+=== Pattern 85 ===
+3x1 - 2x3 = 10
+-2x1 - 2x2 - x3 = -54
+3x1 - x2 + 3x3 = 48
+Answer: Unique integer solution -> x1=10, x2=12, x3=10
+
+=== Pattern 86 ===
+-3x1 - 4x2 - 4x3 = 1
+x1 - 2x2 + x3 = -29
+3x1 - 4x2 = 7
+Answer: Unique integer solution -> x1=17, x2=11, x3=-24
+
+=== Pattern 87 ===
+-3x1 - 3x2 - 4x3 = -26
+-4x1 - x2 + x3 = -60
+-x1 - x2 - 4x3 = 2
+Answer: Unique integer solution -> x1=14, x2=0, x3=-4
+
+=== Pattern 88 ===
+-4x1 + 3x3 = -43
+3x1 - 3x2 = 24
+x1 + 3x2 - 4x3 = 36
+Answer: Unique integer solution -> x1=-2, x2=-10, x3=-17
+
+=== Pattern 89 ===
+-4x1 + x2 = 28
+3x1 - 2x2 + 3x3 = -57
+-2x1 - x2 + x3 = 28
+Answer: Unique integer solution -> x1=-13, x2=-24, x3=-22
+
+=== Pattern 90 ===
+-4x1 - 4x2 + 3x3 = -25
+-4x1 + 3x2 - 3x3 = 59
+-x1 + 3x2 - 3x3 = 35
+Answer: Unique integer solution -> x1=-8, x2=30, x3=21
+
+=== Pattern 91 ===
+-2x1 - 2x2 + 2x3 = 10
+-2x1 - 4x2 + 3x3 = 14
+-2x1 - 2x2 + 3x3 = 0
+Answer: Unique integer solution -> x1=-8, x2=-7, x3=-10
+
+=== Pattern 92 ===
+x1 + x2 - 4x3 = -19
+-2x1 - x2 - 4x3 = 3
+3x1 - 2x3 = 22
+Answer: Unique integer solution -> x1=8, x2=-23, x3=1
+
+=== Pattern 93 ===
+x1 - 4x2 + x3 = -15
+-x1 - 2x2 - x3 = -45
+x1 - 2x2 + 3x3 = 13
+Answer: Unique integer solution -> x1=21, x2=10, x3=4
+
+=== Pattern 94 ===
+x1 - 2x2 + 3x3 = -62
+-4x1 - 2x2 + x3 = -41
+2x1 - x2 = -31
+Answer: Unique integer solution -> x1=-3, x2=25, x3=-3
+
+=== Pattern 95 ===
+2x1 - 4x2 - 3x3 = 18
+-3x1 + 3x3 = -47
+-x1 - 4x2 = -29
+Answer: Infinite solutions
+
+=== Pattern 96 ===
+-2x1 - x2 + 3x3 = -39
+-3x1 - 3x3 = -60
+-x1 + 2x2 - x3 = 38
+Answer: Unique integer solution -> x1=14, x2=29, x3=6
+
+=== Pattern 97 ===
+-x1 - 2x2 = 23
+x1 + x2 + 2x3 = 29
+-x2 + 2x3 = 52
+Answer: Infinite solutions
+
+=== Pattern 98 ===
+-3x1 + x2 - 3x3 = 44
+-2x1 - 3x2 + 2x3 = -46
+3x1 - 4x2 + 2x3 = -33
+Answer: Unique integer solution -> x1=3, x2=2, x3=-17
+
+=== Pattern 99 ===
+2x1 - 2x2 - 3x3 = 9
+x2 = -46
+2x1 - x2 - 3x3 = -37
+Answer: Infinite solutions
+
+=== Pattern 100 ===
+-x1 + x2 - x3 = 47
+-2x1 + 2x2 + x3 = 55
+2x1 - 4x3 = 22
+Answer: Unique integer solution -> x1=-15, x2=19, x3=-13
+
+=== Pattern 101 ===
+3x1 - 2x2 + 2x3 = -17
+2x1 - x2 + 2x3 = 8
+-x1 - 4x2 + 3x3 = -31
+Answer: Unique integer solution -> x1=-3, x2=22, x3=18
+
+=== Pattern 102 ===
+3x1 - 4x2 + 3x3 = 48
+-4x1 - 2x2 - 2x3 = 54
+-x1 + x2 - 3x3 = -19
+Answer: Unique integer solution -> x1=-8, x2=-15, x3=4
+
+=== Pattern 103 ===
+2x1 + 2x2 - 2x3 = -2
+x1 + 2x2 + x3 = -16
+3x1 + x2 - 2x3 = 47
+Answer: Unique integer solution -> x1=26, x2=-23, x3=4
+
+=== Pattern 104 ===
+-4x1 + 3x2 + x3 = -19
+2x1 - 3x2 - x3 = 33
+2x1 - x2 + x3 = -21
+Answer: Unique integer solution -> x1=-7, x2=-10, x3=-17
+
+=== Pattern 105 ===
+-3x1 + 3x2 + 2x3 = 57
+-3x2 - 4x3 = 0
+-3x1 - 2x3 = 58
+Answer: No solution
+
+=== Pattern 106 ===
+x1 - 3x3 = -17
+3x2 + 2x3 = -6
+x1 + 3x2 - x3 = -23
+Answer: Infinite solutions
+
+=== Pattern 107 ===
+2x1 - x2 - x3 = 2
+3x2 + 3x3 = 37
+2x1 + 2x2 + 2x3 = 39
+Answer: Infinite solutions
+
+=== Pattern 108 ===
+-2x1 - 2x2 + 2x3 = 44
+-4x1 + 3x2 - x3 = 23
+-3x1 - x2 = 27
+Answer: Unique integer solution -> x1=-9, x2=0, x3=13
+
+=== Pattern 109 ===
+x1 - 2x2 + 3x3 = -40
+-4x1 - x2 - 3x3 = 10
+-3x1 - 3x2 = -30
+Answer: Infinite solutions
+
+=== Pattern 110 ===
+-4x1 + 2x3 = -38
+3x1 - 2x2 - 3x3 = -50
+-3x1 - 2x2 + 2x3 = -61
+Answer: Unique integer solution -> x1=21, x2=22, x3=23
+
+=== Pattern 111 ===
+x1 - 4x2 = -11
+2x1 + x2 - x3 = -44
+x1 - x3 = -33
+Answer: Unique integer solution -> x1=-11, x2=0, x3=22
+
+=== Pattern 112 ===
+2x1 + x2 - x3 = 39
+-2x1 - 3x2 = -7
+-3x1 + x2 - 4x3 = -58
+Answer: Unique integer solution -> x1=23, x2=-13, x3=-6
+
+=== Pattern 113 ===
+-x1 + x2 - 3x3 = -16
+x3 = 12
+-4x1 - 4x2 - 4x3 = -56
+Answer: Unique integer solution -> x1=-9, x2=11, x3=12
+
+=== Pattern 114 ===
+-x1 + 2x2 - x3 = -61
+-2x1 + x2 - x3 = -37
+-2x1 + x2 - 4x3 = -40
+Answer: Unique integer solution -> x1=4, x2=-28, x3=1
+
+=== Pattern 115 ===
+3x1 - 4x2 + 2x3 = 26
+2x1 - x2 - x3 = 61
+-2x2 + x3 = -11
+Answer: Unique integer solution -> x1=16, x2=-6, x3=-23
+
+=== Pattern 116 ===
+-2x1 + 3x2 + x3 = 54
+2x1 - 2x2 - 2x3 = -64
+-4x1 - 2x2 - 4x3 = -64
+Answer: Unique integer solution -> x1=-6, x2=8, x3=18
+
+=== Pattern 117 ===
+-3x1 + x2 - 2x3 = -48
+3x1 + 2x3 = 2
+x2 = -46
+Answer: Infinite solutions
+
+=== Pattern 118 ===
+-3x1 + 2x2 - x3 = 4
+2x3 = 34
+-2x1 + x2 - 3x3 = -44
+Answer: Unique integer solution -> x1=7, x2=21, x3=17
+
+=== Pattern 119 ===
+-2x1 - x2 - 2x3 = 49
+-3x1 - 2x2 - x3 = 7
+-2x1 + 2x3 = -58
+Answer: Unique integer solution -> x1=-1, x2=13, x3=-30
+
+=== Pattern 120 ===
+3x1 - 2x2 - 3x3 = -41
+x1 - 4x2 - 3x3 = -21
+x1 - 3x2 = -14
+Answer: Unique integer solution -> x1=-11, x2=1, x3=2
+
+=== Pattern 121 ===
+-4x1 - 2x2 - 2x3 = 8
+-2x1 + 2x2 - 2x3 = -18
+-4x1 + 2x2 + x3 = 48
+Answer: Unique integer solution -> x1=-9, x2=-2, x3=16
+
+=== Pattern 122 ===
+2x1 - 3x2 - x3 = 56
+-4x1 - 3x2 - x3 = -34
+-x1 - 3x2 + 3x3 = 39
+Answer: Unique integer solution -> x1=15, x2=-11, x3=7
+
+=== Pattern 123 ===
+-3x1 - 3x3 = 57
+2x1 + 2x2 + x3 = -45
+-x1 - 4x2 = 32
+Answer: Unique integer solution -> x1=-20, x2=-3, x3=1
+
+=== Pattern 124 ===
+3x1 - 4x3 = 9
+-2x2 + x3 = 45
+3x1 - 2x2 - 3x3 = 52
+Answer: No solution
+
+=== Pattern 125 ===
+2x1 + 2x2 + 3x3 = 63
+-2x1 - 4x2 - 2x3 = 0
+-2x2 + x3 = 63
+Answer: Infinite solutions
+
+=== Pattern 126 ===
+-3x1 + 2x3 = 61
+2x1 + 3x2 - 4x3 = 32
+-2x1 - 4x2 = -22
+Answer: Unique integer solution -> x1=-25, x2=18, x3=-7
+
+=== Pattern 127 ===
+-2x1 - 4x2 + 3x3 = -10
+x1 + 3x2 = -18
+2x1 + 3x2 - x3 = -23
+Answer: Unique integer solution -> x1=-21, x2=1, x3=-16
+
+=== Pattern 128 ===
+-3x1 + 3x2 - 3x3 = 9
+3x1 - 2x2 - x3 = 15
+x1 - 2x3 = 10
+Answer: Unique integer solution -> x1=-12, x2=-20, x3=-11
+
+=== Pattern 129 ===
+-2x1 + x2 - 2x3 = 27
+-4x1 - x2 + 3x3 = -3
+-2x1 + x2 + 3x3 = -3
+Answer: Unique integer solution -> x1=-5, x2=5, x3=-6
+
+=== Pattern 130 ===
+2x1 + 3x2 - 4x3 = 14
+-4x1 - 4x2 + 2x3 = 26
+-x1 - x2 - 2x3 = 44
+Answer: Unique integer solution -> x1=4, x2=-18, x3=-15
+
+=== Pattern 131 ===
+2x1 + x2 + 2x3 = 43
+-3x1 = -18
+-3x1 - x3 = -32
+Answer: Unique integer solution -> x1=6, x2=3, x3=14
+
+=== Pattern 132 ===
+-3x1 - 4x2 + x3 = -6
+-3x1 - 4x2 - 3x3 = 42
+-3x1 - 2x2 - x3 = 0
+Answer: Unique integer solution -> x1=10, x2=-9, x3=-12
+
+=== Pattern 133 ===
+2x1 - 4x2 - x3 = -42
+-2x1 - 3x2 - x3 = -49
+-2x1 + x2 + x3 = 27
+Answer: Unique integer solution -> x1=3, x2=5, x3=28
+
+=== Pattern 134 ===
+2x1 - 2x3 = 10
+x1 - 4x3 = -31
+-x1 - x2 + x3 = -17
+Answer: Unique integer solution -> x1=17, x2=12, x3=12
+
+=== Pattern 135 ===
+-x1 + x2 + x3 = 15
+3x1 + x2 - 4x3 = 27
+-x1 - 4x2 + x3 = -55
+Answer: Unique integer solution -> x1=-17, x2=14, x3=-16
+
+=== Pattern 136 ===
+-4x1 + 3x2 - 3x3 = -2
+-3x1 + x2 - 2x3 = 29
+-2x1 + x2 + 2x3 = 35
+Answer: Unique integer solution -> x1=-22, x2=-23, x3=7
+
+=== Pattern 137 ===
+-x1 + 3x2 + 2x3 = 54
+-2x2 - 2x3 = -12
+-x1 + x2 = 42
+Answer: Infinite solutions
+
+=== Pattern 138 ===
+-x1 + x2 + 3x3 = 14
+-3x1 - x3 = 1
+-4x2 - x3 = -30
+Answer: Unique integer solution -> x1=-1, x2=7, x3=2
+
+=== Pattern 139 ===
+x1 + x2 - x3 = 47
+2x1 - 2x2 - x3 = -28
+3x1 - x2 - 2x3 = 18
+Answer: No solution
+
+=== Pattern 140 ===
+-x1 + 3x2 + 3x3 = -14
+-2x1 - 2x2 + x3 = 11
+-x1 + 2x2 + x3 = -27
+Answer: Unique integer solution -> x1=14, x2=-13, x3=13
+
+=== Pattern 141 ===
+-x1 + 2x2 - 4x3 = -17
+-3x1 - x2 = 50
+x1 + x2 + x3 = 23
+Answer: Unique integer solution -> x1=-25, x2=25, x3=23
+
+=== Pattern 142 ===
+3x1 - 2x2 - 3x3 = -63
+2x1 - x2 + 3x3 = 43
+-2x1 + 2x2 - x3 = 17
+Answer: Unique integer solution -> x1=14, x2=30, x3=15
+
+=== Pattern 143 ===
+-4x1 - 2x2 - x3 = 25
+-2x1 - x3 = 33
+-2x1 + x2 + 2x3 = 50
+Answer: Unique integer solution -> x1=-16, x2=20, x3=-1
+
+=== Pattern 144 ===
+x1 - 2x2 + 3x3 = -64
+3x1 + 3x2 - 4x3 = -3
+-x1 + 2x3 = -35
+Answer: Unique integer solution -> x1=-19, x2=-18, x3=-27
+
+=== Pattern 145 ===
+-4x1 + x3 = -7
+-3x1 - 2x2 - 4x3 = -21
+3x1 + x2 = -8
+Answer: Unique integer solution -> x1=5, x2=-23, x3=13
+
+=== Pattern 146 ===
+-2x1 - x2 = 52
+-x1 + 3x2 = 19
+-2x1 + x2 - 3x3 = -21
+Answer: Unique integer solution -> x1=-25, x2=-2, x3=23
+
+=== Pattern 147 ===
+-3x1 - 2x2 - 2x3 = -8
+x1 + x2 + x3 = 22
+-2x1 - x2 - x3 = 16
+Answer: No solution
+
+=== Pattern 148 ===
+-2x1 - 2x2 + 3x3 = 23
+-x1 - x2 - 2x3 = 29
+2x1 + x2 + x3 = -50
+Answer: Unique integer solution -> x1=-26, x2=7, x3=-5
+
+=== Pattern 149 ===
+2x1 - 2x2 - 3x3 = 57
+-x2 + 2x3 = 2
+2x1 - 2x2 - 2x3 = 52
+Answer: Unique integer solution -> x1=9, x2=-12, x3=-5
+
+=== Pattern 150 ===
+-x1 - x2 + x3 = 30
+x2 - 2x3 = -38
+3x1 - 2x2 + x3 = -62
+Answer: Unique integer solution -> x1=-19, x2=16, x3=27
+
+=== Pattern 151 ===
+-3x1 - 3x3 = 32
+2x1 + 3x2 + 2x3 = -59
+-x1 + 3x2 - x3 = -27
+Answer: Infinite solutions
+
+=== Pattern 152 ===
+-3x1 - 3x2 - 2x3 = -7
+-4x1 + x3 = -62
+-3x2 - 4x3 = 52
+Answer: Unique integer solution -> x1=13, x2=-4, x3=-10
+
+=== Pattern 153 ===
+-x1 + 3x3 = 57
+-2x1 - 4x2 - 4x3 = -48
+-3x1 - 4x2 - x3 = 9
+Answer: Infinite solutions
+
+=== Pattern 154 ===
+2x1 + 2x3 = 34
+-x1 + x2 + x3 = -2
+-4x1 - 2x3 = -42
+Answer: Unique integer solution -> x1=4, x2=-11, x3=13
+
+=== Pattern 155 ===
+x1 - 4x2 - 4x3 = -58
+-3x1 - 2x2 = 10
+x1 - 2x2 - 4x3 = -38
+Answer: Unique integer solution -> x1=-10, x2=10, x3=2
+
+=== Pattern 156 ===
+-x1 + 2x2 + x3 = 45
+x1 - x2 + 2x3 = -33
+2x2 - 3x3 = 33
+Answer: Unique integer solution -> x1=-16, x2=15, x3=-1
+
+=== Pattern 157 ===
+2x1 - 3x2 + 3x3 = 40
+-3x1 + 2x2 - 4x3 = 3
+-x1 - x2 - x3 = 43
+Answer: Infinite solutions
+
+=== Pattern 158 ===
+3x1 + 2x2 - 3x3 = 53
+x2 + x3 = -11
+2x1 - x2 - 3x3 = 29
+Answer: Unique integer solution -> x1=-15, x2=13, x3=-24
+
+=== Pattern 159 ===
+-3x1 - x2 = -36
+-2x1 - 2x2 = -40
+2x1 - 3x2 - 2x3 = -48
+Answer: Unique integer solution -> x1=8, x2=12, x3=14
+
+=== Pattern 160 ===
+-4x1 - 4x2 = -41
+3x1 + x2 + 2x3 = 62
+-x1 - 3x2 + 2x3 = 20
+Answer: No solution
+
+=== Pattern 161 ===
+2x1 - x2 + 2x3 = -63
+-2x1 - 4x2 - 2x3 = 58
+-2x1 + 2x2 + 3x3 = -16
+Answer: Unique integer solution -> x1=-15, x2=1, x3=-16
+
+=== Pattern 162 ===
+-x1 - x2 = -44
+3x1 - 2x2 + 3x3 = -3
+2x1 - 3x2 + 3x3 = -47
+Answer: Infinite solutions
+
+=== Pattern 163 ===
+-3x1 + 2x2 + 2x3 = -14
+3x1 - 4x2 = 44
+-2x1 + 3x2 + 3x3 = -1
+Answer: Unique integer solution -> x1=8, x2=-5, x3=10
+
+=== Pattern 164 ===
+-3x1 + x2 - 2x3 = 6
+-3x1 - x2 + x3 = -12
+-x1 - x2 + 2x3 = -26
+Answer: Unique integer solution -> x1=5, x2=-27, x3=-24
+
+=== Pattern 165 ===
+-4x1 + 2x2 - 4x3 = -24
+-2x1 - 2x2 - 3x3 = -36
+x1 - 4x2 + x3 = -1
+Answer: Unique integer solution -> x1=-11, x2=2, x3=18
+
+=== Pattern 166 ===
+-4x1 - x2 = -9
+3x1 - 3x2 - 3x3 = 33
+2x1 + x2 - 2x3 = -47
+Answer: Unique integer solution -> x1=8, x2=-23, x3=20
+
+=== Pattern 167 ===
+-2x1 + x2 + 2x3 = -10
+-2x2 + x3 = 34
+-x1 + 2x2 - x3 = -8
+Answer: Unique integer solution -> x1=-26, x2=-26, x3=-18
+
+=== Pattern 168 ===
+-3x1 - 3x2 + x3 = 22
+x1 + x2 - 3x3 = 38
+3x1 + 2x2 = -13
+Answer: Unique integer solution -> x1=13, x2=-26, x3=-17
+
+=== Pattern 169 ===
+-3x1 - 4x2 + 3x3 = 4
+x1 - 4x2 + 3x3 = -4
+-4x1 + 2x2 + 2x3 = 30
+Answer: Unique integer solution -> x1=-2, x2=5, x3=6
+
+=== Pattern 170 ===
+-2x1 - 3x3 = -19
+-x1 - 2x2 + x3 = 60
+2x1 - x2 + x3 = -21
+Answer: Unique integer solution -> x1=-25, x2=-6, x3=23
+
+=== Pattern 171 ===
+2x1 + x2 + x3 = 15
+-3x1 + 3x2 - x3 = -41
+2x1 + 2x3 = 8
+Answer: Unique integer solution -> x1=14, x2=-3, x3=-10
+
+=== Pattern 172 ===
+-4x1 - 2x2 + 2x3 = 54
+-2x1 - 2x2 - 4x3 = 24
+x1 + x2 + 3x3 = -12
+Answer: Unique integer solution -> x1=-15, x2=3, x3=0
+
+=== Pattern 173 ===
+-4x1 - 2x2 = 10
+-3x1 + 2x2 - 4x3 = -59
+-x1 - x2 + 2x3 = 52
+Answer: Unique integer solution -> x1=-9, x2=13, x3=28
+
+=== Pattern 174 ===
+x1 + 3x3 = 12
+-x1 + 3x2 + x3 = 42
+-3x1 + 3x2 + 3x3 = -30
+Answer: Unique integer solution -> x1=30, x2=26, x3=-6
+
+=== Pattern 175 ===
+-4x1 + 3x2 - 2x3 = 18
+3x1 - 4x2 + 2x3 = -25
+-4x1 - x2 - 3x3 = -34
+Answer: Unique integer solution -> x1=-3, x2=10, x3=12
+
+=== Pattern 176 ===
+-3x1 - x2 - x3 = -51
+-3x1 + x2 + 3x3 = -15
+3x1 - 2x2 = -18
+Answer: Unique integer solution -> x1=10, x2=24, x3=-3
+
+=== Pattern 177 ===
+-2x1 - 3x2 + 2x3 = -2
+-x3 = -14
+3x1 + 3x2 = 54
+Answer: Unique integer solution -> x1=24, x2=-6, x3=14
+
+=== Pattern 178 ===
+-2x1 + 2x2 + 3x3 = -60
+x1 - 2x2 + 3x3 = 13
+-2x1 - 2x2 - 2x3 = -36
+Answer: Unique integer solution -> x1=23, x2=-1, x3=-4
+
+=== Pattern 179 ===
+-3x1 + 2x3 = 37
+2x1 + 2x2 - 3x3 = 32
+-4x1 - 2x2 = -16
+Answer: Unique integer solution -> x1=-11, x2=30, x3=2
+
+=== Pattern 180 ===
+-2x1 + 3x2 + 2x3 = 25
+-4x1 - 3x2 = 35
+-4x1 - 2x2 - 3x3 = 16
+Answer: Unique integer solution -> x1=-8, x2=-1, x3=6
+
+=== Pattern 181 ===
+2x1 - x3 = -35
+-3x1 - 3x2 - 2x3 = 54
+-4x2 - x3 = -9
+Answer: Unique integer solution -> x1=-19, x2=3, x3=-3
+
+=== Pattern 182 ===
+-3x1 + 2x2 = 11
+x1 - 4x2 - 3x3 = 44
+-2x1 - 2x2 - 3x3 = 55
+Answer: Infinite solutions
+
+=== Pattern 183 ===
+x1 + x2 = 17
+-2x1 = 20
+-x2 + x3 = -40
+Answer: Unique integer solution -> x1=-10, x2=27, x3=-13
+
+=== Pattern 184 ===
+-x1 - x2 - x3 = -56
+-3x2 + 3x3 = 15
+-3x1 + 2x3 = -7
+Answer: Unique integer solution -> x1=17, x2=17, x3=22
+
+=== Pattern 185 ===
+-2x1 - 2x2 + 3x3 = -13
+x2 - x3 = 3
+-2x1 - x2 + 2x3 = -10
+Answer: Infinite solutions
+
+=== Pattern 186 ===
+-3x1 + x2 + 3x3 = -43
+2x1 + 2x2 = -42
+-2x1 + x2 + x3 = -10
+Answer: Unique integer solution -> x1=-11, x2=-10, x3=-22
+
+=== Pattern 187 ===
+-2x1 - 3x2 - x3 = 2
+-2x2 = -16
+3x2 - x3 = 40
+Answer: Unique integer solution -> x1=-5, x2=8, x3=-16
+
+=== Pattern 188 ===
+-3x1 + x2 - x3 = 39
+-2x1 + 2x2 + 3x3 = -5
+-x1 + 3x2 - 4x3 = 28
+Answer: Unique integer solution -> x1=-12, x2=-4, x3=-7
+
+=== Pattern 189 ===
+-2x1 + x3 = 39
+x1 + x2 - x3 = -44
+-4x2 - 2x3 = 54
+Answer: Unique integer solution -> x1=-14, x2=-19, x3=11
+
+=== Pattern 190 ===
+3x1 - 2x2 - 2x3 = -53
+-2x1 + 3x2 + 2x3 = 29
+3x1 - 4x2 - 4x3 = -25
+Answer: Unique integer solution -> x1=-27, x2=3, x3=-17
+
+=== Pattern 191 ===
+-2x1 + x3 = 51
+x1 - x2 - 4x3 = -44
+-x1 - x2 - 3x3 = 7
+Answer: Infinite solutions
+
+=== Pattern 192 ===
+-x1 - 4x2 - 4x3 = -3
+-4x1 + 3x2 - x3 = -7
+-4x1 + 3x2 - 3x3 = 5
+Answer: Unique integer solution -> x1=7, x2=5, x3=-6
+
+=== Pattern 193 ===
+-4x1 - x2 = 33
+x1 - 3x2 = 60
+-3x1 + 2x3 = -13
+Answer: Unique integer solution -> x1=-3, x2=-21, x3=-11
+
+=== Pattern 194 ===
+-2x1 + x2 + 2x3 = -29
+2x1 + x2 - 2x3 = 31
+-3x1 + 3x2 + x3 = -52
+Answer: Unique integer solution -> x1=20, x2=1, x3=5
+
+=== Pattern 195 ===
+2x1 - 3x2 - 2x3 = -20
+2x1 - 4x3 = -14
+-3x1 - x2 - x3 = 19
+Answer: Unique integer solution -> x1=-7, x2=2, x3=0
+
+=== Pattern 196 ===
+2x1 - 2x2 + 2x3 = -14
+x1 - 3x3 = 48
+-2x1 + 2x2 - 3x3 = 22
+Answer: Unique integer solution -> x1=24, x2=23, x3=-8
+
+=== Pattern 197 ===
+3x1 - 4x2 + 2x3 = -40
+-2x1 + x3 = 34
+-x1 - 3x2 + 2x3 = 32
+Answer: Unique integer solution -> x1=-20, x2=-8, x3=-6
+
+=== Pattern 198 ===
+-3x1 - 2x2 = -51
+2x1 + x2 + 3x3 = 37
+-x1 - x2 + 3x3 = -15
+Answer: No solution
+
+=== Pattern 199 ===
+x1 + 2x2 + 2x3 = 47
+2x1 + x2 - 4x3 = -26
+3x1 + 3x2 - 2x3 = 20
+Answer: No solution
+
+=== Pattern 200 ===
+-4x1 - 4x2 + 3x3 = 51
+3x1 + 2x2 = -56
+-x1 - 2x2 + 3x3 = -5
+Answer: Infinite solutions
+
+=== Pattern 201 ===
+-4x1 - 2x2 - 2x3 = -4
+x2 + 2x3 = -35
+x1 + 2x2 - x3 = -38
+Answer: Unique integer solution -> x1=17, x2=-29, x3=-3
+
+=== Pattern 202 ===
+-4x1 + 2x3 = 10
+x1 - x2 + 2x3 = -22
+x1 - 2x2 - x3 = -25
+Answer: Unique integer solution -> x1=-4, x2=12, x3=-3
+
+=== Pattern 203 ===
+3x1 + 3x3 = 44
+-2x1 + x2 = -35
+x1 + x2 + 3x3 = 11
+Answer: No solution
+
+=== Pattern 204 ===
+-x1 - 3x2 + 3x3 = 59
+-x1 + 2x2 - 4x3 = -22
+-2x1 - x2 - x3 = 39
+Answer: No solution
+
+=== Pattern 205 ===
+-x1 + 2x2 - x3 = -33
+-3x1 - x2 = 33
+-2x1 - 2x2 = 58
+Answer: Unique integer solution -> x1=-2, x2=-27, x3=-19
+
+=== Pattern 206 ===
+-3x1 + 3x2 - 3x3 = -60
+-3x1 + 3x2 + x3 = -56
+-2x2 + x3 = 29
+Answer: Unique integer solution -> x1=5, x2=-14, x3=1
+
+=== Pattern 207 ===
+2x1 + 3x2 + 2x3 = 23
+x1 - 4x2 - 3x3 = 36
+-4x2 = -52
+Answer: Unique integer solution -> x1=16, x2=13, x3=-24
+
+=== Pattern 208 ===
+2x1 + 2x2 = -18
+-3x1 + x3 = 60
+-4x1 + 2x2 - 2x3 = 18
+Answer: Unique integer solution -> x1=-13, x2=4, x3=21
+
+=== Pattern 209 ===
+-2x1 + 2x2 + x3 = 57
+-x1 - 3x3 = -62
+-3x1 + 2x2 - 3x3 = -28
+Answer: Unique integer solution -> x1=-7, x2=10, x3=23
+
+=== Pattern 210 ===
+-4x1 + 3x2 + x3 = -52
+-4x2 - 2x3 = 9
+-4x1 - x2 - x3 = -42
+Answer: No solution
+
+=== Pattern 211 ===
+-x1 - 4x2 + 3x3 = 28
+-2x1 + 2x2 + x3 = -59
+-2x1 + 2x2 - 3x3 = -55
+Answer: Unique integer solution -> x1=17, x2=-12, x3=-1
+
+=== Pattern 212 ===
+2x1 + 3x2 - 4x3 = -13
+-3x1 - x3 = -44
+2x2 + x3 = 17
+Answer: Unique integer solution -> x1=11, x2=3, x3=11
+
+=== Pattern 213 ===
+-x1 - 3x2 + x3 = -39
+-3x1 - 2x3 = 40
+-3x1 - 4x2 + x3 = -15
+Answer: Unique integer solution -> x1=-26, x2=28, x3=19
+
+=== Pattern 214 ===
+2x1 - x2 - x3 = 2
+-2x1 + x2 + 3x3 = -36
+-x1 + 2x2 = -9
+Answer: Unique integer solution -> x1=-13, x2=-11, x3=-17
+
+=== Pattern 215 ===
+3x1 - 4x2 + x3 = 24
+-4x1 + 2x3 = -54
+-4x1 + x2 - 3x3 = 7
+Answer: Unique integer solution -> x1=7, x2=-4, x3=-13
+
+=== Pattern 216 ===
+2x1 - x2 + x3 = -59
+3x2 + 2x3 = -13
+-x1 + 2x2 - 3x3 = 51
+Answer: Unique integer solution -> x1=-25, x2=1, x3=-8
+
+=== Pattern 217 ===
+3x1 + x2 - 3x3 = 15
+-3x1 + 2x2 + x3 = -19
+-3x1 + 3x2 - 2x3 = -46
+Answer: Unique integer solution -> x1=14, x2=6, x3=11
+
+=== Pattern 218 ===
+-x1 + 2x2 - 4x3 = -22
+x1 + x2 + 2x3 = 23
+3x2 - 2x3 = 2
+Answer: No solution
+
+=== Pattern 219 ===
+-3x1 + x2 + x3 = -56
+3x1 + 2x2 + x3 = -32
+-2x2 - x3 = 53
+Answer: Unique integer solution -> x1=7, x2=-18, x3=-17
+
+=== Pattern 220 ===
+-4x1 + x2 + x3 = 63
+-3x1 + x2 - 2x3 = 51
+-3x2 + 3x3 = -15
+Answer: Unique integer solution -> x1=-15, x2=4, x3=-1
+
+=== Pattern 221 ===
+-4x1 - 2x2 + x3 = 57
+x1 + 2x2 - 3x3 = 9
+x1 - 2x2 + 2x3 = -4
+Answer: Unique integer solution -> x1=-8, x2=-23, x3=-21
+
+=== Pattern 222 ===
+2x1 + 2x2 - 3x3 = 60
+3x2 - x3 = -47
+-x1 + x2 - 2x3 = -16
+Answer: Unique integer solution -> x1=27, x2=-21, x3=-16
+
+=== Pattern 223 ===
+-4x1 - 2x2 = 20
+-x1 - 3x2 = -5
+-4x1 - 2x2 - 3x3 = -31
+Answer: Unique integer solution -> x1=-7, x2=4, x3=17
+
+=== Pattern 224 ===
+-x1 - x3 = -1
+x1 - 4x2 - x3 = 5
+-4x2 - 2x3 = 4
+Answer: Infinite solutions
+
+=== Pattern 225 ===
+-2x1 + x2 + 3x3 = -36
+x1 - x2 - x3 = 16
+-3x1 - x2 + 2x3 = -59
+Answer: Unique integer solution -> x1=18, x2=3, x3=-1
+
+=== Pattern 226 ===
+3x1 - 3x2 - x3 = 26
+-3x1 + x2 + x3 = 0
+x1 - 2x2 - 2x3 = 45
+Answer: Unique integer solution -> x1=-9, x2=-13, x3=-14
+
+=== Pattern 227 ===
+-x1 - 3x2 - 4x3 = 31
+3x1 + x2 = -5
+3x1 - x2 + 3x3 = -55
+Answer: Unique integer solution -> x1=-4, x2=7, x3=-12
+
+=== Pattern 228 ===
+x1 - x2 = 32
+2x2 - 2x3 = -42
+3x1 + 3x2 + 2x3 = 50
+Answer: Unique integer solution -> x1=21, x2=-11, x3=10
+
+=== Pattern 229 ===
+-2x1 - x2 - 4x3 = 16
+3x1 + 3x2 + 3x3 = 31
+x1 + 2x2 - x3 = 45
+Answer: No solution
+
+=== Pattern 230 ===
+-4x1 - x2 = -35
+2x1 + 3x2 - 4x3 = 22
+-2x1 + 2x2 - 4x3 = -13
+Answer: Infinite solutions
+
+=== Pattern 231 ===
+x1 - x2 + 3x3 = -23
+2x1 - x3 = -11
+3x1 - x2 - 2x3 = -30
+Answer: Unique integer solution -> x1=-6, x2=14, x3=-1
+
+=== Pattern 232 ===
+3x1 - 3x2 + 2x3 = 17
+x1 + x2 = -11
+-2x1 - 3x2 - 3x3 = 7
+Answer: Unique integer solution -> x1=-5, x2=-6, x3=7
+
+=== Pattern 233 ===
+3x1 - x2 - 3x3 = 1
+-3x1 + 3x2 - 3x3 = 15
+2x2 - 3x3 = -20
+Answer: Unique integer solution -> x1=-21, x2=-28, x3=-12
+
+=== Pattern 234 ===
+3x1 + x2 = 57
+2x1 - 3x2 - 3x3 = 9
+x1 + 2x2 - x3 = -34
+Answer: Unique integer solution -> x1=24, x2=-15, x3=28
+
+=== Pattern 235 ===
+x1 + 3x2 - 2x3 = -43
+3x1 - 4x2 = -14
+-2x1 + x2 + 3x3 = 62
+Answer: Unique integer solution -> x1=-6, x2=-1, x3=17
+
+=== Pattern 236 ===
+-3x1 + 2x2 - 3x3 = 0
+3x1 - 3x2 + x3 = 58
+-x2 - 2x3 = 58
+Answer: Infinite solutions
+
+=== Pattern 237 ===
+-4x1 + 3x2 - 3x3 = -15
+-2x2 - 3x3 = 60
+-x1 + 2x2 - 2x3 = -10
+Answer: Unique integer solution -> x1=0, x2=-15, x3=-10
+
+=== Pattern 238 ===
+2x1 + 2x2 + x3 = 42
+-x1 - x2 + x3 = -51
+2x1 = 6
+Answer: Unique integer solution -> x1=3, x2=28, x3=-20
+
+=== Pattern 239 ===
+x1 - x2 + 2x3 = 29
+3x1 - 3x2 + x3 = 62
+-2x2 - 2x3 = 18
+Answer: Unique integer solution -> x1=5, x2=-14, x3=5
+
+=== Pattern 240 ===
+3x1 + 2x2 = 29
+-2x1 + 2x3 = 26
+3x1 - 3x2 - x3 = 15
+Answer: Unique integer solution -> x1=11, x2=-2, x3=24
+
+=== Pattern 241 ===
+-2x1 - 2x2 + 2x3 = -20
+x1 - x2 - 2x3 = -1
+-4x1 - x2 - 4x3 = 43
+Answer: Unique integer solution -> x1=-6, x2=9, x3=-7
+
+=== Pattern 242 ===
+-4x1 + x2 + x3 = -17
+-3x2 - 3x3 = -33
+-4x1 - 2x2 - 2x3 = -50
+Answer: Infinite solutions
+
+=== Pattern 243 ===
+x1 - 2x2 - x3 = 61
+-x1 + x2 - x3 = -7
+-x2 - 2x3 = 54
+Answer: Infinite solutions
+
+=== Pattern 244 ===
+-x1 - 3x2 - x3 = 54
+-2x1 + 2x2 + 2x3 = -44
+-2x1 + x2 - x3 = 50
+Answer: Unique integer solution -> x1=-12, x2=-4, x3=-30
+
+=== Pattern 245 ===
+-2x1 - x2 + x3 = 41
+2x1 + x2 - 3x3 = -51
+-3x1 + x2 - 3x3 = 59
+Answer: Unique integer solution -> x1=-22, x2=8, x3=5
+
+=== Pattern 246 ===
+3x1 + 2x2 - x3 = -50
+2x2 - 3x3 = 35
+2x1 - 4x2 + x3 = -57
+Answer: Unique integer solution -> x1=-21, x2=1, x3=-11
+
+=== Pattern 247 ===
+-2x1 - 3x3 = 51
+-2x1 - 4x2 - 4x3 = -16
+2x1 - x2 = -21
+Answer: Unique integer solution -> x1=0, x2=21, x3=-17
+
+=== Pattern 248 ===
+2x1 + 2x2 - 2x3 = -24
+-2x1 - 2x2 - 3x3 = 14
+x1 + 2x2 + 3x3 = 1
+Answer: Unique integer solution -> x1=-15, x2=5, x3=2
+
+=== Pattern 249 ===
+-3x1 + 2x2 - 2x3 = -43
+2x1 + x2 - x3 = 61
+-x1 + 3x2 - 3x3 = 16
+Answer: No solution
+
+=== Pattern 250 ===
+x1 - 3x2 + 3x3 = 30
+x1 + 2x2 = -36
+2x1 + x2 + x3 = -18
+Answer: Unique integer solution -> x1=12, x2=-24, x3=-18
+
+=== Pattern 251 ===
+-3x1 - 4x2 - 2x3 = -57
+x1 - 2x2 - x3 = -41
+2x1 - 3x2 + 2x3 = -15
+Answer: Unique integer solution -> x1=-5, x2=11, x3=14
+
+=== Pattern 252 ===
+2x1 + 2x2 = -14
+3x1 + 3x2 - 4x3 = 15
+3x1 + 2x2 + 3x3 = -18
+Answer: Unique integer solution -> x1=23, x2=-30, x3=-9
+
+=== Pattern 253 ===
+-x1 + 3x2 = -64
+-x2 + x3 = 55
+-x1 + 2x2 + x3 = -9
+Answer: Infinite solutions
+
+=== Pattern 254 ===
+-4x1 + 2x2 - x3 = -59
+2x2 + 2x3 = -26
+-3x1 - 3x2 - 2x3 = 63
+Answer: Unique integer solution -> x1=-3, x2=-28, x3=15
+
+=== Pattern 255 ===
+-3x1 + x2 = 34
+-4x1 - x2 - 2x3 = -57
+-3x1 - 3x2 + 3x3 = 0
+Answer: Unique integer solution -> x1=-3, x2=25, x3=22
+
+=== Pattern 256 ===
+-x1 + 2x2 - x3 = -9
+-x1 - 4x2 - 2x3 = 17
+-2x1 - 3x3 = 6
+Answer: Unique integer solution -> x1=27, x2=-1, x3=-20
+
+=== Pattern 257 ===
+-3x1 + 2x2 + x3 = 4
+-2x1 - 4x2 + 2x3 = 56
+-2x1 - 2x2 + 3x3 = 36
+Answer: Unique integer solution -> x1=-8, x2=-10, x3=0
+
+=== Pattern 258 ===
+-x1 - x2 + 3x3 = -16
+2x1 + 2x2 - 4x3 = 22
+-3x1 - 4x2 + 2x3 = -20
+Answer: Unique integer solution -> x1=-6, x2=7, x3=-5
+
+=== Pattern 259 ===
+-3x1 - 3x2 - x3 = 44
+x1 - 2x2 + 2x3 = -23
+x1 + 2x3 = -23
+Answer: Unique integer solution -> x1=-13, x2=0, x3=-5
+
+=== Pattern 260 ===
+2x1 - 2x3 = 36
+-x1 + x2 + 2x3 = -26
+3x1 - 4x3 = 44
+Answer: Unique integer solution -> x1=28, x2=-18, x3=10
+
+=== Pattern 261 ===
+3x1 - 4x3 = 54
+x1 + 2x2 - x3 = 38
+2x1 - 4x2 = 16
+Answer: Unique integer solution -> x1=26, x2=9, x3=6
+
+=== Pattern 262 ===
+-x1 + x3 = -5
+2x1 - x2 + x3 = 19
+2x1 + 3x2 + 3x3 = -17
+Answer: Unique integer solution -> x1=5, x2=-9, x3=0
+
+=== Pattern 263 ===
+x1 + 2x2 - 4x3 = -7
+-x1 + 2x2 = -13
+x1 + 2x2 + 3x3 = -7
+Answer: Unique integer solution -> x1=3, x2=-5, x3=0
+
+=== Pattern 264 ===
+x1 + x2 + 2x3 = -42
+-x1 + 2x2 = 59
+3x2 + 2x3 = 19
+Answer: No solution
+
+=== Pattern 265 ===
+-2x1 - 3x2 - 2x3 = 1
+2x1 + x2 + 3x3 = -34
+-3x2 = -39
+Answer: Unique integer solution -> x1=-13, x2=13, x3=-7
+
+=== Pattern 266 ===
+-3x1 - x2 = 27
+-x1 - 2x3 = 22
+-4x1 - x2 - 2x3 = 49
+Answer: Infinite solutions
+
+=== Pattern 267 ===
+-3x1 + x2 = 56
+x1 + x2 + x3 = -34
+-x1 + 3x2 + x3 = 14
+Answer: Unique integer solution -> x1=-16, x2=8, x3=-26
+
+=== Pattern 268 ===
+x1 + x2 - x3 = 50
+3x1 + x2 + x3 = 20
+-x1 - x2 - 2x3 = 40
+Answer: Unique integer solution -> x1=15, x2=5, x3=-30
+
+=== Pattern 269 ===
+-3x1 - 3x2 - 3x3 = -63
+2x1 - 2x2 - 3x3 = 56
+-2x2 - x3 = 10
+Answer: Unique integer solution -> x1=25, x2=-6, x3=2
+
+=== Pattern 270 ===
+3x1 + 2x2 = 52
+3x1 - 4x2 + 2x3 = 18
+-2x1 - x2 + 2x3 = 20
+Answer: Unique integer solution -> x1=8, x2=14, x3=25
+
+=== Pattern 271 ===
+3x1 + x2 + 3x3 = -19
+-3x1 - 4x3 = 38
+x2 - x3 = 17
+Answer: No solution
+
+=== Pattern 272 ===
+2x1 - 2x2 - 2x3 = -28
+-3x2 = -24
+-3x1 - 3x2 = -30
+Answer: Unique integer solution -> x1=2, x2=8, x3=8
+
+=== Pattern 273 ===
+-2x1 + x3 = -42
+2x1 - 2x2 + 2x3 = -62
+-3x1 - 3x3 = 63
+Answer: Unique integer solution -> x1=7, x2=10, x3=-28
+
+=== Pattern 274 ===
+x1 + 2x2 - 2x3 = 59
+-x1 - 3x2 + 2x3 = -62
+x1 - 2x2 = 5
+Answer: Unique integer solution -> x1=11, x2=3, x3=-21
+
+=== Pattern 275 ===
+-4x1 + 3x2 - 4x3 = 47
+2x1 - x2 - 2x3 = 45
+2x1 - 3x3 = 42
+Answer: Unique integer solution -> x1=-9, x2=-23, x3=-20
+
+=== Pattern 276 ===
+-x1 - x2 - 4x3 = 0
+-3x1 - 3x2 = -43
+-4x1 - 4x2 - 4x3 = -43
+Answer: Infinite solutions
+
+=== Pattern 277 ===
+3x1 + 2x2 + x3 = 35
+-4x1 - 4x2 - 2x3 = -24
+2x1 + x2 + 2x3 = 35
+Answer: Unique integer solution -> x1=23, x2=-19, x3=4
+
+=== Pattern 278 ===
+-3x1 - 2x2 + x3 = -34
+-2x1 - x2 - x3 = 16
+-2x1 + x2 + 2x3 = -51
+Answer: Unique integer solution -> x1=3, x2=1, x3=-23
+
+=== Pattern 279 ===
+2x1 - 2x2 - 2x3 = -63
+-x1 = 30
+x1 - 2x2 - 2x3 = -32
+Answer: No solution
+
+=== Pattern 280 ===
+2x1 - x3 = 19
+-x1 + 2x3 = 0
+x1 + x3 = 19
+Answer: Infinite solutions
+
+=== Pattern 281 ===
+-2x1 - 2x2 + 2x3 = -12
+-3x1 - 4x2 - x3 = -5
+-3x1 + x2 = -32
+Answer: Unique integer solution -> x1=9, x2=-5, x3=-2
+
+=== Pattern 282 ===
+-2x1 + 3x2 = 49
+-2x1 - 4x3 = -31
+-4x1 + 3x2 - 4x3 = 20
+Answer: No solution
+
+=== Pattern 283 ===
+x1 + 2x2 + 2x3 = 21
+x1 - 3x2 - 3x3 = -24
+3x1 + 2x2 + x3 = 37
+Answer: Unique integer solution -> x1=3, x2=19, x3=-10
+
+=== Pattern 284 ===
+-x1 - 3x2 + 2x3 = -11
+-3x1 - x2 + x3 = -51
+-4x1 - 4x2 + 3x3 = -62
+Answer: Infinite solutions
+
+=== Pattern 285 ===
+x1 - 3x3 = -18
+x1 + 2x2 - 2x3 = 17
+2x1 - x2 - 3x3 = -50
+Answer: Unique integer solution -> x1=-15, x2=17, x3=1
+
+=== Pattern 286 ===
+-4x1 - 3x2 + x3 = -13
+-2x1 - 3x2 - x3 = 61
+3x3 = -63
+Answer: Unique integer solution -> x1=16, x2=-24, x3=-21
+
+=== Pattern 287 ===
+3x1 + x2 - 2x3 = -37
+3x1 - 4x2 + 2x3 = 49
+3x1 + 2x2 + 3x3 = -60
+Answer: Unique integer solution -> x1=-7, x2=-18, x3=-1
+
+=== Pattern 288 ===
+2x1 - x2 - 2x3 = -32
+-4x2 - 3x3 = -37
+2x1 + x2 = -22
+Answer: Unique integer solution -> x1=-22, x2=22, x3=-17
+
+=== Pattern 289 ===
+-2x1 - 2x2 + 2x3 = 56
+-2x1 + 2x3 = 48
+-3x1 + 3x2 + x3 = 40
+Answer: Unique integer solution -> x1=-14, x2=-4, x3=10
+
+=== Pattern 290 ===
+-4x1 - x2 = -16
+3x2 + 3x3 = 14
+-4x1 + 2x2 + 3x3 = -2
+Answer: Infinite solutions
+
+=== Pattern 291 ===
+-2x1 + 2x2 - 4x3 = -36
+-x1 - 4x2 + x3 = -43
+-2x1 + x2 + 3x3 = -9
+Answer: Unique integer solution -> x1=16, x2=8, x3=5
+
+=== Pattern 292 ===
+3x1 - 3x2 - 3x3 = -11
+-x1 + 3x2 + 3x3 = -43
+2x1 = -55
+Answer: No solution
+
+=== Pattern 293 ===
+-3x1 + 3x2 + 3x3 = 15
+3x1 - 2x2 - 3x3 = -27
+-4x1 + 3x2 = 52
+Answer: Unique integer solution -> x1=-22, x2=-12, x3=-5
+
+=== Pattern 294 ===
+-3x1 + 2x2 + x3 = -35
+2x1 - 3x2 + 3x3 = 63
+3x1 - 4x3 = -7
+Answer: Unique integer solution -> x1=3, x2=-15, x3=4
+
+=== Pattern 295 ===
+-x1 + x3 = -5
+-3x1 + 2x2 - 2x3 = 2
+-3x1 + 3x2 + 2x3 = 4
+Answer: Unique integer solution -> x1=4, x2=6, x3=-1
+
+=== Pattern 296 ===
+-2x1 + 3x2 + 3x3 = 57
+-x1 - 4x2 + 2x3 = -11
+-x1 - 3x2 + 2x3 = -4
+Answer: Unique integer solution -> x1=-21, x2=7, x3=-2
+
+=== Pattern 297 ===
+-2x1 + x2 + x3 = 17
+x1 - 2x2 + 2x3 = -11
+-4x1 + 3x2 = 32
+Answer: Unique integer solution -> x1=7, x2=20, x3=11
+
+=== Pattern 298 ===
+x1 + 2x3 = 8
+3x1 + 3x2 + x3 = 10
+-x1 - 2x2 - x3 = -22
+Answer: Unique integer solution -> x1=-12, x2=12, x3=10
+
+=== Pattern 299 ===
+x1 + x2 + 2x3 = -2
+-4x1 + x2 - 4x3 = 1
+-4x1 - 3x2 + 3x3 = -24
+Answer: Unique integer solution -> x1=3, x2=1, x3=-3
+
+=== Pattern 300 ===
+-2x1 - x2 - 2x3 = 5
+2x1 + 3x2 + x3 = -47
+2x2 - x3 = -42
+Answer: Infinite solutions
+
+=== Pattern 301 ===
+-4x1 + x2 = -8
+2x1 - 3x2 + 3x3 = -49
+-2x1 - 2x2 + 3x3 = -57
+Answer: Infinite solutions
+
+=== Pattern 302 ===
+-x1 - 4x2 - 2x3 = 2
+-2x3 = -23
+-x1 - 4x2 - 4x3 = -21
+Answer: Infinite solutions
+
+=== Pattern 303 ===
+2x1 + 2x2 - 2x3 = 2
+3x1 - 4x2 - 2x3 = -50
+x2 - 3x3 = -21
+Answer: Unique integer solution -> x1=2, x2=9, x3=10
+
+=== Pattern 304 ===
+3x1 + x2 + 2x3 = -12
+x2 + x3 = -8
+3x1 + 2x2 + 3x3 = -20
+Answer: Infinite solutions
+
+=== Pattern 305 ===
+-3x1 + x2 = -29
+-2x1 - x2 - 2x3 = 41
+-3x1 + x2 - 3x3 = 34
+Answer: Unique integer solution -> x1=6, x2=-11, x3=-21
+
+=== Pattern 306 ===
+-2x1 + x2 + 3x3 = -42
+-4x1 - 3x2 + 3x3 = -22
+-2x1 + 2x2 = 32
+Answer: Unique integer solution -> x1=-14, x2=2, x3=-24
+
+=== Pattern 307 ===
+-2x1 - 2x2 = 8
+2x1 + x2 - x3 = -9
+-3x1 + 3x2 + 3x3 = 48
+Answer: Unique integer solution -> x1=-15, x2=11, x3=-10
+
+=== Pattern 308 ===
+-4x1 - 2x2 - 3x3 = -46
+x1 - 4x2 - 3x3 = -41
+-3x2 - 3x3 = -24
+Answer: Unique integer solution -> x1=13, x2=30, x3=-22
+
+=== Pattern 309 ===
+x1 + 2x2 - 2x3 = -42
+2x1 - x2 - 2x3 = -12
+-3x1 + 3x2 - 4x3 = 54
+Answer: Unique integer solution -> x1=-24, x2=-18, x3=-9
+
+=== Pattern 310 ===
+2x1 - 3x3 = 17
+-4x1 - 2x2 - 2x3 = 30
+3x1 - x3 = -20
+Answer: Unique integer solution -> x1=-11, x2=20, x3=-13
+
+=== Pattern 311 ===
+-x1 - x2 - 3x3 = -52
+2x1 + 3x2 + x3 = -46
+-4x1 - x2 + x3 = 42
+Answer: Unique integer solution -> x1=2, x2=-25, x3=25
+
+=== Pattern 312 ===
+3x1 + x2 - 2x3 = -3
+-2x1 + x2 - 2x3 = 12
+-2x1 + x2 - 4x3 = 32
+Answer: Unique integer solution -> x1=-3, x2=-14, x3=-10
+
+=== Pattern 313 ===
+x1 - x2 + 3x3 = -25
+-2x1 + x2 - 2x3 = 40
+-x1 + x3 = 15
+Answer: Infinite solutions
+
+=== Pattern 314 ===
+3x1 - 3x2 - 3x3 = 39
+3x1 + x2 = 58
+3x1 + 2x2 - x3 = 33
+Answer: Unique integer solution -> x1=22, x2=-8, x3=17
+
+=== Pattern 315 ===
+x1 - 4x2 - x3 = 7
+-4x1 + 2x2 + 3x3 = 41
+-3x1 - 4x2 + 2x3 = 60
+Answer: Unique integer solution -> x1=-2, x2=-6, x3=15
+
+=== Pattern 316 ===
+-3x1 - 2x2 + 3x3 = -41
+2x1 - x2 = 45
+-4x1 - 4x3 = -12
+Answer: Unique integer solution -> x1=14, x2=-17, x3=-11
+
+=== Pattern 317 ===
+3x1 + 3x2 + 2x3 = 57
+-2x1 - x2 + x3 = -25
+2x1 - x2 = 33
+Answer: Unique integer solution -> x1=16, x2=-1, x3=6
+
+=== Pattern 318 ===
+-2x1 - x2 = -2
+2x1 - 3x2 + 2x3 = 44
+-2x1 - 4x2 + x3 = 15
+Answer: Unique integer solution -> x1=-1, x2=4, x3=29
+
+=== Pattern 319 ===
+-3x1 + 3x2 - 4x3 = -13
+-2x1 + 2x2 + x3 = -49
+x1 - 2x2 + 3x3 = -24
+Answer: Unique integer solution -> x1=29, x2=10, x3=-11
+
+=== Pattern 320 ===
+2x1 + x2 - 3x3 = 16
+3x1 + 2x2 - x3 = -3
+x1 - 3x2 - 3x3 = 59
+Answer: Unique integer solution -> x1=5, x2=-12, x3=-6
+
+=== Pattern 321 ===
+2x1 + 2x2 - 3x3 = 55
+-4x3 = -12
+-2x2 - 2x3 = -44
+Answer: Unique integer solution -> x1=13, x2=19, x3=3
+
+=== Pattern 322 ===
+x1 + 3x2 + 2x3 = 40
+x1 - 4x2 - x3 = -15
+x1 + x2 - 4x3 = -58
+Answer: Unique integer solution -> x1=5, x2=1, x3=16
+
+=== Pattern 323 ===
+x1 - 3x2 + x3 = 12
+-4x1 + x2 = -62
+3x1 - x2 - x3 = 56
+Answer: Unique integer solution -> x1=15, x2=-2, x3=-9
+
+=== Pattern 324 ===
+3x1 - 3x2 + 3x3 = -36
+x1 + x2 - 3x3 = 26
+-x1 + x2 + 2x3 = -51
+Answer: Unique integer solution -> x1=-14, x2=-23, x3=-21
+
+=== Pattern 325 ===
+2x1 + 2x2 + x3 = -14
+2x2 + x3 = 14
+-x1 - x3 = 34
+Answer: Unique integer solution -> x1=-14, x2=17, x3=-20
+
+=== Pattern 326 ===
+-x1 - 3x2 + x3 = 0
+2x1 - 2x2 + x3 = -40
+-3x1 + 2x3 = 45
+Answer: Unique integer solution -> x1=-15, x2=5, x3=0
+
+=== Pattern 327 ===
+-2x1 - 2x2 - 4x3 = -18
+x1 - x2 + 2x3 = 59
+2x2 + 3x3 = 16
+Answer: Unique integer solution -> x1=-10, x2=-25, x3=22
+
+=== Pattern 328 ===
+-3x1 + 3x2 + 2x3 = 57
+-3x2 + x3 = -51
+x1 - 3x2 + 3x3 = 37
+Answer: Unique integer solution -> x1=28, x2=27, x3=30
+
+=== Pattern 329 ===
+-3x1 - 4x2 - x3 = -31
+x1 + x3 = 21
+3x1 - x2 - x3 = 62
+Answer: Unique integer solution -> x1=19, x2=-7, x3=2
+
+=== Pattern 330 ===
+-2x1 + 2x2 - 3x3 = -44
+-4x1 - 2x3 = -40
+x1 + x2 = 8
+Answer: Unique integer solution -> x1=0, x2=8, x3=20
+
+=== Pattern 331 ===
+3x1 + x3 = -45
+-x1 - 2x2 - 2x3 = -6
+2x1 - 2x2 - x3 = -52
+Answer: No solution
+
+=== Pattern 332 ===
+x1 - 2x2 + x3 = 16
+-2x2 - 4x3 = -34
+x1 - 4x2 - 3x3 = -18
+Answer: Infinite solutions
+
+=== Pattern 333 ===
+x1 + 2x2 + x3 = -56
+-x1 - 3x2 + x3 = 20
+-x2 + 2x3 = -36
+Answer: Infinite solutions
+
+=== Pattern 334 ===
+x1 + 2x2 = 44
+2x2 + x3 = 52
+-x1 + 2x3 = 12
+Answer: Unique integer solution -> x1=-4, x2=24, x3=4
+
+=== Pattern 335 ===
+-3x1 - 2x2 = -43
+2x1 + x2 - 2x3 = -33
+-3x1 + x2 - 4x3 = -60
+Answer: Unique integer solution -> x1=-5, x2=29, x3=26
+
+=== Pattern 336 ===
+-4x1 + 3x2 = -23
+x1 - 2x2 - 2x3 = 16
+-3x1 + x2 - 2x3 = -7
+Answer: Infinite solutions
+
+=== Pattern 337 ===
+2x1 + 2x2 - 4x3 = -8
+2x1 + 3x2 - 2x3 = 30
+-2x1 - 3x2 = -60
+Answer: Unique integer solution -> x1=18, x2=8, x3=15
+
+=== Pattern 338 ===
+3x1 + 3x2 - 3x3 = 21
+-2x1 - x2 + x3 = -1
+3x1 - x2 + 2x3 = -58
+Answer: Unique integer solution -> x1=-6, x2=-14, x3=-27
+
+=== Pattern 339 ===
+2x1 - 2x2 + 2x3 = 34
+x2 + x3 = -44
+2x1 - x2 + 3x3 = -9
+Answer: No solution
+
+=== Pattern 340 ===
+-x1 - x2 - x3 = 12
+2x2 + 2x3 = -8
+-3x1 + 3x3 = -42
+Answer: Unique integer solution -> x1=-8, x2=18, x3=-22
+
+=== Pattern 341 ===
+-3x1 + 2x2 + 3x3 = -53
+3x1 - 2x2 + 2x3 = 58
+x1 - x2 + x3 = 21
+Answer: Unique integer solution -> x1=16, x2=-4, x3=1
+
+=== Pattern 342 ===
+2x1 - 2x3 = 0
+-2x1 + 2x2 - x3 = -28
+2x1 - 2x2 - 2x3 = 22
+Answer: Unique integer solution -> x1=2, x2=-11, x3=2
+
+=== Pattern 343 ===
+-2x1 + 3x2 - x3 = -12
+x1 + x2 = 1
+-x1 + 3x2 + x3 = -36
+Answer: Unique integer solution -> x1=6, x2=-5, x3=-15
+
+=== Pattern 344 ===
+-2x1 + x2 - 3x3 = -40
+x1 + x2 - 2x3 = -3
+-3x1 - 4x2 - x3 = -41
+Answer: Unique integer solution -> x1=10, x2=1, x3=7
+
+=== Pattern 345 ===
+3x1 + 2x2 - x3 = -7
+-x1 - 2x2 - 3x3 = 21
+x1 - x2 - 2x3 = -9
+Answer: Unique integer solution -> x1=-17, x2=16, x3=-12
+
+=== Pattern 346 ===
+x1 - 4x2 - 2x3 = -32
+x1 + 3x2 - 4x3 = 15
+x1 + x2 - x3 = 21
+Answer: Unique integer solution -> x1=20, x2=9, x3=8
+
+=== Pattern 347 ===
+x1 + 2x2 - x3 = 18
+3x1 - 2x2 + 3x3 = 16
+x1 + 3x2 - 3x3 = 39
+Answer: Unique integer solution -> x1=15, x2=-5, x3=-13
+
+=== Pattern 348 ===
+-x1 - 3x2 = -2
+x1 - 4x2 - x3 = 5
+x2 - x3 = 11
+Answer: Unique integer solution -> x1=-1, x2=1, x3=-10
+
+=== Pattern 349 ===
+2x1 + 3x3 = -51
+-x1 - x3 = 12
+-x1 + 3x2 = -27
+Answer: Unique integer solution -> x1=15, x2=-4, x3=-27
+
+=== Pattern 350 ===
+-4x1 + 3x3 = 12
+2x1 - 3x2 = 12
+2x2 + x3 = 12
+Answer: Unique integer solution -> x1=6, x2=0, x3=12
+
+=== Pattern 351 ===
+3x1 - x2 = -34
+-3x1 - 3x2 - x3 = 59
+-4x2 - x3 = 26
+Answer: No solution
+
+=== Pattern 352 ===
+3x1 - 4x2 + 3x3 = -46
+x1 - 2x2 + 3x3 = -38
+-2x1 + 2x3 = -28
+Answer: Unique integer solution -> x1=6, x2=10, x3=-8
+
+=== Pattern 353 ===
+-x1 + 3x2 + 2x3 = -44
+x1 - x3 = -1
+3x1 - x2 + 3x3 = -45
+Answer: Unique integer solution -> x1=-10, x2=-12, x3=-9
+
+=== Pattern 354 ===
+-3x1 + 3x2 + 3x3 = -48
+-4x1 - 4x2 - x3 = -28
+x1 + 3x2 - 2x3 = 40
+Answer: Unique integer solution -> x1=7, x2=3, x3=-12
+
+=== Pattern 355 ===
+-4x1 - x2 - 2x3 = -57
+2x3 = 25
+-4x1 - x2 = -32
+Answer: Infinite solutions
+
+=== Pattern 356 ===
+-3x1 - 3x2 - 4x3 = 62
+2x1 + x3 = -16
+3x1 + 3x2 - 4x3 = 2
+Answer: Unique integer solution -> x1=-4, x2=-6, x3=-8
+
+=== Pattern 357 ===
+-3x1 + x3 = 54
+3x1 + x2 - x3 = -48
+3x2 - 2x3 = 54
+Answer: Unique integer solution -> x1=-24, x2=6, x3=-18
+
+=== Pattern 358 ===
+-3x1 - 3x3 = 12
+-4x1 - x2 + 2x3 = 1
+-x1 - 2x2 + 3x3 = 6
+Answer: Unique integer solution -> x1=0, x2=-9, x3=-4
+
+=== Pattern 359 ===
+x1 - 2x2 - x3 = -40
+-x1 - 3x2 + 3x3 = 4
+x1 + 3x2 - x3 = 10
+Answer: Unique integer solution -> x1=-13, x2=10, x3=7
+
+=== Pattern 360 ===
+2x1 + 2x2 + 2x3 = -44
+-2x1 + x2 = -17
+3x2 + 2x3 = -63
+Answer: No solution
+
+=== Pattern 361 ===
+x1 + 3x2 = -38
+-2x1 + 3x2 + x3 = -6
+2x1 - 2x2 + 3x3 = 28
+Answer: Unique integer solution -> x1=-8, x2=-10, x3=8
+
+=== Pattern 362 ===
+-x1 - 2x2 + 3x3 = -50
+2x2 = 28
+-x1 - x2 - x3 = -20
+Answer: Unique integer solution -> x1=10, x2=14, x3=-4
+
+=== Pattern 363 ===
+-4x1 - x2 - x3 = -40
+2x1 + 2x2 - 2x3 = -5
+-2x1 + x2 - 3x3 = -45
+Answer: Infinite solutions
+
+=== Pattern 364 ===
+-4x1 - 2x2 - 4x3 = -32
+3x1 + x2 + 3x3 = 16
+-4x1 - 2x2 - 3x3 = -12
+Answer: Unique integer solution -> x1=-20, x2=16, x3=20
+
+=== Pattern 365 ===
+-x1 - 4x3 = -8
+-2x1 + x3 = -61
+x2 + 3x3 = -38
+Answer: Unique integer solution -> x1=28, x2=-23, x3=-5
+
+=== Pattern 366 ===
+-3x1 - 4x2 + 3x3 = -28
+-x2 + 2x3 = -33
+-4x1 - 2x2 + x3 = 58
+Answer: Unique integer solution -> x1=-28, x2=25, x3=-4
+
+=== Pattern 367 ===
+x1 + x2 + 2x3 = -19
+x1 + 2x2 = -27
+2x1 + 3x2 + 2x3 = -46
+Answer: Infinite solutions
+
+=== Pattern 368 ===
+3x1 + 2x2 - 2x3 = -46
+3x1 + x2 - 3x3 = -53
+x1 + 2x2 - x3 = -41
+Answer: Unique integer solution -> x1=8, x2=-14, x3=21
+
+=== Pattern 369 ===
+-2x1 - x2 + 2x3 = 34
+3x1 - x2 + 2x3 = -31
+-3x1 + 2x2 + x3 = -7
+Answer: Unique integer solution -> x1=-13, x2=-20, x3=-6
+
+=== Pattern 370 ===
+3x1 - 3x2 - x3 = 29
+3x1 + 3x2 - 3x3 = -21
+-x1 - 2x2 + x3 = 10
+Answer: Unique integer solution -> x1=12, x2=-3, x3=16
+
+=== Pattern 371 ===
+-2x1 - 2x2 - 2x3 = -40
+-2x1 + x2 - 3x3 = -28
+-x3 = 9
+Answer: Unique integer solution -> x1=28, x2=1, x3=-9
+
+=== Pattern 372 ===
+3x1 - x2 - 4x3 = -23
+-x1 + 2x2 + 3x3 = 16
+-2x1 = 42
+Answer: Unique integer solution -> x1=-21, x2=20, x3=-15
+
+=== Pattern 373 ===
+3x1 - 4x2 + 3x3 = -11
+3x1 - 4x2 + x3 = -1
+x1 - 4x2 + 2x3 = -6
+Answer: Unique integer solution -> x1=0, x2=-1, x3=-5
+
+=== Pattern 374 ===
+3x1 + 2x2 = 62
+x1 + x2 + x3 = 15
+2x2 + x3 = 21
+Answer: Unique integer solution -> x1=10, x2=16, x3=-11
+
+=== Pattern 375 ===
+3x1 - 2x2 - 3x3 = 37
+-4x1 - x2 + x3 = -63
+x2 + 2x3 = -14
+Answer: Unique integer solution -> x1=8, x2=16, x3=-15
+
+=== Pattern 376 ===
+-x1 - 3x3 = 13
+-2x1 - 3x2 + x3 = 8
+-3x1 - 3x2 - 2x3 = 21
+Answer: Infinite solutions
+
+=== Pattern 377 ===
+-3x1 - 4x2 - 4x3 = 6
+2x2 - x3 = -45
+3x1 + 3x2 - x3 = 11
+Answer: Unique integer solution -> x1=26, x2=-22, x3=1
+
+=== Pattern 378 ===
+-3x1 - 4x2 + 2x3 = -35
+x1 + 3x2 - 3x3 = 47
+-2x1 - x2 - x3 = 12
+Answer: Infinite solutions
+
+=== Pattern 379 ===
+x1 - 4x2 - 4x3 = -48
+-x1 - 2x2 - 3x3 = -31
+-3x1 + 2x2 + 3x3 = 31
+Answer: Unique integer solution -> x1=0, x2=5, x3=7
+
+=== Pattern 380 ===
+-3x1 + x2 - x3 = -9
+2x1 - x2 - 4x3 = 6
+2x1 - 4x2 - 3x3 = 49
+Answer: Unique integer solution -> x1=-2, x2=-14, x3=1
+
+=== Pattern 381 ===
+-x1 - x3 = 5
+-3x1 - x2 - 2x3 = 44
+-3x1 + 2x2 - 3x3 = -13
+Answer: Unique integer solution -> x1=-20, x2=-14, x3=15
+
+=== Pattern 382 ===
+x1 - 3x2 + x3 = 38
+-3x1 + 2x2 - x3 = -2
+x1 - x2 + 2x3 = 28
+Answer: Unique integer solution -> x1=-12, x2=-12, x3=14
+
+=== Pattern 383 ===
+x1 - 2x2 + 2x3 = 57
+-x2 - x3 = 27
+-2x1 - x2 - x3 = 5
+Answer: Unique integer solution -> x1=11, x2=-25, x3=-2
+
+=== Pattern 384 ===
+-x1 - 4x2 + x3 = -43
+2x1 + 2x2 + 2x3 = 28
+-x1 = 4
+Answer: Unique integer solution -> x1=-4, x2=13, x3=5
+
+=== Pattern 385 ===
+-4x1 - 2x3 = -30
+-x1 + 2x2 + 3x3 = 25
+-4x1 + 2x2 + x3 = -9
+Answer: Unique integer solution -> x1=-4, x2=-24, x3=23
+
+=== Pattern 386 ===
+3x1 = 24
+-x1 + 3x2 = 55
+x1 - x2 + 2x3 = -61
+Answer: Unique integer solution -> x1=8, x2=21, x3=-24
+
+=== Pattern 387 ===
+x1 - 2x2 + x3 = 18
+-x1 - 2x2 + x3 = 14
+-4x1 + 3x2 - 2x3 = -47
+Answer: Unique integer solution -> x1=2, x2=7, x3=30
+
+=== Pattern 388 ===
+-2x1 - 3x3 = -25
+-4x1 + x2 - 2x3 = 14
+-4x1 + 2x2 - 3x3 = 3
+Answer: Unique integer solution -> x1=-10, x2=4, x3=15
+
+=== Pattern 389 ===
+-2x1 = -42
+-2x1 + 2x3 = -22
+x1 - x2 - 2x3 = 0
+Answer: Unique integer solution -> x1=21, x2=1, x3=10
+
+=== Pattern 390 ===
+-4x1 + 2x2 - 4x3 = -46
+-3x1 + x2 + 3x3 = -9
+-2x1 - 3x2 - 3x3 = 34
+Answer: Unique integer solution -> x1=1, x2=-15, x3=3
+
+=== Pattern 391 ===
+-4x1 - 4x2 - x3 = -24
+3x1 + 3x2 - 2x3 = 14
+-x1 - x2 - 3x3 = -10
+Answer: Infinite solutions
+
+=== Pattern 392 ===
+x1 - 3x2 - 2x3 = -38
+3x1 + 2x3 = -54
+-x1 - 3x2 + 2x3 = 62
+Answer: Unique integer solution -> x1=-26, x2=-4, x3=12
+
+=== Pattern 393 ===
+2x1 + 2x2 + x3 = 56
+-x1 - x2 + 2x3 = 42
+-4x1 + x2 - 3x3 = -60
+Answer: Unique integer solution -> x1=-2, x2=16, x3=28
+
+=== Pattern 394 ===
+-x1 - 4x2 - 2x3 = 4
+-2x1 + 2x3 = -50
+2x1 + x2 + 3x3 = -4
+Answer: Unique integer solution -> x1=14, x2=1, x3=-11
+
+=== Pattern 395 ===
+-3x1 - 4x2 - 2x3 = 48
+-x1 + 2x2 + 2x3 = 44
+-3x1 - 3x2 - 4x3 = 6
+Answer: Unique integer solution -> x1=-20, x2=-6, x3=18
+
+=== Pattern 396 ===
+3x1 + x2 = 46
+x1 - 2x2 + 2x3 = -15
+-3x1 + x2 + 3x3 = -53
+Answer: Unique integer solution -> x1=13, x2=7, x3=-7
+
+=== Pattern 397 ===
+2x1 + 2x2 + 3x3 = -25
+-2x1 + 2x2 + x3 = 29
+2x3 = -2
+Answer: Unique integer solution -> x1=-13, x2=2, x3=-1
+
+=== Pattern 398 ===
+2x1 - 4x2 = -44
+-x1 - 2x2 - x3 = 2
+-x1 + 3x2 - x3 = 42
+Answer: Unique integer solution -> x1=-6, x2=8, x3=-12
+
+=== Pattern 399 ===
+2x1 - x2 - x3 = 0
+x1 - 3x2 + 3x3 = -28
+-2x1 + 2x3 = -12
+Answer: Unique integer solution -> x1=8, x2=14, x3=2
+
+=== Pattern 400 ===
+-x1 - x2 - 3x3 = 63
+2x1 + 2x2 + x3 = 9
+-3x1 - 4x2 = -62
+Answer: Unique integer solution -> x1=10, x2=8, x3=-27
+
+=== Pattern 401 ===
+2x1 + x2 - 3x3 = 23
+-3x1 - 2x2 - x3 = 27
+-x1 - x2 - 4x3 = 50
+Answer: Infinite solutions
+
+=== Pattern 402 ===
+x1 + x2 + 2x3 = -3
+-4x1 - x2 + 2x3 = -7
+x1 + x3 = 1
+Answer: Unique integer solution -> x1=2, x2=-3, x3=-1
+
+=== Pattern 403 ===
+-x1 - 2x2 - 2x3 = 39
+2x1 + 2x2 + 3x3 = -35
+x1 + x2 = -1
+Answer: Unique integer solution -> x1=15, x2=-16, x3=-11
+
+=== Pattern 404 ===
+x1 - x3 = 44
+3x2 = 12
+-3x1 - 3x3 = -30
+Answer: Unique integer solution -> x1=27, x2=4, x3=-17
+
+=== Pattern 405 ===
+-x1 - 3x2 + 3x3 = -22
+-2x1 + 2x2 - 3x3 = 63
+-2x1 - 4x2 + 2x3 = 2
+Answer: Unique integer solution -> x1=-14, x2=1, x3=-11
+
+=== Pattern 406 ===
+2x1 + 2x2 - x3 = 1
+-x1 + x2 + x3 = -18
+x1 + 3x2 = -17
+Answer: Infinite solutions
+
+=== Pattern 407 ===
+-x1 - 4x2 + 2x3 = -53
+-3x1 - 3x2 = 48
+-x1 - x2 - x3 = 46
+Answer: Unique integer solution -> x1=-19, x2=3, x3=-30
+
+=== Pattern 408 ===
+-4x1 - 2x2 - 2x3 = -50
+-x1 + x2 - 4x3 = -19
+-2x1 - 3x2 + 2x3 = -18
+Answer: Unique integer solution -> x1=13, x2=-2, x3=1
+
+=== Pattern 409 ===
+-x1 + x2 - 3x3 = 15
+x1 + x2 - x3 = 25
+3x1 + 3x2 + 3x3 = -3
+Answer: Unique integer solution -> x1=18, x2=-6, x3=-13
+
+=== Pattern 410 ===
+-2x1 - x2 + x3 = -7
+x1 + 2x2 + 2x3 = 4
+-4x1 + x2 = 36
+Answer: Unique integer solution -> x1=-6, x2=12, x3=-7
+
+=== Pattern 411 ===
+-4x1 + x2 - 3x3 = -64
+x1 + x2 - x3 = 44
+2x1 + x2 + x3 = 32
+Answer: Unique integer solution -> x1=30, x2=-7, x3=-21
+
+=== Pattern 412 ===
+-2x1 - 2x2 + 2x3 = -42
+3x1 + 2x2 + x3 = 32
+-3x1 - x2 - 4x3 = -7
+Answer: Unique integer solution -> x1=8, x2=7, x3=-6
+
+=== Pattern 413 ===
+-2x1 + 2x2 - 4x3 = -16
+-2x1 + 2x2 - 3x3 = -12
+-3x1 + 2x2 = 8
+Answer: Unique integer solution -> x1=-8, x2=-8, x3=4
+
+=== Pattern 414 ===
+-4x1 + 2x3 = 40
+3x1 - 3x2 - x3 = 0
+2x2 + x3 = -36
+Answer: Unique integer solution -> x1=-16, x2=-12, x3=-12
+
+=== Pattern 415 ===
+-3x1 - 4x2 + 3x3 = -38
+x3 = 7
+-2x1 + 2x2 - 2x3 = 40
+Answer: Unique integer solution -> x1=-7, x2=20, x3=7
+
+=== Pattern 416 ===
+3x1 + 3x2 - 2x3 = -6
+2x1 - 2x2 - x3 = 43
+-x1 - 3x2 = 28
+Answer: Unique integer solution -> x1=8, x2=-12, x3=-3
+
+=== Pattern 417 ===
+-3x1 - 2x2 + x3 = 10
+-2x1 + x3 = 16
+2x1 - 3x2 = -44
+Answer: Unique integer solution -> x1=-10, x2=8, x3=-4
+
+=== Pattern 418 ===
+-4x1 + x3 = 17
+-4x1 - 2x2 - 2x3 = -62
+-x1 + 2x2 = 2
+Answer: Unique integer solution -> x1=2, x2=2, x3=25
+
+=== Pattern 419 ===
+x1 + 3x3 = 4
+x2 + 2x3 = -17
+x1 + 3x2 - 2x3 = -25
+Answer: Unique integer solution -> x1=10, x2=-13, x3=-2
+
+=== Pattern 420 ===
+3x1 - 4x2 - x3 = -2
+2x1 + 2x2 + 3x3 = 5
+-4x1 + 2x2 - x3 = -5
+Answer: Unique integer solution -> x1=9, x2=10, x3=-11
+
+=== Pattern 421 ===
+-x1 - 2x2 = -47
+-3x2 + 3x3 = -39
+2x1 - 2x2 + x3 = -39
+Answer: Unique integer solution -> x1=-1, x2=24, x3=11
+
+=== Pattern 422 ===
+-3x1 - 2x2 - x3 = -2
+2x1 - 2x2 + x3 = 22
+-3x1 + x3 = -54
+Answer: Unique integer solution -> x1=12, x2=-8, x3=-18
+
+=== Pattern 423 ===
+-x1 - 3x2 + x3 = 33
+x3 = 19
+-2x1 - 2x2 + 2x3 = 18
+Answer: Unique integer solution -> x1=22, x2=-12, x3=19
+
+=== Pattern 424 ===
+-3x1 - 2x2 + 2x3 = -27
+2x1 + 2x2 + 3x3 = 55
+x1 + 2x2 + 3x3 = 48
+Answer: Unique integer solution -> x1=7, x2=10, x3=7
+
+=== Pattern 425 ===
+-3x1 - 4x2 - 3x3 = -13
+-x1 + 3x2 + 2x3 = 1
+-4x1 - x2 - x3 = -12
+Answer: Infinite solutions
+
+=== Pattern 426 ===
+-2x1 + 2x2 - 3x3 = 36
+-3x1 - x2 - 4x3 = 8
+x1 - 2x2 + 3x3 = -24
+Answer: Unique integer solution -> x1=-12, x2=12, x3=4
+
+=== Pattern 427 ===
+-3x1 + x2 + 3x3 = 28
+-x1 + 3x2 - x3 = 18
+3x2 + 3x3 = 57
+Answer: Unique integer solution -> x1=3, x2=10, x3=9
+
+=== Pattern 428 ===
+-4x1 - 3x3 = 16
+x1 - x3 = 31
+x1 + 2x2 - 3x3 = 63
+Answer: Unique integer solution -> x1=11, x2=-4, x3=-20
+
+=== Pattern 429 ===
+-3x1 - x2 + x3 = 3
+-4x1 - 3x2 = -37
+3x1 + 3x2 - 2x3 = 41
+Answer: Unique integer solution -> x1=-8, x2=23, x3=2
+
+=== Pattern 430 ===
+-3x1 - x2 + x3 = 52
+3x2 = 60
+-2x1 - 2x2 + 2x3 = 20
+Answer: Unique integer solution -> x1=-21, x2=20, x3=9
+
+=== Pattern 431 ===
+-x1 - 4x2 + 2x3 = 49
+-2x1 - 2x2 + 2x3 = 24
+x1 + x2 = -29
+Answer: Unique integer solution -> x1=-11, x2=-18, x3=-17
+
+=== Pattern 432 ===
+-4x1 + 3x3 = -8
+-2x2 - 3x3 = -26
+3x1 - x2 - 4x3 = -14
+Answer: Unique integer solution -> x1=23, x2=-29, x3=28
+
+=== Pattern 433 ===
+-2x1 - 3x2 + 2x3 = -3
+3x1 - 4x3 = 59
+3x1 - 2x2 - 2x3 = 27
+Answer: Unique integer solution -> x1=-11, x2=-7, x3=-23
+
+=== Pattern 434 ===
+2x1 + 2x2 - x3 = 55
+-2x1 - 4x2 = -50
+-2x2 - x3 = 5
+Answer: Infinite solutions
+
+=== Pattern 435 ===
+x1 - 2x3 = -20
+2x1 - 3x2 + 3x3 = -1
+3x1 - 3x2 + x3 = -20
+Answer: No solution
+
+=== Pattern 436 ===
+-3x1 + 2x2 - x3 = 50
+3x1 - 3x3 = -60
+-x1 - 4x2 = 40
+Answer: Unique integer solution -> x1=-20, x2=-5, x3=0
+
+=== Pattern 437 ===
+2x1 + 2x2 = 22
+3x1 - 3x2 - 4x3 = 1
+-2x1 - 4x2 = -58
+Answer: Unique integer solution -> x1=-7, x2=18, x3=-19
+
+=== Pattern 438 ===
+-4x1 + 2x2 + 3x3 = 12
+-x2 - 2x3 = -13
+-4x1 + x2 + x3 = -1
+Answer: Infinite solutions
+
+=== Pattern 439 ===
+-2x1 - 2x2 + 3x3 = 23
+-4x1 + 2x2 + x3 = 39
+2x1 + 3x2 - 4x3 = -27
+Answer: Unique integer solution -> x1=1, x2=13, x3=17
+
+=== Pattern 440 ===
+-2x1 + x2 + x3 = -1
+-x1 + x2 = 11
+-3x1 + 2x2 - 2x3 = 16
+Answer: Unique integer solution -> x1=10, x2=21, x3=-2
+
+=== Pattern 441 ===
+-3x1 + x3 = 30
+-x1 = 8
+-x1 - x2 = -10
+Answer: Unique integer solution -> x1=-8, x2=18, x3=6
+
+=== Pattern 442 ===
+-3x1 - 3x2 - 4x3 = 2
+-4x1 - 2x2 - 3x3 = 22
+-x1 + 3x2 = -14
+Answer: Unique integer solution -> x1=-13, x2=-9, x3=16
+
+=== Pattern 443 ===
+x1 - x2 + 3x3 = -9
+x2 - 3x3 = -7
+2x2 - 2x3 = -42
+Answer: Unique integer solution -> x1=-16, x2=-28, x3=-7
+
+=== Pattern 444 ===
+x1 + x2 - x3 = 10
+x1 + 2x2 + 3x3 = -26
+-3x1 - 2x2 = -10
+Answer: Unique integer solution -> x1=6, x2=-4, x3=-8
+
+=== Pattern 445 ===
+-4x1 - 2x2 + 3x3 = 34
+-2x1 - x3 = -12
+x1 - 3x3 = -8
+Answer: Unique integer solution -> x1=4, x2=-19, x3=4
+
+=== Pattern 446 ===
+2x1 - 4x2 + 2x3 = -12
+-3x1 - 3x2 + x3 = -9
+-4x2 - 4x3 = 40
+Answer: Unique integer solution -> x1=1, x2=-1, x3=-9
+
+=== Pattern 447 ===
+2x1 + x2 - 3x3 = 55
+-x1 - 4x2 = -36
+-2x1 - 2x2 + 2x3 = -50
+Answer: Unique integer solution -> x1=4, x2=8, x3=-13
+
+=== Pattern 448 ===
+-x1 + x2 - 4x3 = 35
+2x1 - 3x2 = -51
+2x1 - x2 + x3 = -14
+Answer: Unique integer solution -> x1=6, x2=21, x3=-5
+
+=== Pattern 449 ===
+-4x1 - 3x2 = -47
+x2 - 3x3 = 56
+-2x2 = 38
+Answer: Unique integer solution -> x1=26, x2=-19, x3=-25
+
+=== Pattern 450 ===
+-4x1 + 3x2 - 2x3 = -42
+-3x1 - x2 + x3 = 27
+-4x1 + x2 = 6
+Answer: Unique integer solution -> x1=-1, x2=2, x3=26
+
+=== Pattern 451 ===
+-2x1 + 2x2 - x3 = 10
+-2x1 - x2 + 3x3 = 9
+-4x1 + x2 + 2x3 = 21
+Answer: No solution
+
+=== Pattern 452 ===
+-4x1 - x2 - x3 = 22
+-x1 - x2 + 3x3 = 52
+-3x1 + 2x2 - x3 = 21
+Answer: Unique integer solution -> x1=-10, x2=3, x3=15
+
+=== Pattern 453 ===
+2x1 + x2 - 3x3 = 43
+2x2 - 3x3 = -22
+-x1 - x2 + 2x3 = -13
+Answer: Unique integer solution -> x1=18, x2=-29, x3=-12
+
+=== Pattern 454 ===
+-4x1 - x2 + 3x3 = 21
+2x2 - x3 = -48
+-4x1 + x2 + 2x3 = -27
+Answer: Infinite solutions
+
+=== Pattern 455 ===
+-4x1 + 3x2 - 3x3 = 31
+x1 - x2 + 2x3 = 31
+-3x1 + 2x2 - x3 = 61
+Answer: No solution
+
+=== Pattern 456 ===
+x1 + x3 = 16
+-4x2 - 2x3 = -62
+-3x1 + x2 = -60
+Answer: Unique integer solution -> x1=27, x2=21, x3=-11
+
+=== Pattern 457 ===
+x1 + x2 = 5
+-x1 - 2x3 = 12
+-3x1 + x2 + 3x3 = 9
+Answer: Unique integer solution -> x1=-4, x2=9, x3=-4
+
+=== Pattern 458 ===
+x1 - x2 - x3 = -21
+3x1 + 3x3 = -45
+3x2 - x3 = 25
+Answer: Unique integer solution -> x1=-14, x2=8, x3=-1
+
+=== Pattern 459 ===
+-2x1 + 2x2 = 1
+2x1 - x2 - 2x3 = 43
+x2 - 2x3 = 44
+Answer: Infinite solutions
+
+=== Pattern 460 ===
+-2x1 + x2 + x3 = 12
+3x1 + 2x2 - 4x3 = -19
+-x1 + x2 + x3 = -7
+Answer: Unique integer solution -> x1=-19, x2=-11, x3=-15
+
+=== Pattern 461 ===
+3x1 - 2x2 + 3x3 = -48
+x1 - x3 = 12
+-3x1 - 3x2 = 42
+Answer: Unique integer solution -> x1=-5, x2=-9, x3=-17
+
+=== Pattern 462 ===
+-x1 - x2 + 2x3 = 20
+-2x1 - 3x2 = 23
+-3x1 - 4x2 + 2x3 = 43
+Answer: Infinite solutions
+
+=== Pattern 463 ===
+x1 + x2 + 2x3 = 21
+-2x1 + x2 + x3 = -56
+3x2 = 6
+Answer: Unique integer solution -> x1=27, x2=2, x3=-4
+
+=== Pattern 464 ===
+x1 - x2 - x3 = -11
+x1 - 2x2 - 2x3 = 49
+2x1 - 3x2 - 3x3 = 36
+Answer: No solution
+
+=== Pattern 465 ===
+2x1 - 3x2 - x3 = -54
+-4x1 + 2x2 = 18
+-2x1 - x2 - x3 = -36
+Answer: Infinite solutions
+
+=== Pattern 466 ===
+2x1 - x2 + x3 = -17
+-x1 - x2 - x3 = -3
+x1 - 2x2 = -19
+Answer: No solution
+
+=== Pattern 467 ===
+x1 + 2x2 - 3x3 = -35
+2x1 - 2x2 = -52
+-4x1 - 2x2 + 2x3 = 54
+Answer: Unique integer solution -> x1=-12, x2=14, x3=17
+
+=== Pattern 468 ===
+2x1 - 3x2 + x3 = -44
+2x1 - x2 - 3x3 = -64
+-2x1 - 2x2 = -14
+Answer: Unique integer solution -> x1=-7, x2=14, x3=12
+
+=== Pattern 469 ===
+-x1 - 3x2 + 2x3 = 0
+-2x1 - 4x3 = 8
+-3x1 - 3x2 - 2x3 = 6
+Answer: No solution
+
+=== Pattern 470 ===
+-4x1 + 3x2 - 4x3 = -33
+3x1 + 2x2 + 3x3 = -22
+-2x1 - 3x2 - x3 = 50
+Answer: Unique integer solution -> x1=-17, x2=-11, x3=17
+
+=== Pattern 471 ===
+-x1 - x2 - 4x3 = 4
+x1 + 3x2 + 3x3 = 17
+-x1 + 3x2 - 2x3 = 10
+Answer: Unique integer solution -> x1=26, x2=6, x3=-9
+
+=== Pattern 472 ===
+3x1 + 3x2 - 2x3 = -61
+-2x2 - x3 = 59
+x1 + 2x2 - 4x3 = -23
+Answer: Unique integer solution -> x1=1, x2=-26, x3=-7
+
+=== Pattern 473 ===
+3x1 + 3x2 = 51
+3x1 - 3x2 + 2x3 = 31
+x1 + 2x3 = 27
+Answer: Unique integer solution -> x1=11, x2=6, x3=8
+
+=== Pattern 474 ===
+-2x1 + 2x2 + x3 = -12
+2x1 + 2x2 - x3 = 28
+2x1 - 2x2 - 3x3 = 16
+Answer: Unique integer solution -> x1=9, x2=4, x3=-2
+
+=== Pattern 475 ===
+x1 + 3x2 + 3x3 = -29
+3x1 + 3x2 + 2x3 = -33
+-2x1 - 2x2 + x3 = -20
+Answer: Unique integer solution -> x1=-11, x2=12, x3=-18
+
+=== Pattern 476 ===
+-x1 - 4x2 = 39
+-3x1 + x2 = 24
+-4x1 - 3x2 = 63
+Answer: Infinite solutions
+
+=== Pattern 477 ===
+-2x1 + x2 + x3 = -16
+-x1 - 2x2 - 2x3 = -44
+-3x1 - x2 - x3 = -61
+Answer: No solution
+
+=== Pattern 478 ===
+x1 - x2 - 2x3 = 1
+3x1 + x2 - x3 = -26
+-4x1 - 4x2 = 4
+Answer: Unique integer solution -> x1=-25, x2=24, x3=-25
+
+=== Pattern 479 ===
+3x1 + 2x2 + x3 = 1
+-3x1 + 3x2 - 2x3 = 38
+2x1 + 3x2 = 20
+Answer: Unique integer solution -> x1=4, x2=4, x3=-19
+
+=== Pattern 480 ===
+-3x1 - 2x2 = -11
+x1 - x2 + x3 = 26
+-2x1 - 3x2 + x3 = 15
+Answer: Infinite solutions
+
+=== Pattern 481 ===
+x1 + 3x2 - 3x3 = 60
+3x1 - 4x3 = 54
+3x1 + 2x2 - 4x3 = 52
+Answer: Unique integer solution -> x1=-18, x2=-1, x3=-27
+
+=== Pattern 482 ===
+-2x1 + x3 = -22
+-4x1 + 2x2 - 3x3 = 20
+x1 + 2x2 - 4x3 = 63
+Answer: Unique integer solution -> x1=7, x2=12, x3=-8
+
+=== Pattern 483 ===
+-3x1 - 2x3 = 16
+-4x1 + 2x2 = -38
+-4x1 + 2x2 - x3 = -30
+Answer: Unique integer solution -> x1=0, x2=-19, x3=-8
+
+=== Pattern 484 ===
+-x1 - 4x2 - 3x3 = -28
+-4x1 - 4x2 + 2x3 = -38
+-3x1 + x2 = -47
+Answer: Unique integer solution -> x1=15, x2=-2, x3=7
+
+=== Pattern 485 ===
+2x1 - 4x2 + x3 = 37
+-x1 + x2 - 3x3 = -44
+x1 - 3x2 - 2x3 = -8
+Answer: No solution
+
+=== Pattern 486 ===
+-2x1 - 2x2 + x3 = -5
+-3x2 = 15
+2x2 - 3x3 = 29
+Answer: Unique integer solution -> x1=1, x2=-5, x3=-13
+
+=== Pattern 487 ===
+-2x1 + 3x2 = -16
+x1 - 2x2 - 2x3 = 51
+-x1 + x2 - 2x3 = 37
+Answer: No solution
+
+=== Pattern 488 ===
+-4x1 - 4x2 + 3x3 = 3
+-2x2 - 3x3 = 39
+x1 - 3x2 - 2x3 = 6
+Answer: Unique integer solution -> x1=-15, x2=3, x3=-15
+
+=== Pattern 489 ===
+x1 - x2 = 29
+-3x1 - x2 + x3 = -17
+3x1 + x3 = 59
+Answer: Unique integer solution -> x1=15, x2=-14, x3=14
+
+=== Pattern 490 ===
+x1 - 2x2 + 3x3 = 57
+-2x1 - 3x2 = 1
+-x1 - x2 - 2x3 = -25
+Answer: Unique integer solution -> x1=10, x2=-7, x3=11
+
+=== Pattern 491 ===
+x1 - 2x2 - 4x3 = -52
+-x1 - 3x2 + 2x3 = 10
+2x1 - 3x2 - 3x3 = -22
+Answer: Unique integer solution -> x1=16, x2=2, x3=16
+
+=== Pattern 492 ===
+-3x1 - 3x2 - 2x3 = -31
+x1 - 2x2 - 3x3 = 15
+-4x1 - 2x2 - 3x3 = -50
+Answer: Unique integer solution -> x1=13, x2=-4, x3=2
+
+=== Pattern 493 ===
+3x1 - 2x2 - 3x3 = -9
+-3x1 - x2 - x3 = -7
+-4x1 + 2x2 + x3 = 0
+Answer: Unique integer solution -> x1=1, x2=0, x3=4
+
+=== Pattern 494 ===
+-4x1 - x2 - 4x3 = 48
+2x1 - 2x2 - x3 = 24
+-3x1 - x2 - 4x3 = 52
+Answer: Unique integer solution -> x1=4, x2=0, x3=-16
+
+=== Pattern 495 ===
+-2x1 + x2 + x3 = 7
+x1 - 3x2 = -7
+-2x1 - 3x2 - 2x3 = -10
+Answer: Unique integer solution -> x1=-1, x2=2, x3=3
+
+=== Pattern 496 ===
+-4x1 + 2x2 + 2x3 = -54
+2x1 - 2x2 - 2x3 = 38
+3x1 + 3x3 = 42
+Answer: Unique integer solution -> x1=8, x2=-17, x3=6
+
+=== Pattern 497 ===
+3x1 - 3x2 + x3 = -4
+-2x1 + 2x2 - 2x3 = -8
+-x1 + 3x2 + 3x3 = -4
+Answer: Unique integer solution -> x1=-20, x2=-16, x3=8
+
+=== Pattern 498 ===
+2x1 + 2x2 = 12
+x1 - 2x2 = -18
+-x1 - 4x2 + x3 = -17
+Answer: Unique integer solution -> x1=-2, x2=8, x3=13
+
+=== Pattern 499 ===
+3x1 + 2x2 - 2x3 = 35
+-4x1 - 4x2 + 2x3 = -44
+3x1 + 3x2 + 3x3 = -21
+Answer: Unique integer solution -> x1=1, x2=4, x3=-12
+
+=== Pattern 500 ===
+x1 - x2 - x3 = 33
+-2x1 - 2x2 - 2x3 = -43
+-x1 - 3x2 - 3x3 = -10
+Answer: Infinite solutions
+
+=== Pattern 501 ===
+x1 - 3x2 - 3x3 = 26
+2x1 + 2x3 = 20
+-4x1 + 3x2 + 2x3 = -34
+Answer: Unique integer solution -> x1=-1, x2=-20, x3=11
+
+=== Pattern 502 ===
+-2x1 + 3x3 = 31
+2x1 - 2x2 = 32
+-x1 + x3 = 7
+Answer: Unique integer solution -> x1=10, x2=-6, x3=17
+
+=== Pattern 503 ===
+-4x1 + 2x2 - 4x3 = 46
+-3x2 - x3 = 34
+-3x1 - 2x2 - 3x3 = 52
+Answer: Unique integer solution -> x1=5, x2=-5, x3=-19
+
+=== Pattern 504 ===
+3x1 + 3x2 - x3 = 53
+-2x1 + 2x2 + x3 = -2
+-2x1 + 2x2 - 2x3 = -50
+Answer: Unique integer solution -> x1=16, x2=7, x3=16
+
+=== Pattern 505 ===
+x1 + 3x2 - 4x3 = 55
+-2x1 - 2x2 + x3 = -26
+-4x2 + x3 = -12
+Answer: Unique integer solution -> x1=7, x2=0, x3=-12
+
+=== Pattern 506 ===
+3x1 - 4x2 - 3x3 = -19
+-4x1 + 2x2 - 4x3 = 32
+x1 - x2 + 2x3 = 4
+Answer: Unique integer solution -> x1=-20, x2=-14, x3=5
+
+=== Pattern 507 ===
+3x1 + 3x2 + 2x3 = 2
+x1 + x2 - 2x3 = 22
+2x1 + 2x3 = -44
+Answer: Unique integer solution -> x1=-14, x2=20, x3=-8
+
+=== Pattern 508 ===
+2x1 + x2 - 2x3 = -30
+3x1 - 2x2 - 3x3 = -38
+x2 - x3 = -24
+Answer: Unique integer solution -> x1=8, x2=-2, x3=22
+
+=== Pattern 509 ===
+x1 - 4x3 = 10
+-2x1 - 3x2 = -20
+-x1 - 3x2 - 4x3 = -8
+Answer: No solution
+
+=== Pattern 510 ===
+-2x1 + 2x2 + 2x3 = -18
+-x1 - 4x2 + 3x3 = 31
+x1 - 3x2 + x3 = 1
+Answer: Unique integer solution -> x1=-27, x2=-16, x3=-20
+
+=== Pattern 511 ===
+-2x1 - x2 - 4x3 = -48
+-x1 - x2 - x3 = -9
+3x1 - 3x2 - x3 = 47
+Answer: Unique integer solution -> x1=9, x2=-10, x3=10
+
+=== Pattern 512 ===
+2x1 - x3 = 27
+-4x3 = -60
+x1 - 3x2 = -21
+Answer: Unique integer solution -> x1=21, x2=14, x3=15
+
+=== Pattern 513 ===
+2x1 - x2 - 4x3 = -9
+-3x1 - 3x2 + x3 = 33
+-x1 - 4x2 - 3x3 = 24
+Answer: Infinite solutions
+
+=== Pattern 514 ===
+x1 + x2 + 3x3 = -7
+2x1 + 2x2 + 2x3 = -26
+x1 - 2x2 = 2
+Answer: Unique integer solution -> x1=-10, x2=-6, x3=3
+
+=== Pattern 515 ===
+2x1 - x2 = -12
+x1 - x2 + 2x3 = 29
+3x1 - 3x3 = -54
+Answer: Unique integer solution -> x1=5, x2=22, x3=23
+
+=== Pattern 516 ===
+x1 - 4x2 - x3 = 31
+-3x1 - 4x2 - 2x3 = 60
+3x1 - x2 - x3 = -28
+Answer: Unique integer solution -> x1=-10, x2=-13, x3=11
+
+=== Pattern 517 ===
+x1 + 3x2 + 3x3 = 58
+-x1 - 2x2 - 2x3 = -36
+x2 + x3 = 20
+Answer: No solution
+
+=== Pattern 518 ===
+3x1 - 3x2 - 3x3 = -27
+-2x1 + 3x2 + x3 = 26
+3x2 = 36
+Answer: Unique integer solution -> x1=7, x2=12, x3=4
+
+=== Pattern 519 ===
+-x1 + 3x3 = 12
+-2x1 + x2 + x3 = 3
+2x1 - 3x2 + 3x3 = 9
+Answer: Unique integer solution -> x1=3, x2=4, x3=5
+
+=== Pattern 520 ===
+3x1 - 2x2 = 7
+-x2 + x3 = -10
+3x1 - 3x2 + x3 = -3
+Answer: Infinite solutions
+
+=== Pattern 521 ===
+-2x1 + x2 + x3 = 27
+-x1 - 4x2 = -38
+-3x1 - 3x2 + x3 = -11
+Answer: Infinite solutions
+
+=== Pattern 522 ===
+2x1 = 60
+-x1 - x2 = -13
+x1 + 3x2 - 3x3 = -24
+Answer: Unique integer solution -> x1=30, x2=-17, x3=1
+
+=== Pattern 523 ===
+3x1 - 2x2 = 4
+2x1 + x2 + x3 = 37
+2x1 - x2 = 5
+Answer: Unique integer solution -> x1=6, x2=7, x3=18
+
+=== Pattern 524 ===
+2x1 - 3x2 + x3 = -25
+-3x1 - 2x2 - 4x3 = -4
+x2 + x3 = -9
+Answer: Unique integer solution -> x1=24, x2=16, x3=-25
+
+=== Pattern 525 ===
+-3x1 - 4x2 - 3x3 = 20
+x3 = 39
+-3x1 - 4x2 - 2x3 = 60
+Answer: No solution
+
+=== Pattern 526 ===
+-x1 + 2x2 - 2x3 = -41
+x1 - 2x3 = 9
+2x2 - 4x3 = -34
+Answer: No solution
+
+=== Pattern 527 ===
+2x1 - 3x3 = -32
+x2 - x3 = -19
+3x1 - x2 + x3 = -56
+Answer: Unique integer solution -> x1=-25, x2=-25, x3=-6
+
+=== Pattern 528 ===
+2x1 + 3x2 + x3 = -5
+x1 - 4x2 + 2x3 = -15
+2x1 = 10
+Answer: Unique integer solution -> x1=5, x2=-1, x3=-12
+
+=== Pattern 529 ===
+-3x1 - 2x2 + 2x3 = -57
+-4x1 - 4x3 = -24
+3x1 + 2x2 - 3x3 = 56
+Answer: Unique integer solution -> x1=5, x2=22, x3=1
+
+=== Pattern 530 ===
+-2x1 - 3x2 - 3x3 = 10
+-x1 + x2 + x3 = -40
+-3x1 - 2x2 - 2x3 = -28
+Answer: No solution
+
+=== Pattern 531 ===
+-4x1 + 3x3 = -1
+x1 + 2x2 - 3x3 = 3
+-3x1 + 2x2 = 2
+Answer: Infinite solutions
+
+=== Pattern 532 ===
+-x1 + 3x2 = -60
+3x1 - x3 = -40
+-2x1 + x2 + 3x3 = 34
+Answer: Unique integer solution -> x1=-9, x2=-23, x3=13
+
+=== Pattern 533 ===
+2x1 - 3x2 - 2x3 = -3
+-2x1 + 3x2 = -59
+-2x3 = -63
+Answer: No solution
+
+=== Pattern 534 ===
+3x1 + x3 = 9
+x1 + x2 + x3 = -8
+x1 - 2x2 + x3 = 25
+Answer: Unique integer solution -> x1=3, x2=-11, x3=0
+
+=== Pattern 535 ===
+2x1 - x3 = -15
+2x1 + 3x2 = 28
+-3x1 - x2 + 2x3 = 4
+Answer: Unique integer solution -> x1=-10, x2=16, x3=-5
+
+=== Pattern 536 ===
+-3x1 - 2x2 - 3x3 = 13
+x1 + x2 + x3 = -10
+-x1 - 2x2 + 2x3 = 33
+Answer: Unique integer solution -> x1=5, x2=-17, x3=2
+
+=== Pattern 537 ===
+-3x1 + 2x2 - x3 = -8
+-x1 - 2x2 = -10
+2x1 + 2x2 + 2x3 = 18
+Answer: Unique integer solution -> x1=4, x2=3, x3=2
+
+=== Pattern 538 ===
+x1 - 4x2 + 2x3 = 9
+x1 + x2 - 3x3 = 34
+-x1 - 2x2 - 3x3 = 10
+Answer: Unique integer solution -> x1=15, x2=-2, x3=-7
+
+=== Pattern 539 ===
+3x1 + 2x2 - 4x3 = 62
+-x1 - 3x2 - x3 = -23
+-2x1 - 2x2 + x3 = -33
+Answer: Unique integer solution -> x1=2, x2=10, x3=-9
+
+=== Pattern 540 ===
+-2x1 + 2x2 - x3 = 20
+-x1 - 4x2 - 3x3 = -56
+-3x1 - 2x2 - 4x3 = -36
+Answer: Infinite solutions
+
+=== Pattern 541 ===
+-4x1 - x2 - x3 = 35
+3x1 + x2 - 2x3 = 3
+-2x1 - 2x2 - 3x3 = 51
+Answer: Unique integer solution -> x1=-5, x2=-4, x3=-11
+
+=== Pattern 542 ===
+-2x1 - 3x2 - 3x3 = 17
+-4x1 - 2x2 - x3 = -35
+2x1 - 4x2 - 3x3 = 57
+Answer: Unique integer solution -> x1=11, x2=4, x3=-17
+
+=== Pattern 543 ===
+-x1 + x2 + x3 = 57
+-3x1 - 3x2 + 2x3 = 35
+-2x1 + 2x2 - 3x3 = 34
+Answer: Unique integer solution -> x1=-21, x2=20, x3=16
+
+=== Pattern 544 ===
+-x1 - 4x2 - 2x3 = 24
+x1 - 2x2 - x3 = -3
+-2x1 - 3x2 - 3x3 = 62
+Answer: Unique integer solution -> x1=-10, x2=7, x3=-21
+
+=== Pattern 545 ===
+x1 - x2 - 2x3 = -23
+x1 + 3x2 - x3 = -7
+2x1 + 2x2 - 3x3 = -31
+Answer: No solution
+
+=== Pattern 546 ===
+-2x1 - 4x2 + 2x3 = 34
+-x1 - 4x2 + x3 = 39
+3x1 - x2 - x3 = -2
+Answer: Unique integer solution -> x1=-9, x2=-11, x3=-14
+
+=== Pattern 547 ===
+-3x1 + 2x2 + 2x3 = 28
+-4x1 + 2x2 - 2x3 = -56
+3x1 = 60
+Answer: Unique integer solution -> x1=20, x2=28, x3=16
+
+=== Pattern 548 ===
+-3x1 - x2 + x3 = -11
+-x1 + x2 - x3 = 43
+-4x1 - x2 - 2x3 = 18
+Answer: Unique integer solution -> x1=-8, x2=28, x3=-7
+
+=== Pattern 549 ===
+x1 - 3x3 = -2
+x3 = -1
+-3x1 + 3x2 - 4x3 = 40
+Answer: Unique integer solution -> x1=-5, x2=7, x3=-1
+
+=== Pattern 550 ===
+x1 - 2x3 = -4
+-2x1 + x2 + x3 = 52
+x1 - 2x2 - x3 = -42
+Answer: Unique integer solution -> x1=-24, x2=14, x3=-10
+
+=== Pattern 551 ===
+-x1 - 3x2 - 2x3 = 9
+-x1 - 2x2 - 3x3 = -41
+x1 - x2 - 3x3 = -61
+Answer: Unique integer solution -> x1=1, x2=-22, x3=28
+
+=== Pattern 552 ===
+3x1 - 3x2 + 2x3 = 38
+-4x3 = 2
+3x1 - 3x2 - 2x3 = 42
+Answer: No solution
+
+=== Pattern 553 ===
+2x1 + 2x2 + x3 = -48
+-3x1 - 2x2 - 2x3 = 58
+-x3 = -10
+Answer: Unique integer solution -> x1=-20, x2=-9, x3=10
+
+=== Pattern 554 ===
+-2x1 + 2x3 = 32
+-2x1 + 2x2 + x3 = -28
+-4x1 + 2x2 + 3x3 = 4
+Answer: Infinite solutions
+
+=== Pattern 555 ===
+-4x1 + 3x3 = -18
+-2x1 = -30
+2x1 - 2x2 - 2x3 = -12
+Answer: Unique integer solution -> x1=15, x2=7, x3=14
+
+=== Pattern 556 ===
+2x1 + 3x2 - x3 = -61
+-x1 + x2 - x3 = -8
+-x1 + x2 = 1
+Answer: Unique integer solution -> x1=-11, x2=-10, x3=9
+
+=== Pattern 557 ===
+x1 + x2 - x3 = -29
+-x1 + 2x2 + x3 = -31
+-4x1 - 3x2 - 3x3 = 40
+Answer: Unique integer solution -> x1=-1, x2=-20, x3=8
+
+=== Pattern 558 ===
+-4x1 + 3x3 = 35
+-4x1 - 2x2 + 2x3 = 34
+-x3 = 23
+Answer: Unique integer solution -> x1=-26, x2=12, x3=-23
+
+=== Pattern 559 ===
+-3x1 - 3x2 - 2x3 = 29
+3x1 - 3x2 - x3 = -59
+-3x2 - x3 = -11
+Answer: Unique integer solution -> x1=-16, x2=1, x3=8
+
+=== Pattern 560 ===
+-3x1 + 2x2 = -40
+3x1 - 3x2 = 39
+-4x1 + x2 - 3x3 = -10
+Answer: Unique integer solution -> x1=14, x2=1, x3=-15
+
+=== Pattern 561 ===
+-x1 + x3 = -2
+x1 - x2 - 4x3 = -53
+3x1 + 2x2 - 3x3 = 62
+Answer: Unique integer solution -> x1=11, x2=28, x3=9
+
+=== Pattern 562 ===
+-3x1 - 4x2 + 3x3 = -24
+-3x2 + x3 = -18
+2x1 + 2x3 = -28
+Answer: Unique integer solution -> x1=-5, x2=3, x3=-9
+
+=== Pattern 563 ===
+2x1 + 2x2 - 4x3 = -34
+-4x1 + 2x2 - 3x3 = -37
+-2x1 + x2 - 4x3 = -26
+Answer: Unique integer solution -> x1=1, x2=-12, x3=3
+
+=== Pattern 564 ===
+2x1 + 2x2 - 4x3 = 26
+x1 + 2x2 + x3 = 50
+2x1 = -18
+Answer: Unique integer solution -> x1=-9, x2=28, x3=3
+
+=== Pattern 565 ===
+-x1 + x2 - 3x3 = -6
+2x2 - 2x3 = -2
+x1 - 2x2 + 2x3 = 31
+Answer: Unique integer solution -> x1=29, x2=-13, x3=-12
+
+=== Pattern 566 ===
+3x1 + x2 - 2x3 = -64
+-4x1 + x3 = 53
+x1 + x2 + 2x3 = 36
+Answer: Unique integer solution -> x1=-8, x2=2, x3=21
+
+=== Pattern 567 ===
+x1 - 4x2 - x3 = -52
+2x1 - x3 = -1
+3x1 - 4x2 - 2x3 = -53
+Answer: Infinite solutions
+
+=== Pattern 568 ===
+3x1 + 2x2 - 2x3 = 27
+x1 - x2 - 3x3 = 40
+-3x1 - 4x2 + x3 = -24
+Answer: Unique integer solution -> x1=-9, x2=8, x3=-19
+
+=== Pattern 569 ===
+-4x1 - 3x3 = 54
+x1 + 3x2 + 3x3 = 33
+-x2 + x3 = -47
+Answer: Unique integer solution -> x1=0, x2=29, x3=-18
+
+=== Pattern 570 ===
+-3x1 - 3x2 - 4x3 = -37
+-x1 + 3x2 - 4x3 = -11
+-4x1 - 4x2 - x3 = -45
+Answer: Unique integer solution -> x1=10, x2=1, x3=1
+
+=== Pattern 571 ===
+x1 + x2 - 3x3 = -16
+2x1 - 4x2 + x3 = -29
+3x1 - 3x2 - 2x3 = -44
+Answer: No solution
+
+=== Pattern 572 ===
+2x1 - 3x2 - x3 = 51
+-3x1 - 3x2 - 3x3 = 24
+-3x1 - 3x2 + 3x3 = 30
+Answer: Unique integer solution -> x1=5, x2=-14, x3=1
+
+=== Pattern 573 ===
+2x1 - x2 - 4x3 = -7
+x1 - x2 - 4x3 = -37
+-x1 - x2 + x3 = 13
+Answer: Unique integer solution -> x1=30, x2=-21, x3=22
+
+=== Pattern 574 ===
+-x1 + 3x2 + 2x3 = -56
+-3x2 - x3 = 60
+-4x1 + 3x2 + x3 = 52
+Answer: Unique integer solution -> x1=-28, x2=-12, x3=-24
+
+=== Pattern 575 ===
+-x1 - 2x2 - 4x3 = -40
+-2x2 + x3 = -57
+3x1 - x2 + 2x3 = -12
+Answer: Unique integer solution -> x1=8, x2=26, x3=-5
+
+=== Pattern 576 ===
+x1 + 3x2 - 2x3 = 0
+-4x1 - 2x2 + 3x3 = -43
+-3x1 + x2 + x3 = -42
+Answer: No solution
+
+=== Pattern 577 ===
+x1 - 4x2 = 25
+-x1 + 2x2 = -60
+-2x2 = -35
+Answer: Infinite solutions
+
+=== Pattern 578 ===
+-4x1 + x2 + x3 = 26
+x1 + 2x2 - x3 = -29
+-3x1 + 3x2 = -3
+Answer: Infinite solutions
+
+=== Pattern 579 ===
+3x1 + 2x2 - 4x3 = -48
+-2x1 + 2x2 = 56
+x1 - 2x2 + x3 = -35
+Answer: Unique integer solution -> x1=-20, x2=8, x3=1
+
+=== Pattern 580 ===
+-2x1 - 4x2 - 3x3 = 26
+-2x1 + 2x2 + x3 = 36
+-4x1 - 2x2 - 2x3 = 61
+Answer: No solution
+
+=== Pattern 581 ===
+3x1 - 2x2 + x3 = 5
+-4x1 + 2x2 - 3x3 = -46
+-x1 - 2x3 = -42
+Answer: No solution
+
+=== Pattern 582 ===
+-4x1 + 2x2 - x3 = 18
+2x1 - 3x2 = 8
+x1 - 2x2 - 4x3 = -15
+Answer: Unique integer solution -> x1=-11, x2=-10, x3=6
+
+=== Pattern 583 ===
+3x1 + x2 - x3 = 7
+-2x1 + 2x2 + 2x3 = 41
+x1 + 3x2 + x3 = 48
+Answer: Infinite solutions
+
+=== Pattern 584 ===
+-x1 + x2 - x3 = 23
+x1 - x2 - x3 = -46
+-2x3 = -23
+Answer: Infinite solutions
+
+=== Pattern 585 ===
+3x1 - 2x2 - x3 = -47
+2x2 - x3 = 33
+3x2 + x3 = 7
+Answer: Unique integer solution -> x1=-16, x2=8, x3=-17
+
+=== Pattern 586 ===
+-x1 + 2x2 - x3 = -21
+-3x1 + 2x2 + 2x3 = -16
+2x1 - 3x2 - x3 = 11
+Answer: Unique integer solution -> x1=14, x2=2, x3=11
+
+=== Pattern 587 ===
+-3x1 + 3x2 - 3x3 = -63
+-x1 - 4x2 = 61
+-4x1 - 3x2 - 4x3 = 14
+Answer: Unique integer solution -> x1=-5, x2=-14, x3=12
+
+=== Pattern 588 ===
+-4x1 + 2x2 + 3x3 = -29
+-2x1 - 4x2 + 3x3 = -27
+-3x1 + 3x2 = -45
+Answer: Unique integer solution -> x1=22, x2=7, x3=15
+
+=== Pattern 589 ===
+-x1 - 2x2 + 2x3 = -7
+-3x1 - 4x2 + 3x3 = -4
+-2x1 - 3x2 + 3x3 = -4
+Answer: Unique integer solution -> x1=-13, x2=13, x3=3
+
+=== Pattern 590 ===
+-3x1 - x2 = 15
+x1 + 2x2 - x3 = 52
+2x1 - 4x2 - 3x3 = -42
+Answer: Unique integer solution -> x1=-12, x2=21, x3=-22
+
+=== Pattern 591 ===
+x1 + 3x2 + 3x3 = 2
+-2x1 + 3x2 = 35
+3x1 + x2 + 3x3 = -22
+Answer: Unique integer solution -> x1=-1, x2=11, x3=-10
+
+=== Pattern 592 ===
+3x1 + 2x2 - 3x3 = 51
+2x1 - 3x3 = 33
+3x1 + x3 = 55
+Answer: Unique integer solution -> x1=18, x2=0, x3=1
+
+=== Pattern 593 ===
+-4x1 - 3x2 - 4x3 = -19
+x1 + 2x2 - 3x3 = -19
+x1 + 2x2 - 2x3 = -14
+Answer: Unique integer solution -> x1=2, x2=-3, x3=5
+
+=== Pattern 594 ===
+-4x1 + x2 - 4x3 = 24
+3x1 + 3x3 = 18
+-x1 + x2 - x3 = 42
+Answer: Infinite solutions
+
+=== Pattern 595 ===
+3x1 - 2x3 = -17
+-2x2 - x3 = 6
+-3x1 - 2x2 - x3 = 63
+Answer: Unique integer solution -> x1=-19, x2=7, x3=-20
+
+=== Pattern 596 ===
+-x1 - 4x2 = 31
+-4x1 - 2x2 - x3 = 10
+3x1 - 3x2 - x3 = -33
+Answer: Unique integer solution -> x1=-7, x2=-6, x3=30
+
+=== Pattern 597 ===
+3x1 - 2x2 - 4x3 = -6
+3x1 + 2x3 = 18
+3x1 - x2 + x3 = 12
+Answer: Unique integer solution -> x1=4, x2=3, x3=3
+
+=== Pattern 598 ===
+-3x1 - 2x3 = -5
+-3x1 - 2x2 - 4x3 = -43
+3x1 + x2 + x3 = -2
+Answer: Unique integer solution -> x1=-7, x2=6, x3=13
+
+=== Pattern 599 ===
+-4x1 + 3x2 - 3x3 = 40
+-2x1 + x2 = -3
+-x1 - 2x2 - 2x3 = -31
+Answer: Unique integer solution -> x1=11, x2=19, x3=-9
+
+=== Pattern 600 ===
+3x1 + 3x2 - x3 = -63
+3x1 - x2 - 2x3 = -32
+-4x2 - 2x3 = 10
+Answer: Unique integer solution -> x1=-1, x2=-13, x3=21
+
+=== Pattern 601 ===
+-x1 + 2x2 = 6
+-3x1 - 2x2 = -46
+-4x1 - 3x3 = -31
+Answer: Unique integer solution -> x1=10, x2=8, x3=-3
+
+=== Pattern 602 ===
+2x1 + x2 + 3x3 = -31
+3x2 + x3 = 13
+x1 - 3x2 = -30
+Answer: Unique integer solution -> x1=-15, x2=5, x3=-2
+
+=== Pattern 603 ===
+x1 - 2x2 - 4x3 = -37
+3x1 - 3x2 - 2x3 = 5
+x1 - 4x2 - 3x3 = -53
+Answer: Unique integer solution -> x1=19, x2=12, x3=8
+
+=== Pattern 604 ===
+3x1 + 2x2 + x3 = 30
+-3x1 = -45
+-3x1 + x2 - x3 = -9
+Answer: Unique integer solution -> x1=15, x2=7, x3=-29
+
+=== Pattern 605 ===
+-4x1 + 3x2 = 31
+3x1 - 3x2 + 3x3 = -47
+-x1 + 3x3 = -17
+Answer: No solution
+
+=== Pattern 606 ===
+x1 - x2 = -15
+-4x1 - x2 - 4x3 = 31
+-x1 - 3x2 - 3x3 = -13
+Answer: Unique integer solution -> x1=10, x2=25, x3=-24
+
+=== Pattern 607 ===
+-x1 - 4x2 - 3x3 = 55
+-3x1 + 3x2 = -60
+2x1 - 4x2 - 4x3 = 0
+Answer: Unique integer solution -> x1=-10, x2=-30, x3=25
+
+=== Pattern 608 ===
+-x1 + 3x2 + x3 = -8
+2x1 - 2x2 = 16
+x1 + x2 + x3 = 8
+Answer: Infinite solutions
+
+=== Pattern 609 ===
+2x1 - 4x2 + x3 = -17
+2x1 - x2 - 2x3 = 40
+3x2 + 2x3 = 12
+Answer: Unique integer solution -> x1=16, x2=10, x3=-9
+
+=== Pattern 610 ===
+-2x1 + x2 = 5
+-x1 - 2x2 + 2x3 = -14
+-3x1 - x2 + 2x3 = -9
+Answer: Infinite solutions
+
+=== Pattern 611 ===
+-x1 + x2 - x3 = -6
+-4x2 - 3x3 = 6
+-x1 + x2 - 4x3 = 12
+Answer: Unique integer solution -> x1=15, x2=3, x3=-6
+
+=== Pattern 612 ===
+-3x1 + x2 - x3 = 6
+-2x1 + 2x2 - x3 = 24
+-x1 - 4x2 = -42
+Answer: Unique integer solution -> x1=10, x2=8, x3=-28
+
+=== Pattern 613 ===
+-2x1 - 4x2 = -18
+3x2 + 2x3 = 48
+-x1 - 3x2 + 3x3 = 8
+Answer: Unique integer solution -> x1=-11, x2=10, x3=9
+
+=== Pattern 614 ===
+2x1 + 2x2 + 3x3 = 1
+-x1 - x2 - 2x3 = -33
+x1 + x2 + x3 = -32
+Answer: Infinite solutions
+
+=== Pattern 615 ===
+-2x1 - 3x2 + 2x3 = -45
+x1 + x2 - 2x3 = 18
+3x1 - 2x2 - 4x3 = 45
+Answer: Unique integer solution -> x1=21, x2=3, x3=3
+
+=== Pattern 616 ===
+x1 + 2x2 = 55
+2x1 - x2 + 3x3 = -5
+x1 + 2x2 - x3 = 55
+Answer: Unique integer solution -> x1=9, x2=23, x3=0
+
+=== Pattern 617 ===
+3x1 + 3x2 - x3 = -60
+-2x1 + x2 + 2x3 = -7
+x1 + 3x2 - x3 = -56
+Answer: Unique integer solution -> x1=-2, x2=-17, x3=3
+
+=== Pattern 618 ===
+-2x1 + 3x2 - x3 = 31
+-4x1 + 2x2 - 4x3 = 42
+-x1 - x2 - x3 = -3
+Answer: Unique integer solution -> x1=2, x2=9, x3=-8
+
+=== Pattern 619 ===
+-2x1 - 4x3 = 16
+-2x2 + x3 = -24
+-2x1 - 4x2 - 3x3 = -16
+Answer: Unique integer solution -> x1=24, x2=4, x3=-16
+
+=== Pattern 620 ===
+-x1 - 4x2 - 3x3 = 52
+-x1 - 4x2 + 3x3 = -56
+-4x1 + x2 - 4x3 = -4
+Answer: Unique integer solution -> x1=18, x2=-4, x3=-18
+
+=== Pattern 621 ===
+-4x1 - 3x2 - x3 = 61
+2x2 - 2x3 = 10
+-x1 + 3x2 + x3 = 54
+Answer: Unique integer solution -> x1=-23, x2=9, x3=4
+
+=== Pattern 622 ===
+-x1 - 3x2 + 2x3 = 17
+3x1 + x2 - 2x3 = 17
+2x1 - 2x2 + x3 = 11
+Answer: Unique integer solution -> x1=-3, x2=-20, x3=-23
+
+=== Pattern 623 ===
+-3x1 + 2x2 + 2x3 = -29
+-x1 + 2x2 - 3x3 = 50
+-3x1 + 2x3 = 19
+Answer: Unique integer solution -> x1=-23, x2=-24, x3=-25
+
+=== Pattern 624 ===
+2x1 + x2 = 1
+-2x1 - x3 = 36
+2x2 - x3 = 60
+Answer: Unique integer solution -> x1=-11, x2=23, x3=-14
+
+=== Pattern 625 ===
+3x1 + 3x2 - 3x3 = -30
+2x2 = -38
+-4x1 - 3x2 + x3 = 3
+Answer: Unique integer solution -> x1=15, x2=-19, x3=6
+
+=== Pattern 626 ===
+-x1 - 4x2 + 2x3 = -38
+-2x1 + x2 - 3x3 = 62
+-3x1 + 3x2 - 3x3 = 60
+Answer: Unique integer solution -> x1=0, x2=-1, x3=-21
+
+=== Pattern 627 ===
+-4x1 + 3x3 = -60
+-2x2 - 4x3 = 42
+-x1 + 3x2 + x3 = -55
+Answer: Unique integer solution -> x1=12, x2=-13, x3=-4
+
+=== Pattern 628 ===
+-x1 - 3x2 + 2x3 = -13
+-4x1 + 2x2 - x3 = -6
+3x3 = 36
+Answer: Unique integer solution -> x1=4, x2=11, x3=12
+
+=== Pattern 629 ===
+2x1 + 2x2 = -42
+-x1 + x2 + 2x3 = -25
+-3x1 + 3x2 + 3x3 = -3
+Answer: Unique integer solution -> x1=-22, x2=1, x3=-24
+
+=== Pattern 630 ===
+-3x1 - 2x2 = 38
+x1 - 3x3 = -27
+-2x1 - 2x2 - 3x3 = 11
+Answer: Infinite solutions
+
+=== Pattern 631 ===
+-2x1 - 4x3 = -42
+3x1 + x2 + x3 = 53
+x1 + x2 - 3x3 = 11
+Answer: Infinite solutions
+
+=== Pattern 632 ===
+x1 - 3x3 = -52
+-3x1 + x2 + 2x3 = 3
+-3x1 - 2x2 + x3 = -44
+Answer: Unique integer solution -> x1=17, x2=8, x3=23
+
+=== Pattern 633 ===
+3x1 + x2 - 3x3 = -51
+-2x2 = 25
+3x1 - x2 - 3x3 = -26
+Answer: Infinite solutions
+
+=== Pattern 634 ===
+-x1 - 3x2 = -3
+x1 - x2 + x3 = 16
+-x2 + 3x3 = -5
+Answer: Unique integer solution -> x1=15, x2=-4, x3=-3
+
+=== Pattern 635 ===
+2x1 + x2 + 2x3 = 34
+2x1 + 3x3 = 26
+-3x2 - 4x3 = -52
+Answer: Unique integer solution -> x1=7, x2=12, x3=4
+
+=== Pattern 636 ===
+2x1 + 2x2 - 4x3 = -26
+-2x1 + 2x2 - 3x3 = -22
+3x1 - x2 + 2x3 = 1
+Answer: Unique integer solution -> x1=-3, x2=-26, x3=-8
+
+=== Pattern 637 ===
+-3x1 - x2 + 2x3 = 33
+-3x2 + 3x3 = 18
+-2x1 + x2 - 4x3 = -54
+Answer: Unique integer solution -> x1=-3, x2=12, x3=18
+
+=== Pattern 638 ===
+-4x1 - 3x2 - 2x3 = -63
+x1 - x2 - x3 = -45
+-3x1 - 4x2 = -18
+Answer: Unique integer solution -> x1=-6, x2=9, x3=30
+
+=== Pattern 639 ===
+-3x1 + 2x3 = -44
+-2x2 + x3 = -5
+-3x1 - 2x2 + 3x3 = -49
+Answer: Infinite solutions
+
+=== Pattern 640 ===
+-2x1 + 3x2 + 2x3 = 13
+3x1 - x2 - x3 = -5
+-2x1 + x2 = -15
+Answer: Unique integer solution -> x1=3, x2=-9, x3=23
+
+=== Pattern 641 ===
+-2x1 + x2 = -28
+x1 + 2x2 - x3 = -41
+x1 - 4x2 = 56
+Answer: Unique integer solution -> x1=8, x2=-12, x3=25
+
+=== Pattern 642 ===
+x1 - 4x2 - 3x3 = 11
+-x1 = 4
+-4x2 - 3x3 = 15
+Answer: Infinite solutions
+
+=== Pattern 643 ===
+-x1 + 2x3 = -52
+-3x1 - 3x2 - x3 = -32
+-x1 = 4
+Answer: Unique integer solution -> x1=-4, x2=24, x3=-28
+
+=== Pattern 644 ===
+-2x1 - 2x2 = -28
+-4x1 + x2 - 3x3 = -2
+-2x1 - 3x2 + 3x3 = -22
+Answer: Unique integer solution -> x1=-1, x2=15, x3=7
+
+=== Pattern 645 ===
+-4x1 - 2x2 - x3 = -20
+-3x1 + x2 = -11
+3x2 - 3x3 = -42
+Answer: Unique integer solution -> x1=3, x2=-2, x3=12
+
+=== Pattern 646 ===
+3x1 + x2 - x3 = 3
+-4x2 - 2x3 = 42
+-4x1 - 2x2 + 2x3 = 20
+Answer: Unique integer solution -> x1=13, x2=-19, x3=17
+
+=== Pattern 647 ===
+-4x1 + 2x2 - x3 = 16
+-2x1 + 2x2 + 2x3 = 34
+-3x1 - 2x2 - 2x3 = -4
+Answer: Unique integer solution -> x1=-6, x2=1, x3=10
+
+=== Pattern 648 ===
+2x1 + 3x2 + x3 = -7
+-x1 - 2x2 - 4x3 = -38
+x1 - x2 + 2x3 = 55
+Answer: Unique integer solution -> x1=12, x2=-15, x3=14
+
+=== Pattern 649 ===
+x1 + x2 - 3x3 = 16
+2x1 - 3x2 + 2x3 = -19
+3x1 - 2x2 - x3 = -5
+Answer: No solution
+
+=== Pattern 650 ===
+-x1 - 2x2 + 3x3 = -36
+-x2 + 2x3 = -45
+-2x1 + x3 = 21
+Answer: Unique integer solution -> x1=-25, x2=-13, x3=-29
+
+=== Pattern 651 ===
+2x1 - 4x2 + x3 = -55
+-4x3 = 51
+2x1 - 4x2 - 3x3 = -4
+Answer: Infinite solutions
+
+=== Pattern 652 ===
+-2x1 - 2x2 = -6
+3x1 - x2 - 2x3 = -23
+2x1 + 2x2 - 3x3 = 6
+Answer: Unique integer solution -> x1=-5, x2=8, x3=0
+
+=== Pattern 653 ===
+-2x1 + 2x2 = 20
+-x2 - 3x3 = 42
+-4x1 - 3x2 + x3 = 4
+Answer: Unique integer solution -> x1=-7, x2=3, x3=-15
+
+=== Pattern 654 ===
+3x1 - 3x3 = 15
+-2x1 - 3x2 - 4x3 = 50
+-3x2 + 2x3 = -28
+Answer: Unique integer solution -> x1=-6, x2=2, x3=-11
+
+=== Pattern 655 ===
+-x1 + x2 + x3 = 26
+-2x1 - 3x2 - 2x3 = -46
+-2x1 - 4x2 - 3x3 = -64
+Answer: Unique integer solution -> x1=-8, x2=26, x3=-8
+
+=== Pattern 656 ===
+3x1 - 4x2 = -29
+2x1 - 2x3 = -36
+2x1 - x2 = -31
+Answer: Unique integer solution -> x1=-19, x2=-7, x3=-1
+
+=== Pattern 657 ===
+-x1 - 2x2 + 3x3 = 11
+-3x1 - x2 + x3 = 9
+-3x1 - 4x2 = 35
+Answer: Unique integer solution -> x1=-1, x2=-8, x3=-2
+
+=== Pattern 658 ===
+-3x1 + x3 = 20
+-2x1 + x2 + x3 = 23
+x1 - 2x2 - 4x3 = 22
+Answer: Unique integer solution -> x1=-12, x2=15, x3=-16
+
+=== Pattern 659 ===
+-3x1 - 3x2 + 2x3 = -29
+2x1 - 4x2 - x3 = -52
+3x1 - 3x2 - 4x3 = -5
+Answer: Unique integer solution -> x1=-12, x2=11, x3=-16
+
+=== Pattern 660 ===
+-2x1 - x2 - x3 = -8
+x2 + 2x3 = -14
+-x2 + 2x3 = 38
+Answer: Unique integer solution -> x1=14, x2=-26, x3=6
+
+=== Pattern 661 ===
+-x1 - 3x3 = -20
+-2x1 + 3x2 + 2x3 = 41
+x1 - 4x2 + 3x3 = 40
+Answer: Unique integer solution -> x1=-16, x2=-5, x3=12
+
+=== Pattern 662 ===
+-x1 - x2 - 4x3 = -29
+x1 + 3x2 + 2x3 = -31
+-2x2 - 4x3 = -42
+Answer: Unique integer solution -> x1=-26, x2=-13, x3=17
+
+=== Pattern 663 ===
+-2x1 + x2 = 17
+x1 + 2x2 + x3 = -24
+x1 + 2x2 - x3 = -38
+Answer: Unique integer solution -> x1=-13, x2=-9, x3=7
+
+=== Pattern 664 ===
+-4x1 + x2 - 3x3 = 28
+x1 + 2x2 - 2x3 = -3
+x1 - 3x2 - 3x3 = -19
+Answer: Unique integer solution -> x1=-7, x2=3, x3=1
+
+=== Pattern 665 ===
+-2x1 + 2x2 + x3 = -60
+-x1 - x2 - 2x3 = 55
+x1 + 3x2 - x3 = 25
+Answer: Unique integer solution -> x1=10, x2=-5, x3=-30
+
+=== Pattern 666 ===
+-2x1 - 4x2 - 2x3 = 32
+-2x2 - x3 = -3
+x2 + 2x3 = -18
+Answer: Unique integer solution -> x1=-19, x2=8, x3=-13
+
+=== Pattern 667 ===
+2x1 - 2x2 + 2x3 = -14
+2x1 - 4x2 + 3x3 = -10
+-x1 - 4x2 + x3 = 15
+Answer: Unique integer solution -> x1=-11, x2=0, x3=4
+
+=== Pattern 668 ===
+2x1 + 3x2 - x3 = -5
+x1 - 4x3 = 33
+-3x1 - x2 - x3 = -54
+Answer: Unique integer solution -> x1=25, x2=-19, x3=-2
+
+=== Pattern 669 ===
+-4x1 + x2 - 4x3 = 24
+-2x1 + 2x2 + 2x3 = -56
+-3x1 + x2 - 3x3 = 20
+Answer: Unique integer solution -> x1=16, x2=8, x3=-20
+
+=== Pattern 670 ===
+3x1 - 2x2 + 3x3 = 12
+3x1 + 3x2 - 2x3 = 2
+-x1 - x2 + x3 = -1
+Answer: Unique integer solution -> x1=3, x2=-3, x3=-1
+
+=== Pattern 671 ===
+-3x1 - 3x2 - 3x3 = 63
+3x1 = 0
+-4x1 + x3 = -3
+Answer: Unique integer solution -> x1=0, x2=-18, x3=-3
+
+=== Pattern 672 ===
+2x1 - 2x2 + x3 = -33
+-3x1 + 3x2 - 4x3 = -13
+-x1 + 2x2 - 2x3 = -18
+Answer: Unique integer solution -> x1=-26, x2=3, x3=25
+
+=== Pattern 673 ===
+-x1 + 3x2 + 2x3 = -38
+-3x1 - 4x2 - x3 = 4
+3x1 = 15
+Answer: Unique integer solution -> x1=5, x2=-1, x3=-15
+
+=== Pattern 674 ===
+3x1 + x2 - 4x3 = -60
+3x1 + x2 - 3x3 = -53
+2x1 - 3x2 - x3 = -43
+Answer: Unique integer solution -> x1=-12, x2=4, x3=7
+
+=== Pattern 675 ===
+-x1 - 2x3 = -27
+-x1 - 2x2 + 3x3 = -21
+-2x1 - 2x2 + x3 = -48
+Answer: Infinite solutions
+
+=== Pattern 676 ===
+-4x1 + x2 + 3x3 = 7
+x1 - 3x2 - 4x3 = -31
+-3x1 + 3x2 - 2x3 = -33
+Answer: Unique integer solution -> x1=5, x2=0, x3=9
+
+=== Pattern 677 ===
+2x1 + x2 + x3 = -50
+2x1 - x2 = -48
+2x1 + 2x2 + 3x3 = -60
+Answer: Unique integer solution -> x1=-23, x2=2, x3=-6
+
+=== Pattern 678 ===
+x1 - 2x3 = 40
+2x1 + 2x2 - 2x3 = 42
+2x2 + x3 = -15
+Answer: Unique integer solution -> x1=-6, x2=4, x3=-23
+
+=== Pattern 679 ===
+-4x1 - 4x2 + x3 = -41
+-x1 + 2x2 - 4x3 = -8
+3x1 + 2x2 - 2x3 = -10
+Answer: Unique integer solution -> x1=-8, x2=22, x3=15
+
+=== Pattern 680 ===
+3x1 - 3x3 = 51
+x1 + x2 + 2x3 = 17
+2x1 + 2x3 = 38
+Answer: Unique integer solution -> x1=18, x2=-3, x3=1
+
+=== Pattern 681 ===
+x1 - 4x3 = -30
+-4x2 = 24
+x2 - 4x3 = -18
+Answer: Unique integer solution -> x1=-18, x2=-6, x3=3
+
+=== Pattern 682 ===
+x1 + x2 - 3x3 = -4
+x1 + 2x2 - 2x3 = -39
+3x1 + 2x2 = -37
+Answer: Unique integer solution -> x1=7, x2=-29, x3=-6
+
+=== Pattern 683 ===
+-2x1 - 3x2 + x3 = -19
+-4x1 + 3x2 + 3x3 = -9
+-2x1 = -36
+Answer: Unique integer solution -> x1=18, x2=1, x3=20
+
+=== Pattern 684 ===
+-x1 + 2x2 + 2x3 = -15
+-x1 - 4x2 - 3x3 = -12
+-2x1 - 2x2 - x3 = -26
+Answer: No solution
+
+=== Pattern 685 ===
+-x1 - x2 = -29
+2x1 + x2 = 49
+-3x1 + 3x2 - 3x3 = 42
+Answer: Unique integer solution -> x1=20, x2=9, x3=-25
+
+=== Pattern 686 ===
+-4x1 + 2x2 + x3 = -2
+2x1 + x2 + 3x3 = -11
+3x1 + x3 = -4
+Answer: Unique integer solution -> x1=0, x2=1, x3=-4
+
+=== Pattern 687 ===
+-3x1 + 2x2 - 4x3 = -44
+-4x1 - 2x2 - x3 = -40
+3x1 + 2x2 = 28
+Answer: Unique integer solution -> x1=12, x2=-4, x3=0
+
+=== Pattern 688 ===
+-2x1 + x3 = 26
+x1 - 4x2 + 3x3 = -39
+x1 + 3x2 + 2x3 = -14
+Answer: Unique integer solution -> x1=-15, x2=3, x3=-4
+
+=== Pattern 689 ===
+x1 - 2x2 = 14
+2x1 + x2 - 2x3 = 45
+-4x1 + 2x2 - 3x3 = 10
+Answer: Unique integer solution -> x1=8, x2=-3, x3=-16
+
+=== Pattern 690 ===
+3x1 + 2x2 - 2x3 = 52
+2x1 - 2x2 + 2x3 = 18
+-3x1 - 3x2 = -12
+Answer: Unique integer solution -> x1=14, x2=-10, x3=-15
+
+=== Pattern 691 ===
+-2x1 + x2 = 2
+2x1 - 3x2 - x3 = 28
+x1 - 4x2 - 2x3 = 52
+Answer: Unique integer solution -> x1=-8, x2=-14, x3=-2
+
+=== Pattern 692 ===
+-x1 - 3x2 + 2x3 = 37
+2x1 - 2x2 = -58
+x1 - 3x2 = -49
+Answer: Unique integer solution -> x1=-19, x2=10, x3=24
+
+=== Pattern 693 ===
+-2x1 - 4x2 - 2x3 = -46
+2x1 - 3x2 = -51
+-4x1 - 2x2 - 4x3 = 34
+Answer: Unique integer solution -> x1=6, x2=21, x3=-25
+
+=== Pattern 694 ===
+2x1 - 2x2 + x3 = 38
+x1 - 2x2 + x3 = 23
+x1 - 3x2 + 3x3 = 42
+Answer: Unique integer solution -> x1=15, x2=1, x3=10
+
+=== Pattern 695 ===
+-2x1 - x2 - 2x3 = 24
+3x1 + x2 + 2x3 = 28
+x1 = 50
+Answer: No solution
+
+=== Pattern 696 ===
+-2x1 + x3 = -42
+2x1 + x2 - x3 = 25
+3x1 - x2 + x3 = 10
+Answer: Unique integer solution -> x1=7, x2=-17, x3=-28
+
+=== Pattern 697 ===
+-3x1 - 2x3 = -47
+3x2 = 12
+-3x1 - 2x2 + x3 = 2
+Answer: Unique integer solution -> x1=3, x2=4, x3=19
+
+=== Pattern 698 ===
+3x1 + 3x2 + x3 = 18
+2x1 - 3x2 - 3x3 = 0
+3x1 - 4x2 - 4x3 = 4
+Answer: Unique integer solution -> x1=12, x2=-13, x3=21
+
+=== Pattern 699 ===
+-3x1 + 2x2 - x3 = -7
+x1 + 2x2 - 2x3 = -8
+-x1 - x2 = -6
+Answer: Unique integer solution -> x1=2, x2=4, x3=9
+
+=== Pattern 700 ===
+2x1 - x2 = -5
+-3x1 - 3x3 = 39
+-x1 - x2 - 3x3 = 34
+Answer: Infinite solutions
+
+=== Pattern 701 ===
+3x1 - x2 - 3x3 = -3
+3x1 + x2 - x3 = -25
+-4x1 + x2 + 3x3 = 25
+Answer: Unique integer solution -> x1=-22, x2=15, x3=-26
+
+=== Pattern 702 ===
+-x1 + x2 - 2x3 = 5
+x1 + x2 + x3 = 51
+2x2 - x3 = 54
+Answer: No solution
+
+=== Pattern 703 ===
+3x1 + x2 = 45
+-3x1 - 3x2 = -27
+2x1 + x2 + 2x3 = 53
+Answer: Unique integer solution -> x1=18, x2=-9, x3=13
+
+=== Pattern 704 ===
+-x1 + 2x2 - 3x3 = -19
+x1 + 3x2 - x3 = -28
+-2x2 - x3 = -15
+Answer: Unique integer solution -> x1=-18, x2=1, x3=13
+
+=== Pattern 705 ===
+-2x1 - 4x2 + 3x3 = -62
+2x1 + 3x2 - x3 = 7
+3x1 + x2 = -61
+Answer: Unique integer solution -> x1=-24, x2=11, x3=-22
+
+=== Pattern 706 ===
+-2x1 + 2x2 - 3x3 = 2
+-2x1 + x2 - 4x3 = -18
+-x1 - 4x2 = -34
+Answer: Unique integer solution -> x1=-6, x2=10, x3=10
+
+=== Pattern 707 ===
+3x1 + 3x2 = 39
+-4x1 + x2 + 2x3 = 58
+-x1 - 3x2 + 2x3 = -43
+Answer: Unique integer solution -> x1=-7, x2=20, x3=5
+
+=== Pattern 708 ===
+2x1 + x3 = -37
+-x1 - 4x2 - 3x3 = -21
+3x1 + 3x2 = 45
+Answer: Unique integer solution -> x1=-8, x2=23, x3=-21
+
+=== Pattern 709 ===
+-2x1 - 3x2 = -26
+x1 - x2 + x3 = 48
+-x1 - 4x2 + x3 = 23
+Answer: No solution
+
+=== Pattern 710 ===
+3x1 - x2 - 4x3 = -41
+x1 - 2x2 + x3 = -43
+3x1 + x2 + x3 = 2
+Answer: Unique integer solution -> x1=-6, x2=19, x3=1
+
+=== Pattern 711 ===
+-x1 + 2x2 - x3 = 11
+x1 - 4x2 - 2x3 = -26
+-x1 - 2x2 - 3x3 = -15
+Answer: Unique integer solution -> x1=0, x2=6, x3=1
+
+=== Pattern 712 ===
+3x1 + 3x2 - 4x3 = -19
+-4x2 - x3 = -12
+x1 - 2x2 + 2x3 = 50
+Answer: Unique integer solution -> x1=16, x2=-1, x3=16
+
+=== Pattern 713 ===
+-3x1 - 4x2 - 2x3 = -2
+3x1 - 3x3 = 36
+x1 - x2 - x3 = 23
+Answer: Unique integer solution -> x1=14, x2=-11, x3=2
+
+=== Pattern 714 ===
+3x1 - 4x3 = -57
+2x1 + x2 = 56
+-x2 = -22
+Answer: Unique integer solution -> x1=17, x2=22, x3=27
+
+=== Pattern 715 ===
+-x1 + x2 + 2x3 = -12
+-4x1 + x2 + 3x3 = 0
+-2x1 - x2 - 3x3 = 42
+Answer: Unique integer solution -> x1=-7, x2=-1, x3=-9
+
+=== Pattern 716 ===
+-2x1 + 2x3 = -12
+-x1 - 3x2 - 3x3 = -2
+-3x1 - 3x2 - x3 = -12
+Answer: No solution
+
+=== Pattern 717 ===
+2x1 + 3x2 + x3 = -28
+2x1 - 2x2 - x3 = -24
+-4x1 - 4x3 = -28
+Answer: Unique integer solution -> x1=-11, x2=-8, x3=18
+
+=== Pattern 718 ===
+-2x1 + x2 + x3 = -49
+x1 - 3x2 - 3x3 = 37
+-2x1 - 4x3 = 40
+Answer: Unique integer solution -> x1=22, x2=16, x3=-21
+
+=== Pattern 719 ===
+-3x1 + 3x2 + 3x3 = -47
+2x1 = 25
+-x1 + 3x2 + 3x3 = -22
+Answer: Infinite solutions
+
+=== Pattern 720 ===
+2x1 - x2 - 2x3 = 32
+-3x1 + x3 = -18
+-x1 - x2 - x3 = 15
+Answer: No solution
+
+=== Pattern 721 ===
+x1 + 3x2 + x3 = -49
+3x2 - 2x3 = -15
+-3x1 + 3x2 + 3x3 = 3
+Answer: Unique integer solution -> x1=-16, x2=-9, x3=-6
+
+=== Pattern 722 ===
+3x1 = -36
+-x2 - 4x3 = 56
+3x1 - 3x3 = 24
+Answer: Unique integer solution -> x1=-12, x2=24, x3=-20
+
+=== Pattern 723 ===
+-x1 - x2 = 0
+2x1 - 3x2 - x3 = 8
+-3x1 - x2 - x3 = -41
+Answer: Unique integer solution -> x1=7, x2=-7, x3=27
+
+=== Pattern 724 ===
+-2x1 - 2x2 + 3x3 = -20
+-3x1 + 2x3 = -54
+x1 + 3x2 + 3x3 = -6
+Answer: Unique integer solution -> x1=18, x2=-8, x3=0
+
+=== Pattern 725 ===
+-4x1 + x2 + x3 = -6
+2x1 + x2 + 3x3 = 8
+-2x1 - x2 + 2x3 = 27
+Answer: Unique integer solution -> x1=0, x2=-13, x3=7
+
+=== Pattern 726 ===
+2x1 + 2x2 - x3 = 28
+x1 - 2x2 = -34
+2x1 + 3x2 - 4x3 = 10
+Answer: Unique integer solution -> x1=2, x2=18, x3=12
+
+=== Pattern 727 ===
+2x1 - 3x2 = -45
+3x1 - 4x3 = 9
+2x1 - x2 + 3x3 = -54
+Answer: Unique integer solution -> x1=-9, x2=9, x3=-9
+
+=== Pattern 728 ===
+x1 - 2x2 + 2x3 = -19
+3x1 + 2x2 - 3x3 = 55
+-x1 - 3x2 + x3 = -9
+Answer: Unique integer solution -> x1=5, x2=-4, x3=-16
+
+=== Pattern 729 ===
+-4x1 + 3x2 + 3x3 = 36
+-2x1 + 3x2 - 3x3 = -18
+-x2 - 3x3 = -36
+Answer: Unique integer solution -> x1=3, x2=6, x3=10
+
+=== Pattern 730 ===
+2x1 - 3x2 = 35
+-4x1 + x2 + x3 = -41
+-x2 - x3 = 37
+Answer: Unique integer solution -> x1=1, x2=-11, x3=-26
+
+=== Pattern 731 ===
+x1 + x2 - 3x3 = 26
+x1 - x2 + x3 = -28
+-3x1 - x2 + 3x3 = -26
+Answer: Unique integer solution -> x1=0, x2=29, x3=1
+
+=== Pattern 732 ===
+x1 + 3x2 + x3 = -31
+3x1 + x2 - 3x3 = -17
+-4x1 - 3x2 + x3 = 28
+Answer: Unique integer solution -> x1=5, x2=-14, x3=6
+
+=== Pattern 733 ===
+x1 - 3x2 - 3x3 = -10
+-x1 - 3x3 = 49
+2x1 + 3x2 - 3x3 = -32
+Answer: Unique integer solution -> x1=-28, x2=1, x3=-7
+
+=== Pattern 734 ===
+-4x1 + 3x2 - 4x3 = 5
+-2x1 + 3x2 - 3x3 = 17
+3x1 - 4x2 = 46
+Answer: Unique integer solution -> x1=14, x2=-1, x3=-16
+
+=== Pattern 735 ===
+-4x1 - x2 = -28
+-3x2 = 58
+-4x1 - 4x2 = 30
+Answer: Infinite solutions
+
+=== Pattern 736 ===
+-x1 + 2x2 + x3 = 35
+x1 - 3x2 - 4x3 = 0
+-x2 - 3x3 = 37
+Answer: No solution
+
+=== Pattern 737 ===
+-x1 - x2 + x3 = 2
+-3x1 + x2 + 2x3 = -31
+2x1 + x2 + x3 = -36
+Answer: Unique integer solution -> x1=-4, x2=-13, x3=-15
+
+=== Pattern 738 ===
+3x1 - 2x2 = -12
+-3x1 + 2x2 - x3 = -9
+-x1 + 3x2 - x3 = 18
+Answer: Unique integer solution -> x1=6, x2=15, x3=21
+
+=== Pattern 739 ===
+-3x1 - x2 - 2x3 = -38
+3x1 + 3x2 + 3x3 = -9
+2x1 + 3x2 - x3 = -47
+Answer: Unique integer solution -> x1=18, x2=-26, x3=5
+
+=== Pattern 740 ===
+-x1 - x2 + 2x3 = -29
+-2x1 - 3x2 - 3x3 = 11
+-3x1 + 3x2 + x3 = 16
+Answer: Unique integer solution -> x1=-1, x2=8, x3=-11
+
+=== Pattern 741 ===
+-2x1 + 2x3 = 22
+-4x1 + x2 - 2x3 = 47
+-x1 - x2 + 2x3 = 33
+Answer: Unique integer solution -> x1=-16, x2=-27, x3=-5
+
+=== Pattern 742 ===
+x1 - x2 - x3 = -32
+2x1 + x3 = 7
+-4x1 - 3x2 = 16
+Answer: Unique integer solution -> x1=-7, x2=4, x3=21
+
+=== Pattern 743 ===
+-4x1 - 4x2 - x3 = -47
+-2x2 - 2x3 = -38
+3x1 - 2x2 - x3 = -11
+Answer: Unique integer solution -> x1=4, x2=4, x3=15
+
+=== Pattern 744 ===
+2x1 - x2 + x3 = 18
+-3x1 - 4x2 - x3 = -16
+-x1 - 2x2 + 2x3 = 46
+Answer: Unique integer solution -> x1=-2, x2=0, x3=22
+
+=== Pattern 745 ===
+-4x1 - 2x3 = 49
+-x2 = -19
+-4x1 - x2 - 2x3 = 28
+Answer: No solution
+
+=== Pattern 746 ===
+2x1 - x3 = 5
+3x1 + 2x2 - 3x3 = 19
+-4x3 = -28
+Answer: Unique integer solution -> x1=6, x2=11, x3=7
+
+=== Pattern 747 ===
+x1 - 2x2 - x3 = -4
+2x1 - x2 - 2x3 = -62
+3x1 + 3x2 + 3x3 = -36
+Answer: Unique integer solution -> x1=-17, x2=-18, x3=23
+
+=== Pattern 748 ===
+x1 + x2 = 13
+-4x1 - 2x2 + 2x3 = -24
+-4x1 + 3x3 = 10
+Answer: Unique integer solution -> x1=-7, x2=20, x3=-6
+
+=== Pattern 749 ===
+-3x1 - 4x2 - 3x3 = -12
+x1 - x3 = 59
+-2x1 - 4x2 - 4x3 = 45
+Answer: No solution
+
+=== Pattern 750 ===
+-x1 + 3x2 - 3x3 = 9
+x2 = -11
+2x1 - x3 = -28
+Answer: Unique integer solution -> x1=-18, x2=-11, x3=-8
+
+=== Pattern 751 ===
+-3x1 - 4x2 + x3 = -4
+-3x1 - 3x2 - 2x3 = -64
+-2x1 - 2x2 + x3 = 18
+Answer: Unique integer solution -> x1=-14, x2=18, x3=26
+
+=== Pattern 752 ===
+3x1 - 3x2 + x3 = -50
+-x2 + 2x3 = 20
+-2x2 + x3 = -8
+Answer: Unique integer solution -> x1=-10, x2=12, x3=16
+
+=== Pattern 753 ===
+-x1 - x2 + x3 = -34
+-x1 - 3x2 = 14
+x1 - x2 - x3 = 56
+Answer: Unique integer solution -> x1=19, x2=-11, x3=-26
+
+=== Pattern 754 ===
+-2x1 - 4x2 - 3x3 = 38
+3x1 = -30
+2x1 - 2x2 - 3x3 = -26
+Answer: Unique integer solution -> x1=-10, x2=-12, x3=10
+
+=== Pattern 755 ===
+-4x1 + 3x2 - 4x3 = 42
+2x1 + 2x2 = -10
+x1 + 3x2 - x3 = -1
+Answer: Unique integer solution -> x1=1, x2=-6, x3=-16
+
+=== Pattern 756 ===
+3x1 + 2x2 + 3x3 = 25
+3x2 - 2x3 = 17
+-3x1 + x2 - 4x3 = -9
+Answer: Unique integer solution -> x1=6, x2=5, x3=-1
+
+=== Pattern 757 ===
+-4x1 - 3x2 - x3 = 14
+2x1 + 2x3 = -41
+-2x1 - 3x2 + x3 = -29
+Answer: No solution
+
+=== Pattern 758 ===
+3x1 - 3x2 + 2x3 = 25
+2x1 - x2 - 3x3 = 14
+-3x1 + x2 = -53
+Answer: Unique integer solution -> x1=24, x2=19, x3=5
+
+=== Pattern 759 ===
+2x1 - 4x2 + x3 = -48
+2x1 - 4x2 + 2x3 = -54
+3x1 - x2 - 4x3 = 46
+Answer: Unique integer solution -> x1=13, x2=17, x3=-6
+
+=== Pattern 760 ===
+-3x1 + x2 - x3 = -50
+2x2 - 2x3 = -40
+-x1 - 3x2 + 2x3 = 29
+Answer: Unique integer solution -> x1=10, x2=1, x3=21
+
+=== Pattern 761 ===
+x1 - x2 + x3 = -13
+3x1 + 3x2 + x3 = 57
+3x1 - x2 + 3x3 = -15
+Answer: Unique integer solution -> x1=11, x2=12, x3=-12
+
+=== Pattern 762 ===
+-2x1 - 3x2 + 3x3 = -2
+-3x1 + 3x2 + x3 = 49
+-2x1 + x3 = 2
+Answer: Unique integer solution -> x1=13, x2=20, x3=28
+
+=== Pattern 763 ===
+-4x1 - 2x2 - 4x3 = -34
+2x1 + 2x2 + x3 = -16
+-2x1 - 3x3 = -49
+Answer: No solution
+
+=== Pattern 764 ===
+2x1 - x2 - 3x3 = 42
+2x2 - 4x3 = 42
+2x1 + x2 = 7
+Answer: Unique integer solution -> x1=4, x2=-1, x3=-11
+
+=== Pattern 765 ===
+-4x1 + 2x2 + x3 = -23
+-2x1 + x2 + x3 = -21
+-3x1 + x2 + x3 = -26
+Answer: Unique integer solution -> x1=5, x2=8, x3=-19
+
+=== Pattern 766 ===
+-2x1 + x2 = -38
+-4x1 + 3x2 - 2x3 = -50
+-x1 + 3x2 - 2x3 = 13
+Answer: Unique integer solution -> x1=21, x2=4, x3=-11
+
+=== Pattern 767 ===
+-x1 - 4x2 + x3 = 56
+-x1 + 2x2 - 3x3 = -50
+-3x1 - x2 = 17
+Answer: Unique integer solution -> x1=-2, x2=-11, x3=10
+
+=== Pattern 768 ===
+-x1 + x2 + 3x3 = 10
+3x2 + 2x3 = -22
+-4x1 - x2 - 3x3 = -5
+Answer: Unique integer solution -> x1=-1, x2=-12, x3=7
+
+=== Pattern 769 ===
+-4x1 + x2 + x3 = -11
+2x2 + 3x3 = 4
+3x1 + 3x3 = 15
+Answer: Unique integer solution -> x1=3, x2=-1, x3=2
+
+=== Pattern 770 ===
+-x1 + 3x2 + 3x3 = 2
+-4x1 - 2x2 = -10
+-4x1 - 2x2 - x3 = -15
+Answer: Unique integer solution -> x1=4, x2=-3, x3=5
+
+=== Pattern 771 ===
+x1 - 4x2 + x3 = -16
+-2x2 + x3 = -12
+-3x1 - 4x2 + 3x3 = -52
+Answer: Unique integer solution -> x1=10, x2=7, x3=2
+
+=== Pattern 772 ===
+2x1 + 2x2 + x3 = 16
+3x1 + 3x2 + x3 = 33
+-2x1 - 2x3 = 8
+Answer: Unique integer solution -> x1=14, x2=3, x3=-18
+
+=== Pattern 773 ===
+-x1 - 4x2 - 2x3 = 7
+3x1 + 3x2 + 2x3 = 44
+-x1 - 3x2 = -36
+Answer: Unique integer solution -> x1=27, x2=3, x3=-23
+
+=== Pattern 774 ===
+-4x1 + 3x2 - 3x3 = 23
+2x1 - 3x2 + 2x3 = 0
+-2x1 - x3 = 23
+Answer: Infinite solutions
+
+=== Pattern 775 ===
+2x1 + x2 + 3x3 = 29
+-4x1 - 2x3 = -50
+-2x1 + x2 + x3 = -22
+Answer: No solution
+
+=== Pattern 776 ===
+-x1 - 3x2 - 4x3 = 38
+-x1 + x2 + x3 = -36
+x2 - 3x3 = 41
+Answer: Unique integer solution -> x1=21, x2=-1, x3=-14
+
+=== Pattern 777 ===
+-2x1 + 2x2 + 3x3 = 49
+-x1 + 3x2 - 4x3 = 17
+2x2 - 3x3 = 15
+Answer: Unique integer solution -> x1=10, x2=21, x3=9
+
+=== Pattern 778 ===
+-2x1 - 2x2 - 2x3 = -6
+x1 - x2 + 3x3 = -21
+-x1 - 3x2 + x3 = -27
+Answer: Infinite solutions
+
+=== Pattern 779 ===
+3x1 - 3x2 + x3 = -8
+3x1 - x2 - 3x3 = 52
+-3x1 + 3x2 - 3x3 = 48
+Answer: Unique integer solution -> x1=-6, x2=-10, x3=-20
+
+=== Pattern 780 ===
+-2x1 + 2x2 - 3x3 = 29
+-2x1 = -52
+x2 - 3x3 = 60
+Answer: Unique integer solution -> x1=26, x2=21, x3=-13
+
+=== Pattern 781 ===
+-4x1 - 2x2 - 4x3 = 42
+-3x1 - x2 + 2x3 = -4
+-x1 + 3x2 = 0
+Answer: Unique integer solution -> x1=-3, x2=-1, x3=-7
+
+=== Pattern 782 ===
+-2x1 - 4x2 + 2x3 = -62
+-x2 - 3x3 = -22
+-2x1 + 2x2 + 2x3 = 16
+Answer: Unique integer solution -> x1=8, x2=13, x3=3
+
+=== Pattern 783 ===
+-x1 - x2 - x3 = 4
+3x1 - 4x2 - 2x3 = 47
+-4x1 - 4x2 - 2x3 = -16
+Answer: Unique integer solution -> x1=9, x2=3, x3=-16
+
+=== Pattern 784 ===
+2x1 - 2x2 + x3 = 55
+3x1 - 2x2 - 4x3 = 37
+-2x1 + x2 + 3x3 = -23
+Answer: Unique integer solution -> x1=27, x2=4, x3=9
+
+=== Pattern 785 ===
+x1 - 2x2 - 4x3 = -15
+-2x1 + 3x2 - x3 = 29
+2x1 + 2x2 + 3x3 = 19
+Answer: Unique integer solution -> x1=1, x2=10, x3=-1
+
+=== Pattern 786 ===
+-x1 + 3x2 = 32
+-3x1 - x2 = -54
+-2x1 + x2 - x3 = -20
+Answer: Unique integer solution -> x1=13, x2=15, x3=9
+
+=== Pattern 787 ===
+-2x1 - 3x2 + x3 = 26
+-2x1 + 3x2 - 3x3 = 34
+-4x1 - 2x3 = 60
+Answer: Infinite solutions
+
+=== Pattern 788 ===
+-3x1 = -12
+x1 + 2x2 + 3x3 = -51
+-2x1 - 3x2 + x3 = -19
+Answer: Unique integer solution -> x1=4, x2=-2, x3=-17
+
+=== Pattern 789 ===
+-x1 + x2 + x3 = -6
+-2x1 + 3x2 + 2x3 = -28
+2x1 - 4x2 + 3x3 = 34
+Answer: Unique integer solution -> x1=-12, x2=-16, x3=-2
+
+=== Pattern 790 ===
+-3x1 + x2 + x3 = 22
+-2x1 + 2x3 = -20
+-x1 - 3x2 = -61
+Answer: Unique integer solution -> x1=-5, x2=22, x3=-15
+
+=== Pattern 791 ===
+3x1 + x2 - 2x3 = 7
+2x1 + x2 - 4x3 = -62
+x1 - 4x2 + x3 = -22
+Answer: Unique integer solution -> x1=15, x2=16, x3=27
+
+=== Pattern 792 ===
+-4x1 + 3x2 = -25
+-3x2 - 3x3 = 15
+x2 + 3x3 = -1
+Answer: Unique integer solution -> x1=1, x2=-7, x3=2
+
+=== Pattern 793 ===
+-x1 + 2x2 - 3x3 = 22
+2x1 - 4x2 + 2x3 = -60
+-x1 - x2 + 2x3 = -18
+Answer: Unique integer solution -> x1=6, x2=20, x3=4
+
+=== Pattern 794 ===
+-2x1 + 3x2 - x3 = 38
+-3x1 - 2x2 + 2x3 = 18
+-3x1 + x2 - 3x3 = 36
+Answer: Unique integer solution -> x1=-10, x2=6, x3=0
+
+=== Pattern 795 ===
+-2x1 + 3x3 = 57
+x1 - 2x2 - 3x3 = 0
+-2x1 + 3x2 + x3 = -41
+Answer: Unique integer solution -> x1=-9, x2=-24, x3=13
+
+=== Pattern 796 ===
+-2x1 + 2x2 + 3x3 = -41
+-4x1 = 8
+-x1 + 3x2 + x3 = 1
+Answer: Unique integer solution -> x1=-2, x2=6, x3=-19
+
+=== Pattern 797 ===
+-3x1 - 4x2 - 3x3 = -50
+3x1 + x2 = 32
+x2 = 26
+Answer: Unique integer solution -> x1=2, x2=26, x3=-20
+
+=== Pattern 798 ===
+x1 - 4x2 = 38
+-2x1 + 2x2 - 2x3 = -40
+x1 = 22
+Answer: Unique integer solution -> x1=22, x2=-4, x3=-6
+
+=== Pattern 799 ===
+3x1 + 2x2 + x3 = -30
+3x2 - x3 = 57
+-2x2 + 2x3 = -42
+Answer: Unique integer solution -> x1=-21, x2=18, x3=-3
+
+=== Pattern 800 ===
+-2x1 + x2 + x3 = -2
+-4x1 + x2 - 4x3 = 8
+-x1 - x2 - 4x3 = 8
+Answer: Unique integer solution -> x1=0, x2=0, x3=-2
+
+=== Pattern 801 ===
+3x1 + 2x2 - 3x3 = -60
+2x1 - x2 - 4x3 = -56
+-x1 - 2x2 + 3x3 = 36
+Answer: Unique integer solution -> x1=-12, x2=0, x3=8
+
+=== Pattern 802 ===
+-4x1 = 14
+3x1 - 2x2 - 4x3 = 35
+-x1 - 2x2 - 4x3 = 49
+Answer: Infinite solutions
+
+=== Pattern 803 ===
+-3x1 - 2x2 + 3x3 = -11
+2x1 + 2x2 + x3 = 42
+-3x1 - 2x3 = -47
+Answer: Unique integer solution -> x1=9, x2=7, x3=10
+
+=== Pattern 804 ===
+3x1 - 2x2 = -54
+-2x1 + 2x2 = -2
+x1 = -56
+Answer: Infinite solutions
+
+=== Pattern 805 ===
+3x1 - 4x2 + 3x3 = -22
+3x1 + 2x2 - 4x3 = -14
+x1 - x2 = -2
+Answer: Unique integer solution -> x1=-10, x2=-8, x3=-8
+
+=== Pattern 806 ===
+2x1 - x2 - 4x3 = 62
+-3x2 + x3 = -12
+-3x1 + x3 = 33
+Answer: Unique integer solution -> x1=-19, x2=-4, x3=-24
+
+=== Pattern 807 ===
+-2x1 + 3x2 + 3x3 = -6
+-2x1 - x3 = -55
+-4x1 + 3x2 + 2x3 = -60
+Answer: No solution
+
+=== Pattern 808 ===
+3x1 - 4x2 + 2x3 = 55
+-x2 - 2x3 = 24
+-x1 + x2 - 4x3 = -13
+Answer: Unique integer solution -> x1=-17, x2=-26, x3=1
+
+=== Pattern 809 ===
+-4x1 + x2 - 4x3 = 24
+-2x1 - 2x2 + 3x3 = -53
+x1 - 3x2 - x3 = 35
+Answer: Unique integer solution -> x1=8, x2=-4, x3=-15
+
+=== Pattern 810 ===
+-2x1 + x2 + 3x3 = 50
+-2x2 + 2x3 = 36
+-4x1 + 3x2 - 2x3 = -58
+Answer: Unique integer solution -> x1=6, x2=2, x3=20
+
+=== Pattern 811 ===
+-x1 - 4x2 = -62
+-2x1 - 2x2 + 3x3 = -37
+-x1 + 2x2 - 2x3 = 10
+Answer: Unique integer solution -> x1=10, x2=13, x3=3
+
+=== Pattern 812 ===
+x1 - 2x2 - 2x3 = -34
+-4x1 - 3x2 + 3x3 = -40
+x1 - 2x2 - 3x3 = -23
+Answer: Unique integer solution -> x1=-14, x2=21, x3=-11
+
+=== Pattern 813 ===
+2x1 + 2x2 = -11
+-3x1 - 3x2 - 3x3 = -51
+-x1 - x2 - 3x3 = -64
+Answer: No solution
+
+=== Pattern 814 ===
+-2x1 - x2 - 4x3 = -51
+-2x1 + x2 - 4x3 = 7
+-2x1 + 3x2 = 61
+Answer: Unique integer solution -> x1=13, x2=29, x3=-1
+
+=== Pattern 815 ===
+x1 - 3x2 + x3 = -16
+-2x1 + 2x2 = 45
+-x1 - x2 + x3 = 30
+Answer: No solution
+
+=== Pattern 816 ===
+3x1 + 3x2 - 3x3 = -12
+x1 + 2x2 + x3 = 62
+-2x1 + 2x3 = 24
+Answer: Unique integer solution -> x1=17, x2=8, x3=29
+
+=== Pattern 817 ===
+2x1 + x2 - 2x3 = 58
+-3x2 + 2x3 = -40
+-4x1 + x2 = -24
+Answer: Unique integer solution -> x1=5, x2=-4, x3=-26
+
+=== Pattern 818 ===
+2x1 - x2 + x3 = 4
+-4x1 = 59
+-2x1 - x2 + x3 = 63
+Answer: Infinite solutions
+
+=== Pattern 819 ===
+-4x1 - 2x2 = -48
+x1 + 3x2 - 3x3 = 12
+-3x1 + x2 - 3x3 = -34
+Answer: No solution
+
+=== Pattern 820 ===
+x1 - 3x2 + 3x3 = -25
+-2x1 + x2 = 17
+-3x1 - 3x2 = -15
+Answer: Unique integer solution -> x1=-4, x2=9, x3=2
+
+=== Pattern 821 ===
+-2x1 - x2 - 4x3 = -50
+-x1 - 4x2 + 3x3 = -35
+2x1 - 2x3 = 62
+Answer: Unique integer solution -> x1=29, x2=0, x3=-2
+
+=== Pattern 822 ===
+-3x1 - 4x3 = -8
+2x1 + x2 - x3 = -36
+x1 + x2 + 2x3 = 22
+Answer: Unique integer solution -> x1=-16, x2=10, x3=14
+
+=== Pattern 823 ===
+3x1 - 4x2 - 3x3 = 51
+-3x1 - x3 = 1
+3x1 - 4x2 - 2x3 = 41
+Answer: Unique integer solution -> x1=3, x2=-3, x3=-10
+
+=== Pattern 824 ===
+3x1 + x2 - x3 = -17
+2x1 - 3x2 - 3x3 = 57
+-x1 - x2 = 16
+Answer: Unique integer solution -> x1=-12, x2=-4, x3=-23
+
+=== Pattern 825 ===
+-3x1 + x2 - x3 = -42
+-3x2 + x3 = -19
+-x1 + 3x2 + 3x3 = -52
+Answer: Unique integer solution -> x1=19, x2=2, x3=-13
+
+=== Pattern 826 ===
+-4x1 - 2x2 = -2
+3x1 - 4x3 = -34
+-x1 - 2x2 - 4x3 = -36
+Answer: Infinite solutions
+
+=== Pattern 827 ===
+-x1 - x2 + x3 = 25
+2x1 + 3x2 = -46
+2x1 - 2x2 - 4x3 = -54
+Answer: Unique integer solution -> x1=-23, x2=0, x3=2
+
+=== Pattern 828 ===
+-x1 - 3x2 = -24
+2x1 + x2 + 2x3 = 13
+-x1 + x2 - 3x3 = -3
+Answer: Unique integer solution -> x1=-3, x2=9, x3=5
+
+=== Pattern 829 ===
+-3x1 - x2 + x3 = 50
+2x1 = -12
+-x1 - 3x2 = 15
+Answer: Unique integer solution -> x1=-6, x2=-3, x3=29
+
+=== Pattern 830 ===
+3x1 - 3x3 = -39
+-3x1 - 3x2 - 2x3 = -40
+-x2 - 2x3 = -27
+Answer: Unique integer solution -> x1=-11, x2=23, x3=2
+
+=== Pattern 831 ===
+-4x1 - 2x2 - 2x3 = 22
+-4x1 - x2 - x3 = -3
+2x1 - 2x3 = 16
+Answer: Unique integer solution -> x1=7, x2=-24, x3=-1
+
+=== Pattern 832 ===
+x1 + x2 = -40
+-2x1 + 2x2 - 2x3 = 32
+-x1 + 3x2 - 2x3 = -8
+Answer: Infinite solutions
+
+=== Pattern 833 ===
+-2x1 - 3x2 - x3 = -34
+x1 + 2x2 + 2x3 = 44
+x1 - 2x2 - x3 = 17
+Answer: Unique integer solution -> x1=20, x2=-9, x3=21
+
+=== Pattern 834 ===
+3x1 + x2 = 19
+x1 + 3x2 + 2x3 = 53
+-4x1 - 4x3 = 28
+Answer: Unique integer solution -> x1=-1, x2=22, x3=-6
+
+=== Pattern 835 ===
+2x1 + x2 - 2x3 = 7
+-x1 - 2x2 = 49
+-4x1 + 2x2 - x3 = 7
+Answer: Unique integer solution -> x1=-7, x2=-21, x3=-21
+
+=== Pattern 836 ===
+3x1 - 2x2 + x3 = 41
+3x1 - 3x2 + 2x3 = 56
+-4x1 + 3x2 - x3 = -55
+Answer: Unique integer solution -> x1=6, x2=-8, x3=7
+
+=== Pattern 837 ===
+-2x1 - 4x2 + x3 = -29
+-x1 - 4x2 + 3x3 = -61
+-4x1 - 3x2 - 2x3 = 38
+Answer: Unique integer solution -> x1=-14, x2=12, x3=-9
+
+=== Pattern 838 ===
+-3x1 - 3x2 - 2x3 = -50
+-4x1 + 3x2 - 2x3 = 47
+-3x1 = 21
+Answer: Unique integer solution -> x1=-7, x2=15, x3=13
+
+=== Pattern 839 ===
+-4x1 + 2x2 - 2x3 = 12
+-x1 - x2 + 2x3 = 19
+-x1 + 3x2 - 2x3 = 11
+Answer: Unique integer solution -> x1=-4, x2=11, x3=13
+
+=== Pattern 840 ===
+3x1 + x2 - x3 = -8
+-4x1 + x3 = -13
+-x1 + x2 = -21
+Answer: Infinite solutions
+
+=== Pattern 841 ===
+-4x1 - 3x2 + 2x3 = 57
+2x1 - 2x2 + 3x3 = 40
+-4x1 - 2x2 + 2x3 = 42
+Answer: Unique integer solution -> x1=-1, x2=-15, x3=4
+
+=== Pattern 842 ===
+-2x1 - 3x2 - 3x3 = -9
+2x1 + 3x2 + x3 = -3
+x1 - 3x2 + 3x3 = 27
+Answer: Unique integer solution -> x1=0, x2=-3, x3=6
+
+=== Pattern 843 ===
+-3x1 + x2 + 3x3 = 44
+-3x1 - 2x2 = -4
+-2x3 = -28
+Answer: Unique integer solution -> x1=0, x2=2, x3=14
+
+=== Pattern 844 ===
+2x1 - 4x2 - 3x3 = -54
+-x1 - 3x2 + 2x3 = -17
+x1 - 2x3 = -16
+Answer: Unique integer solution -> x1=28, x2=11, x3=22
+
+=== Pattern 845 ===
+x1 - 4x2 + x3 = 10
+-x1 + x2 + 2x3 = -13
+-2x2 - x3 = 34
+Answer: Unique integer solution -> x1=-22, x2=-11, x3=-12
+
+=== Pattern 846 ===
+x1 - 4x2 - 3x3 = 54
+-4x1 + 3x2 - 3x3 = 22
+-3x1 + 3x2 + x3 = -33
+Answer: Unique integer solution -> x1=5, x2=-1, x3=-15
+
+=== Pattern 847 ===
+2x1 - 4x2 = -12
+-x1 + 2x2 - x3 = 19
+x1 - x2 + x3 = -13
+Answer: Unique integer solution -> x1=6, x2=6, x3=-13
+
+=== Pattern 848 ===
+-3x1 - x2 - 3x3 = -10
+x1 + 3x2 + 2x3 = -3
+-2x1 + 2x2 - x3 = -13
+Answer: Infinite solutions
+
+=== Pattern 849 ===
+3x1 - 2x2 - 3x3 = -41
+x2 + x3 = 25
+-x1 - 3x2 + 3x3 = -10
+Answer: Unique integer solution -> x1=7, x2=13, x3=12
+
+=== Pattern 850 ===
+2x1 - x2 - 2x3 = -10
+3x1 + 2x2 - 3x3 = -29
+3x1 - x2 + x3 = 11
+Answer: Unique integer solution -> x1=0, x2=-4, x3=7
+
+=== Pattern 851 ===
+2x1 = -32
+-x1 + 2x2 + x3 = -14
+-4x2 + x3 = 42
+Answer: Unique integer solution -> x1=-16, x2=-12, x3=-6
+
+=== Pattern 852 ===
+-x1 + 3x2 - 4x3 = -32
+-2x1 + x2 - 4x3 = -62
+-x1 - 3x2 + x3 = -25
+Answer: Unique integer solution -> x1=-6, x2=18, x3=23
+
+=== Pattern 853 ===
+-x1 - x2 + 2x3 = 27
+-x1 + x2 = -5
+-3x1 - x3 = 5
+Answer: Unique integer solution -> x1=-4, x2=-9, x3=7
+
+=== Pattern 854 ===
+-x1 + x2 - x3 = -39
+-4x1 - 4x2 + 3x3 = 46
+2x1 - 3x3 = 8
+Answer: Unique integer solution -> x1=13, x2=-20, x3=6
+
+=== Pattern 855 ===
+x1 - 4x2 + 2x3 = -31
+3x1 + 2x2 - x3 = 33
+x1 - x2 + 2x3 = 23
+Answer: Unique integer solution -> x1=5, x2=18, x3=18
+
+=== Pattern 856 ===
+3x1 - x2 - 3x3 = 18
+x1 - x2 - 2x3 = 19
+-2x1 - 4x2 + 3x3 = -9
+Answer: Unique integer solution -> x1=-6, x2=-3, x3=-11
+
+=== Pattern 857 ===
+-2x1 - 4x2 - x3 = 50
+-x1 - 4x2 - 3x3 = 35
+3x1 + 3x2 + 3x3 = 3
+Answer: Unique integer solution -> x1=9, x2=-20, x3=12
+
+=== Pattern 858 ===
+-2x1 + 3x3 = -26
+-2x1 - x2 - 2x3 = 63
+-x1 - x2 + 3x3 = -15
+Answer: Unique integer solution -> x1=-8, x2=-19, x3=-14
+
+=== Pattern 859 ===
+2x1 - 3x2 - 4x3 = -23
+-x1 + 2x2 = 6
+x1 - x2 + 3x3 = -10
+Answer: Unique integer solution -> x1=-20, x2=-7, x3=1
+
+=== Pattern 860 ===
+2x1 + 2x2 - 3x3 = 57
+2x2 + 3x3 = 5
+-x1 + 2x2 + 3x3 = -6
+Answer: Unique integer solution -> x1=11, x2=10, x3=-5
+
+=== Pattern 861 ===
+-2x1 - 4x2 - x3 = -30
+-3x1 - 2x2 + 3x3 = -58
+3x1 - 3x2 - x3 = -2
+Answer: Unique integer solution -> x1=4, x2=8, x3=-10
+
+=== Pattern 862 ===
+-x1 - 2x3 = -49
+-3x1 - 3x2 = 61
+-4x1 - 3x2 - 2x3 = 13
+Answer: No solution
+
+=== Pattern 863 ===
+-3x1 + x2 - x3 = -11
+2x1 + 3x2 - 3x3 = 22
+-x1 - 3x2 + 2x3 = -12
+Answer: Unique integer solution -> x1=5, x2=-1, x3=-5
+
+=== Pattern 864 ===
+2x1 - 4x2 + 3x3 = -47
+-4x1 - 3x2 + 2x3 = 43
+x2 = 1
+Answer: Unique integer solution -> x1=-14, x2=1, x3=-5
+
+=== Pattern 865 ===
+3x1 - x2 - 3x3 = 47
+3x1 - 2x2 - x3 = 36
+2x2 + x3 = -63
+Answer: Unique integer solution -> x1=-9, x2=-23, x3=-17
+
+=== Pattern 866 ===
+-2x1 + x2 + 3x3 = 6
+x2 - 2x3 = -6
+-x1 + 2x2 - 4x3 = -11
+Answer: Unique integer solution -> x1=-1, x2=-2, x3=2
+
+=== Pattern 867 ===
+2x1 + 3x2 + x3 = -2
+2x1 + 3x2 + 3x3 = 4
+-x1 - x2 - 3x3 = -6
+Answer: Unique integer solution -> x1=-4, x2=1, x3=3
+
+=== Pattern 868 ===
+3x1 - 3x2 + x3 = 5
+2x1 + x2 + 2x3 = -20
+-x1 - 4x2 - x3 = 45
+Answer: Unique integer solution -> x1=-10, x2=-10, x3=5
+
+=== Pattern 869 ===
+2x1 + 2x2 = 32
+-x1 - 2x2 + 2x3 = -13
+-3x2 + 2x3 = -19
+Answer: Unique integer solution -> x1=5, x2=11, x3=7
+
+=== Pattern 870 ===
+-4x1 + 3x2 - x3 = -27
+x1 - 4x2 - 4x3 = -3
+-2x1 + 2x2 = -12
+Answer: Unique integer solution -> x1=9, x2=3, x3=0
+
+=== Pattern 871 ===
+-2x1 - 2x2 - 3x3 = 22
+3x1 + 3x2 + 2x3 = -48
+2x1 + 3x3 = 14
+Answer: Unique integer solution -> x1=-2, x2=-18, x3=6
+
+=== Pattern 872 ===
+3x1 - x2 + 3x3 = -26
+-3x1 + 2x2 = -47
+2x1 - x2 + 2x3 = -8
+Answer: Unique integer solution -> x1=-3, x2=-28, x3=-15
+
+=== Pattern 873 ===
+-x1 - 3x2 = -40
+-2x1 - 3x2 = -59
+x1 - 4x2 - x3 = -9
+Answer: Unique integer solution -> x1=19, x2=7, x3=0
+
+=== Pattern 874 ===
+3x1 + 2x2 + 3x3 = 4
+2x1 + 3x2 = 42
+x2 + 2x3 = 30
+Answer: Unique integer solution -> x1=-18, x2=26, x3=2
+
+=== Pattern 875 ===
+x1 - x2 + 3x3 = 61
+-3x2 + x3 = 24
+-2x1 + 3x2 + x3 = -42
+Answer: Unique integer solution -> x1=21, x2=-4, x3=12
+
+=== Pattern 876 ===
+-x1 + 3x3 = 0
+-2x2 - x3 = 14
+-4x1 + x2 + 2x3 = -7
+Answer: Unique integer solution -> x1=0, x2=-7, x3=0
+
+=== Pattern 877 ===
+-4x1 - x2 = 35
+-2x1 + 3x2 - x3 = 17
+-3x1 + 3x2 = 15
+Answer: Unique integer solution -> x1=-8, x2=-3, x3=-10
+
+=== Pattern 878 ===
+-x1 - 4x3 = 37
+2x2 - 3x3 = -3
+-2x1 - x2 - 3x3 = 44
+Answer: Unique integer solution -> x1=-1, x2=-15, x3=-9
+
+=== Pattern 879 ===
+x1 - x2 - 4x3 = 18
+-x1 - 3x2 + 2x3 = -46
+-4x1 - 3x2 + 3x3 = 12
+Answer: Unique integer solution -> x1=-24, x2=14, x3=-14
+
+=== Pattern 880 ===
+2x1 + x2 + 2x3 = -47
+-2x1 + 2x2 - 2x3 = 26
+3x1 - 3x2 + 2x3 = -34
+Answer: Unique integer solution -> x1=-15, x2=-7, x3=-5
+
+=== Pattern 881 ===
+-x1 + x2 - 2x3 = -21
+x1 - 2x2 = -23
+-x2 - 2x3 = -46
+Answer: No solution
+
+=== Pattern 882 ===
+-3x1 + 2x2 = 17
+x1 - 3x2 + 3x3 = 35
+-2x1 - x2 + 3x3 = 52
+Answer: Infinite solutions
+
+=== Pattern 883 ===
+-2x1 - 3x2 + x3 = -8
+-3x2 - 3x3 = -48
+x2 + 3x3 = 30
+Answer: Unique integer solution -> x1=-6, x2=9, x3=7
+
+=== Pattern 884 ===
+3x1 - 3x2 - x3 = -43
+3x1 + x2 + 3x3 = -63
+-2x1 - x2 = 25
+Answer: Unique integer solution -> x1=-14, x2=3, x3=-8
+
+=== Pattern 885 ===
+x1 + x3 = 23
+-4x1 - x2 = -48
+-3x1 - 4x2 + 2x3 = -36
+Answer: Unique integer solution -> x1=10, x2=8, x3=13
+
+=== Pattern 886 ===
+3x1 + 3x2 - x3 = 26
+-x1 + x3 = -1
+3x1 + 2x2 = 10
+Answer: Unique integer solution -> x1=-4, x2=11, x3=-5
+
+=== Pattern 887 ===
+-3x1 + 3x2 + 2x3 = -40
+x1 - 2x2 - 2x3 = -20
+-2x1 + x2 = -60
+Answer: Infinite solutions
+
+=== Pattern 888 ===
+-2x1 + 3x2 - 3x3 = 20
+2x1 - 3x2 + x3 = 38
+-x1 - 4x2 + 2x3 = -53
+Answer: Unique integer solution -> x1=23, x2=-7, x3=-29
+
+=== Pattern 889 ===
+-2x1 + x2 - 2x3 = 41
+-2x1 + 3x2 - 4x3 = 17
+-2x1 + 3x2 + 3x3 = -18
+Answer: Unique integer solution -> x1=-24, x2=-17, x3=-5
+
+=== Pattern 890 ===
+2x1 + 2x2 + x3 = 27
+-2x2 - 3x3 = 35
+2x1 - 2x3 = 62
+Answer: Infinite solutions
+
+=== Pattern 891 ===
+3x1 - 2x2 = -29
+-x2 + 2x3 = 48
+3x1 - 3x2 + 2x3 = 18
+Answer: No solution
+
+=== Pattern 892 ===
+2x1 - 3x2 - 2x3 = -1
+-x1 - 2x3 = -4
+2x2 + x3 = 39
+Answer: Unique integer solution -> x1=26, x2=25, x3=-11
+
+=== Pattern 893 ===
+2x1 + 3x2 = 56
+-x1 - 4x2 + x3 = -61
+-x1 + x2 + 3x3 = -27
+Answer: Unique integer solution -> x1=13, x2=10, x3=-8
+
+=== Pattern 894 ===
+x1 - 2x2 + x3 = -41
+2x1 - 3x2 - x3 = -47
+-x1 + x2 - 3x3 = 46
+Answer: Unique integer solution -> x1=-11, x2=11, x3=-8
+
+=== Pattern 895 ===
+2x1 + 3x3 = 40
+x1 + 2x2 + 3x3 = 45
+3x1 - x2 - 3x3 = -47
+Answer: Unique integer solution -> x1=-1, x2=2, x3=14
+
+=== Pattern 896 ===
+-4x1 - 4x2 + 2x3 = -22
+-3x1 - 4x2 + x3 = -13
+-x1 + 3x2 - x3 = -37
+Answer: Unique integer solution -> x1=14, x2=-6, x3=5
+
+=== Pattern 897 ===
+2x1 + x3 = 3
+x1 + 2x2 - 3x3 = -13
+-x1 + 2x2 + x3 = -1
+Answer: Unique integer solution -> x1=0, x2=-2, x3=3
+
+=== Pattern 898 ===
+-3x1 + 3x2 + x3 = -9
+2x1 - x2 = 39
+-x1 + 2x2 + x3 = 30
+Answer: Infinite solutions
+
+=== Pattern 899 ===
+-2x1 - x2 + 3x3 = -45
+-3x1 - 4x3 = -31
+-x1 - x2 = -26
+Answer: Unique integer solution -> x1=13, x2=13, x3=-2
+
+=== Pattern 900 ===
+2x1 - 4x3 = -46
+x1 + 2x2 - x3 = -33
+x1 - x2 + 2x3 = -9
+Answer: Unique integer solution -> x1=-19, x2=-6, x3=2
+
+=== Pattern 901 ===
+x1 + x2 - 4x3 = 8
+-2x1 + 2x3 = -14
+x1 + x2 - 3x3 = 14
+Answer: Unique integer solution -> x1=13, x2=19, x3=6
+
+=== Pattern 902 ===
+-4x1 + 2x2 + 2x3 = -17
+3x1 - 2x2 = 3
+-x1 + 2x3 = -12
+Answer: No solution
+
+=== Pattern 903 ===
+x1 - 4x2 + 2x3 = 10
+-3x1 - x2 - x3 = -45
+-3x1 + x2 - x3 = -25
+Answer: Unique integer solution -> x1=4, x2=10, x3=23
+
+=== Pattern 904 ===
+-4x1 + 3x2 + 2x3 = 31
+-2x2 + x3 = -57
+-4x1 + x2 + 3x3 = -26
+Answer: Infinite solutions
+
+=== Pattern 905 ===
+-2x1 + 2x2 - 4x3 = -36
+-x2 - 2x3 = -4
+2x1 - x2 - x3 = -30
+Answer: Unique integer solution -> x1=-18, x2=-16, x3=10
+
+=== Pattern 906 ===
+2x1 - 2x2 + 3x3 = -53
+-4x1 - 2x2 + 3x3 = 31
+-2x2 = -4
+Answer: Unique integer solution -> x1=-14, x2=2, x3=-7
+
+=== Pattern 907 ===
+-4x1 - 4x2 - x3 = -12
+-3x1 - x2 + x3 = 55
+3x1 - x2 + 2x3 = -5
+Answer: Unique integer solution -> x1=-14, x2=11, x3=24
+
+=== Pattern 908 ===
+x1 - 3x2 - 4x3 = -25
+-2x1 + x2 - x3 = 4
+-x1 + x2 - x3 = -20
+Answer: Unique integer solution -> x1=-24, x2=-25, x3=19
+
+=== Pattern 909 ===
+x1 + x2 = 3
+-4x1 - 4x2 - 4x3 = -4
+x1 - x3 = -5
+Answer: Unique integer solution -> x1=-7, x2=10, x3=-2
+
+=== Pattern 910 ===
+-3x1 - 4x2 + 2x3 = 11
+-2x1 + x2 + 2x3 = -9
+-2x1 + x2 = 51
+Answer: Unique integer solution -> x1=-25, x2=1, x3=-30
+
+=== Pattern 911 ===
+-2x1 = -24
+-2x1 - 2x2 + 2x3 = -50
+x1 - 3x2 - 3x3 = 3
+Answer: Unique integer solution -> x1=12, x2=8, x3=-5
+
+=== Pattern 912 ===
+x1 - x2 + 3x3 = 46
+-x2 - x3 = 5
+x1 - 2x2 + 2x3 = 52
+Answer: No solution
+
+=== Pattern 913 ===
+-4x1 - 2x2 + x3 = -21
+2x1 + 2x2 + x3 = -31
+-2x1 + 2x3 = -54
+Answer: No solution
+
+=== Pattern 914 ===
+-3x1 - 3x2 - x3 = 29
+-x1 + 2x2 - x3 = -46
+-4x1 - x2 - 2x3 = -17
+Answer: Infinite solutions
+
+=== Pattern 915 ===
+-2x1 - x2 + 3x3 = -4
+-2x1 + 2x2 - 3x3 = -37
+-2x1 + 3x2 + 2x3 = 29
+Answer: Unique integer solution -> x1=13, x2=11, x3=11
+
+=== Pattern 916 ===
+x1 - x3 = -45
+-4x1 - 4x2 + x3 = -16
+-3x1 - 4x2 = -62
+Answer: No solution
+
+=== Pattern 917 ===
+-x1 - 2x2 - 4x3 = -37
+-3x1 - 2x2 = 21
+-4x1 - 2x3 = 56
+Answer: Unique integer solution -> x1=-17, x2=15, x3=6
+
+=== Pattern 918 ===
+-4x1 - x3 = 21
+-x1 - 3x2 = 63
+x1 + x3 = -3
+Answer: Unique integer solution -> x1=-6, x2=-19, x3=3
+
+=== Pattern 919 ===
+-3x1 + x3 = -28
+-3x1 + 2x2 + 3x3 = -52
+2x1 + 3x2 - 3x3 = -12
+Answer: Unique integer solution -> x1=9, x2=-11, x3=-1
+
+=== Pattern 920 ===
+-4x1 - x3 = 51
+-3x2 - x3 = 8
+-3x1 - 3x2 + 3x3 = -6
+Answer: Unique integer solution -> x1=-10, x2=1, x3=-11
+
+=== Pattern 921 ===
+-2x1 - x2 - x3 = -6
+-x1 + 3x2 + x3 = 2
+-3x1 - x2 + x3 = -54
+Answer: Unique integer solution -> x1=8, x2=10, x3=-20
+
+=== Pattern 922 ===
+-2x1 - 3x2 + 3x3 = 49
+-x1 + 2x3 = 32
+-3x1 - 4x2 - 2x3 = 16
+Answer: Unique integer solution -> x1=-14, x2=2, x3=9
+
+=== Pattern 923 ===
+2x1 + 3x3 = 13
+x1 - x2 - x3 = -4
+-3x1 + 3x3 = 33
+Answer: Unique integer solution -> x1=-4, x2=-7, x3=7
+
+=== Pattern 924 ===
+-3x1 - 4x2 - 4x3 = 46
+-3x1 - x2 + x3 = 19
+-3x1 + x2 - 2x3 = -37
+Answer: Unique integer solution -> x1=2, x2=-19, x3=6
+
+=== Pattern 925 ===
+-3x1 + x2 - 3x3 = 20
+-4x1 = -36
+2x1 - 4x2 - 4x3 = -42
+Answer: Unique integer solution -> x1=9, x2=23, x3=-8
+
+=== Pattern 926 ===
+-x1 - 2x2 + 2x3 = 15
+3x1 - 2x2 = -51
+2x1 - 4x2 + 2x3 = -35
+Answer: No solution
+
+=== Pattern 927 ===
+-4x1 - 4x2 + x3 = -57
+3x1 + 2x2 - 3x3 = -5
+-4x1 + 3x2 + 3x3 = -39
+Answer: Unique integer solution -> x1=24, x2=-4, x3=23
+
+=== Pattern 928 ===
+-x1 - 2x3 = -57
+-2x1 - x3 = -57
+2x2 - x3 = 31
+Answer: Unique integer solution -> x1=19, x2=25, x3=19
+
+=== Pattern 929 ===
+3x1 + 2x2 = -7
+-4x1 + 3x2 - 2x3 = 31
+2x2 - 2x3 = 18
+Answer: Unique integer solution -> x1=-3, x2=1, x3=-8
+
+=== Pattern 930 ===
+-4x1 + x3 = -18
+-x1 + x2 - x3 = 47
+-3x1 - x3 = 18
+Answer: Unique integer solution -> x1=0, x2=29, x3=-18
+
+=== Pattern 931 ===
+-4x1 + x2 - 2x3 = -55
+3x2 - 2x3 = 19
+3x3 = -6
+Answer: Unique integer solution -> x1=16, x2=5, x3=-2
+
+=== Pattern 932 ===
+-x1 + 2x3 = 20
+3x1 - 4x2 = -37
+2x1 - 4x2 + 2x3 = -15
+Answer: No solution
+
+=== Pattern 933 ===
+x1 - x2 + x3 = -40
+3x1 + x2 - 2x3 = -50
+2x3 = 20
+Answer: Unique integer solution -> x1=-20, x2=30, x3=10
+
+=== Pattern 934 ===
+x1 - 4x2 = -57
+-2x1 - 2x3 = 12
+-x1 - 4x2 - 2x3 = -46
+Answer: No solution
+
+=== Pattern 935 ===
+3x1 + 2x3 = 9
+2x1 - 3x2 + x3 = 17
+x1 = 13
+Answer: Unique integer solution -> x1=13, x2=-2, x3=-15
+
+=== Pattern 936 ===
+-3x1 - x2 - 2x3 = -58
+3x1 - 4x2 - 2x3 = 47
+3x2 + 3x3 = 3
+Answer: Unique integer solution -> x1=21, x2=7, x3=-6
+
+=== Pattern 937 ===
+-4x1 + 3x2 = -8
+x1 + 2x2 - 3x3 = 39
+-4x1 + x2 + x3 = -29
+Answer: Unique integer solution -> x1=8, x2=8, x3=-5
+
+=== Pattern 938 ===
+x1 + x2 - 2x3 = -45
+3x1 + 2x2 = 13
+-x2 - 2x3 = -28
+Answer: Unique integer solution -> x1=15, x2=-16, x3=22
+
+=== Pattern 939 ===
+-4x1 + 2x2 - 2x3 = -46
+2x1 - 2x2 = 18
+2x1 + 2x2 + 3x3 = 24
+Answer: Unique integer solution -> x1=0, x2=-9, x3=14
+
+=== Pattern 940 ===
+-x1 + 3x2 - 4x3 = -16
+-x1 + 2x2 = -4
+3x1 - 4x2 - x3 = -12
+Answer: Unique integer solution -> x1=-20, x2=-12, x3=0
+
+=== Pattern 941 ===
+-4x1 + 3x2 - 2x3 = -14
+-3x1 - 3x2 - 4x3 = -16
+-4x1 - x2 + 2x3 = -30
+Answer: Unique integer solution -> x1=6, x2=2, x3=-2
+
+=== Pattern 942 ===
+x1 - 2x2 + 3x3 = -50
+-3x1 + 2x2 - x3 = 10
+-2x1 + 2x3 = -39
+Answer: No solution
+
+=== Pattern 943 ===
+-3x1 - x2 + 2x3 = -1
+-2x1 - x2 - 3x3 = 6
+-4x1 - 3x2 - 3x3 = -16
+Answer: Unique integer solution -> x1=-8, x2=19, x3=-3
+
+=== Pattern 944 ===
+-x1 + 2x2 - 2x3 = -59
+-3x1 - 3x2 + 2x3 = -10
+x2 + x3 = -28
+Answer: Unique integer solution -> x1=23, x2=-23, x3=-5
+
+=== Pattern 945 ===
+-x1 = -10
+-4x1 + 2x2 + 2x3 = -52
+x1 + x2 - 3x3 = 52
+Answer: Unique integer solution -> x1=10, x2=6, x3=-12
+
+=== Pattern 946 ===
+-2x1 + x2 = 3
+-3x2 + x3 = -13
+-3x1 + 2x3 = -8
+Answer: Unique integer solution -> x1=0, x2=3, x3=-4
+
+=== Pattern 947 ===
+-2x1 - 4x2 - 4x3 = 14
+-4x1 - 2x2 - x3 = -32
+2x1 + 2x2 = 36
+Answer: Unique integer solution -> x1=7, x2=11, x3=-18
+
+=== Pattern 948 ===
+-2x1 + 2x2 + 2x3 = 60
+x1 + 3x3 = -6
+3x1 + 2x2 - 3x3 = 50
+Answer: Unique integer solution -> x1=-3, x2=28, x3=-1
+
+=== Pattern 949 ===
+-2x1 + 3x3 = 48
+-x1 + 3x3 = 39
+x1 + 2x2 - x3 = 15
+Answer: Unique integer solution -> x1=-9, x2=17, x3=10
+
+=== Pattern 950 ===
+-4x1 - 4x2 + 2x3 = -28
+-3x1 - 2x2 - 4x3 = 41
+-3x1 - 2x2 - x3 = 5
+Answer: Unique integer solution -> x1=5, x2=-4, x3=-12
+
+=== Pattern 951 ===
+-x1 + x2 - x3 = -57
+2x1 + x2 - 4x3 = -36
+3x2 + 3x3 = -24
+Answer: Unique integer solution -> x1=21, x2=-22, x3=14
+
+=== Pattern 952 ===
+-x1 - 4x2 = -4
+-x1 + 3x2 - x3 = 61
+-2x1 - x2 - x3 = 55
+Answer: No solution
+
+=== Pattern 953 ===
+-2x1 - x2 + 2x3 = -5
+2x1 + 2x2 - 3x3 = -28
+x2 - x3 = -33
+Answer: Infinite solutions
+
+=== Pattern 954 ===
+3x1 - x2 - 4x3 = 8
+3x1 - 3x2 - x3 = 14
+-3x1 - 3x2 - 2x3 = -44
+Answer: Unique integer solution -> x1=9, x2=3, x3=4
+
+=== Pattern 955 ===
+2x1 - x3 = -49
+-2x1 - 2x3 = -2
+-4x2 - 3x3 = -27
+Answer: Unique integer solution -> x1=-16, x2=-6, x3=17
+
+=== Pattern 956 ===
+-4x1 = -10
+x1 + x2 + x3 = -17
+-3x1 + x2 + x3 = -27
+Answer: Infinite solutions
+
+=== Pattern 957 ===
+-2x1 + x2 - x3 = -57
+2x1 - 3x2 + 3x3 = 60
+-2x2 + 2x3 = 5
+Answer: No solution
+
+=== Pattern 958 ===
+2x1 - x2 - 2x3 = 28
+-x2 = 6
+x3 = 4
+Answer: Unique integer solution -> x1=15, x2=-6, x3=4
+
+=== Pattern 959 ===
+x1 + x2 - 2x3 = -10
+2x1 + x2 + x3 = 4
+3x1 + 2x2 - x3 = -6
+Answer: Infinite solutions
+
+=== Pattern 960 ===
+-x1 - x2 + 2x3 = 57
+-2x1 + x2 - 2x3 = -33
+-2x1 + x2 + 2x3 = 11
+Answer: Unique integer solution -> x1=-8, x2=-27, x3=11
+
+=== Pattern 961 ===
+-4x1 + x2 - 4x3 = -28
+3x1 - x3 = 49
+x1 - x2 + x3 = 19
+Answer: Unique integer solution -> x1=13, x2=-16, x3=-10
+
+=== Pattern 962 ===
+-2x1 - 2x2 + 3x3 = 28
+-x1 + 3x2 + x3 = 14
+-3x1 + x2 = 42
+Answer: Unique integer solution -> x1=-14, x2=0, x3=0
+
+=== Pattern 963 ===
+-x1 + 3x2 + 2x3 = 19
+-x1 + x2 - x3 = -28
+-4x1 + x2 = 30
+Answer: Unique integer solution -> x1=-11, x2=-14, x3=25
+
+=== Pattern 964 ===
+x1 + 2x2 - x3 = -21
+-2x1 - 2x2 + x3 = 22
+-2x2 + 2x3 = 44
+Answer: Unique integer solution -> x1=-1, x2=2, x3=24
+
+=== Pattern 965 ===
+3x1 + 2x2 - x3 = 56
+x1 + 2x2 - 4x3 = 8
+-3x2 - 3x3 = 24
+Answer: Unique integer solution -> x1=24, x2=-8, x3=0
+
+=== Pattern 966 ===
+2x1 - x2 = -53
+-x2 - 4x3 = 8
+2x1 - 2x2 - 4x3 = -45
+Answer: Infinite solutions
+
+=== Pattern 967 ===
+-4x1 - 3x2 + x3 = 8
+3x1 + 2x2 + x3 = -3
+-2x1 - 2x3 = 26
+Answer: Unique integer solution -> x1=-18, x2=23, x3=5
+
+=== Pattern 968 ===
+-4x1 - 2x2 + 2x3 = 20
+2x1 - 2x3 = -18
+2x1 + 2x2 - x3 = -8
+Answer: Unique integer solution -> x1=-3, x2=2, x3=6
+
+=== Pattern 969 ===
+-x1 - x2 + x3 = -30
+-x1 + x3 = -1
+2x1 + 2x2 - 4x3 = 50
+Answer: Unique integer solution -> x1=6, x2=29, x3=5
+
+=== Pattern 970 ===
+-x1 + x2 + x3 = -17
+3x1 + 2x2 = 30
+2x1 + 3x2 + x3 = 13
+Answer: Infinite solutions
+
+=== Pattern 971 ===
+-2x1 - 4x2 + 2x3 = -64
+3x1 + x2 + 2x3 = -59
+2x1 - x2 = -13
+Answer: Unique integer solution -> x1=-4, x2=5, x3=-26
+
+=== Pattern 972 ===
+3x1 + 3x2 - 2x3 = 50
+-4x1 - x2 + x3 = -62
+-x1 + 2x2 - x3 = -12
+Answer: Infinite solutions
+
+=== Pattern 973 ===
+-3x1 - 3x2 - 3x3 = 27
+-x1 - 3x2 = 31
+2x1 + x2 + 2x3 = 1
+Answer: Unique integer solution -> x1=26, x2=-19, x3=-16
+
+=== Pattern 974 ===
+-2x1 - 2x2 + 3x3 = 27
+-3x1 - 4x2 - 3x3 = -40
+-2x1 - 4x2 = 22
+Answer: Unique integer solution -> x1=23, x2=-17, x3=13
+
+=== Pattern 975 ===
+-2x1 + 2x2 - x3 = -62
+-x1 - x2 + 2x3 = 42
+x1 = 17
+Answer: Unique integer solution -> x1=17, x2=1, x3=30
+
+=== Pattern 976 ===
+x1 + 3x2 + x3 = 10
+-3x1 - 2x2 + x3 = 5
+-2x1 + x2 + 2x3 = 14
+Answer: No solution
+
+=== Pattern 977 ===
+-x1 + 2x2 - x3 = -5
+2x1 - x2 - 4x3 = 49
+-x1 + 3x2 - 4x3 = 9
+Answer: Unique integer solution -> x1=28, x2=11, x3=-1
+
+=== Pattern 978 ===
+3x1 - 3x2 + 3x3 = 48
+-4x1 + x2 = -63
+-x1 - 2x2 + 3x3 = -15
+Answer: Infinite solutions
+
+=== Pattern 979 ===
+3x1 + x2 + x3 = 21
+-3x1 + 2x2 - 3x3 = -45
+3x2 - 2x3 = -24
+Answer: Infinite solutions
+
+=== Pattern 980 ===
+x1 - 3x3 = 36
+-3x1 - 4x3 = 9
+x1 - 2x2 = -35
+Answer: Unique integer solution -> x1=9, x2=22, x3=-9
+
+=== Pattern 981 ===
+3x1 - 2x2 - 2x3 = 17
+-4x1 - 3x2 - x3 = 22
+-4x1 + 2x2 + x3 = 11
+Answer: Unique integer solution -> x1=-5, x2=7, x3=-23
+
+=== Pattern 982 ===
+2x1 - 3x2 - x3 = 49
+-3x1 + x3 = 12
+-4x1 + 3x2 - 4x3 = 61
+Answer: Unique integer solution -> x1=-10, x2=-17, x3=-18
+
+=== Pattern 983 ===
+3x1 + x2 = 10
+-x1 + x2 + x3 = 23
+2x1 + 2x2 - 2x3 = -30
+Answer: Unique integer solution -> x1=2, x2=4, x3=21
+
+=== Pattern 984 ===
+x1 + 2x2 = 60
+2x1 + 2x3 = 26
+-2x1 - 2x2 + x3 = -59
+Answer: Unique integer solution -> x1=6, x2=27, x3=7
+
+=== Pattern 985 ===
+3x1 + 2x2 + 2x3 = -49
+-4x1 - x2 - 2x3 = 53
+x1 + 3x2 - x3 = 34
+Answer: Unique integer solution -> x1=-1, x2=3, x3=-26
+
+=== Pattern 986 ===
+-4x1 + 2x2 + 3x3 = -56
+3x1 - 2x2 - x3 = 4
+3x1 + 2x2 + x3 = 44
+Answer: Unique integer solution -> x1=8, x2=21, x3=-22
+
+=== Pattern 987 ===
+-2x1 + x2 = 19
+-2x1 - 2x2 - 4x3 = 26
+-3x1 - 4x2 - 2x3 = -12
+Answer: Unique integer solution -> x1=-4, x2=11, x3=-10
+
+=== Pattern 988 ===
+-2x1 - x3 = 15
+-x1 + 2x3 = -5
+-2x2 - 2x3 = -46
+Answer: Unique integer solution -> x1=-5, x2=28, x3=-5
+
+=== Pattern 989 ===
+-4x1 - x2 + x3 = -6
+2x3 = -28
+-x1 - x2 + x3 = -3
+Answer: Unique integer solution -> x1=1, x2=-12, x3=-14
+
+=== Pattern 990 ===
+-2x1 - 2x2 + x3 = 9
+-x2 - 3x3 = 29
+-3x1 - 4x2 - x3 = 38
+Answer: Unique integer solution -> x1=-7, x2=-2, x3=-9
+
+=== Pattern 991 ===
+-4x1 + x2 + 2x3 = -13
+x1 - 3x2 - x3 = 4
+-3x1 - 2x2 + x3 = -9
+Answer: Infinite solutions
+
+=== Pattern 992 ===
+2x1 - 3x2 + x3 = 52
+-4x1 + x2 = 2
+-2x1 - 2x2 + x3 = 54
+Answer: Infinite solutions
+
+=== Pattern 993 ===
+-x1 - 2x3 = -23
+-2x1 + 2x2 - 4x3 = -2
+-2x1 + x3 = 34
+Answer: Unique integer solution -> x1=-9, x2=22, x3=16
+
+=== Pattern 994 ===
+2x1 + 3x2 + 2x3 = -28
+-2x2 = 12
+2x1 + 2x2 - 3x3 = 18
+Answer: Unique integer solution -> x1=3, x2=-6, x3=-8
+
+=== Pattern 995 ===
+-3x1 - x2 - 2x3 = -50
+3x1 - x2 - 2x3 = 0
+-2x2 - 4x3 = -50
+Answer: Infinite solutions
+
+=== Pattern 996 ===
+x1 + 2x3 = 48
+-2x1 = -16
+-4x1 - 3x2 = -53
+Answer: Unique integer solution -> x1=8, x2=7, x3=20
+
+=== Pattern 997 ===
+-2x1 + 3x2 - 3x3 = -49
+2x1 - 4x2 - 2x3 = 40
+-3x1 - 2x2 + 2x3 = 24
+Answer: Unique integer solution -> x1=2, x2=-11, x3=4
+
+=== Pattern 998 ===
+-2x1 - 2x2 - 4x3 = 30
+-x2 = -21
+2x1 - x2 + x3 = -12
+Answer: Unique integer solution -> x1=18, x2=21, x3=-27
+
+=== Pattern 999 ===
+-x1 - x2 - 4x3 = 49
+-x1 + x3 = -9
+-x1 - x2 = 9
+Answer: Unique integer solution -> x1=-1, x2=-8, x3=-10
+
