@@ -1,0 +1,37 @@
+{
+  "output": "C:\\Users\\terry\\OneDrive\\文件\\NYCU_DCS_2026\\DCS_FINAL\\figures\\ca_editable_architecture_diagrams.pptx",
+  "outputBytes": 24430,
+  "slideCount": 2,
+  "slideSize": {
+    "width": 1280,
+    "height": 720
+  },
+  "previewDir": "C:\\Users\\terry\\OneDrive\\文件\\NYCU_DCS_2026\\outputs\\manual-ca-editable-diagrams\\presentations\\ca-editable-diagrams\\preview",
+  "previewPaths": [
+    "C:\\Users\\terry\\OneDrive\\文件\\NYCU_DCS_2026\\outputs\\manual-ca-editable-diagrams\\presentations\\ca-editable-diagrams\\preview\\slide-01.png",
+    "C:\\Users\\terry\\OneDrive\\文件\\NYCU_DCS_2026\\outputs\\manual-ca-editable-diagrams\\presentations\\ca-editable-diagrams\\preview\\slide-02.png"
+  ],
+  "layoutDir": "C:\\Users\\terry\\OneDrive\\文件\\NYCU_DCS_2026\\outputs\\manual-ca-editable-diagrams\\presentations\\ca-editable-diagrams\\layout",
+  "layoutResults": [
+    {
+      "layoutPath": "C:\\Users\\terry\\OneDrive\\文件\\NYCU_DCS_2026\\outputs\\manual-ca-editable-diagrams\\presentations\\ca-editable-diagrams\\layout\\slide-01.layout.json"
+    },
+    {
+      "layoutPath": "C:\\Users\\terry\\OneDrive\\文件\\NYCU_DCS_2026\\outputs\\manual-ca-editable-diagrams\\presentations\\ca-editable-diagrams\\layout\\slide-02.layout.json"
+    }
+  ],
+  "slides": [
+    {
+      "index": 1,
+      "requestedSlideNumber": 1,
+      "modulePath": "C:\\Users\\terry\\OneDrive\\文件\\NYCU_DCS_2026\\outputs\\manual-ca-editable-diagrams\\presentations\\ca-editable-diagrams\\slides\\slide-01.mjs",
+      "exportName": "slide01"
+    },
+    {
+      "index": 2,
+      "requestedSlideNumber": 2,
+      "modulePath": "C:\\Users\\terry\\OneDrive\\文件\\NYCU_DCS_2026\\outputs\\manual-ca-editable-diagrams\\presentations\\ca-editable-diagrams\\slides\\slide-02.mjs",
+      "exportName": "slide02"
+    }
+  ]
+}

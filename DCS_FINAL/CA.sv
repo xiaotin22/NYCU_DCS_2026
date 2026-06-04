@@ -674,7 +674,9 @@ module CA_DataPath #(
     // Use top-level mult_tag_t for the whole DataPath sideband; values pass
     // through unchanged from Multiple_Processor into ACT / PoT tag pipelines.
 
-    localparam int SCORE_ELEM_W   = 11;
+    // score_mem 每 lane 存預先算好的 base-16 signed-digit {d0,d1,d2}（各 s4 = 12-bit），
+    // 而非原始 11-bit score。進位拆解搬到寫入端，FINAL 讀取端只切片（critical path↓）。
+    localparam int SCORE_ELEM_W   = 12;
     localparam int SCORE_PACK_W   = SCORE_ELEM_W * 64;
     localparam int MHA_OUT_ELEM_W = 15;
     // combine_mha_heads 只取 head0 每 row 的 col 0-3，所以 FINAL head0 buffer
@@ -685,7 +687,7 @@ module CA_DataPath #(
     // ------------------------------------------------------------------------
     // 區塊 2：跨 issue 的中間儲存（這些是 DataPath 的「狀態」，必須留在這層）
     // ------------------------------------------------------------------------
-    // x/q/k/v_mem: 4 個 256-bit slot；score_mem: 8 個 (11-bit × 64) slot。
+    // x/q/k/v_mem: 4 個 256-bit slot；score_mem: 8 個 (12-bit signed-digit × 64) slot。
     // MHA head0 FINAL 部份積借用 q_mem/k_mem（SV 完 Q/K 已死），480-bit packed
     // 拆成 q_mem(256) + k_mem[255:32](224)，省 1920 flops。
     logic [255:0]              x_mem        [0:3];
@@ -784,12 +786,26 @@ module CA_DataPath #(
     function automatic logic [SCORE_PACK_W-1:0] pack_attention_score(input logic [1023:0] src);
         logic signed [15:0] elem;
         logic signed [15:0] activated;
+        logic [10:0]        ls;     // 11-bit truncated score
+        logic [4:0]         raw1;   // ls[7:4] + carry-in，最大 16
+        logic               c1;
+        logic [3:0]         d0, d1, d2;
         begin
             for (int i = 0; i < 64; i++) begin
                 elem      = $signed(src[1023 - (i * 16) -: 16]);
                 activated = (elem < 0) ? (elem >>> 2) : elem;
+                ls        = activated[10:0];
+                // base-16 signed-digit 拆解（與舊 read-side 同式，搬到寫入端）：
+                //   score = d0 + 16·d1 + 256·d2，每個 dk ∈ [-8,7]。進位互相抵銷。
+                // c1 = (ls[7:4]+ls[3]) ≥ 8 直接寫成布林式，d2 不必等 raw1 完整加法器
+                //   → 縮短 ls→c1→d2 的 carry 鏈（寫入端 critical path↓）。
+                raw1 = {1'b0, ls[7:4]} + {4'b0, ls[3]};
+                c1   = ls[7] | (ls[6] & ls[5] & ls[4] & ls[3]);
+                d0   = ls[3:0];
+                d1   = raw1[3:0];
+                d2   = {ls[10], ls[10:8]} + c1;
                 pack_attention_score[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W] =
-                    activated[SCORE_ELEM_W-1:0];
+                    {d0, d1, d2};
             end
         end
     endfunction
@@ -1093,7 +1109,7 @@ module Multiple_Processor (
     input  logic [255:0]   q_mem       [0:3],
     input  logic [255:0]   k_mem       [0:3],
     input  logic [255:0]   v_mem       [0:3],
-    input  logic [703:0]   score_mem   [0:7],  // 11-bit × 64 lanes
+    input  logic [767:0]   score_mem   [0:7],  // 12-bit signed-digit {d0,d1,d2} × 64 lanes
 
     output logic           mult_valid,
     output logic [1023:0]  mult_data,
@@ -1108,9 +1124,8 @@ module Multiple_Processor (
 
     logic          mult_issue_valid;
     logic          mult_issue_b_transpose;
-    logic [255:0]  mult_issue_A;           // raw 4-bit packed (before s5 extension)
+    logic [255:0]  mult_issue_A;           // signed 4-bit packed A for the multiplier
     logic [255:0]  mult_issue_B;
-    logic [319:0]  mult_issue_A_s5;        // 5-bit packed A for the multiplier
     mult_tag_t     mult_issue_tag;
     logic [2:0]    mult_issue_idx;
     logic [1:0]    mult_issue_nibble;      // FINAL nibble phase 0/1/2
@@ -1118,6 +1133,14 @@ module Multiple_Processor (
     mult_tag_t  mult_tag_cs    [0:MULT_STAGES-1];
     logic [2:0] mult_idx_cs    [0:MULT_STAGES-1];
     logic [1:0] mult_nibble_cs [0:MULT_STAGES-1]; // nibble phase through pipeline
+
+    // 4-bit one-hot write enables for nibb_acc，跟著 tag/idx pipeline 一起傳。
+    // 把 stage 4 對 mult_idx_cs[4][1:0] 的 4-to-1 decode + (valid & tag==FINAL
+    // & nibble phase) 的 AND chain 整個推到 issue 端先 register，stage 4 出來
+    // 直接是「per-bank registered select」，砍掉 nibb_acc_cs D-pin 前那段
+    // OAI/AOI/NAND 大 fanout cone。
+    logic [3:0] nibb_we_p0_cs [0:MULT_STAGES-1]; // nibble 0 → 載入 mult_raw_data
+    logic [3:0] nibb_we_p1_cs [0:MULT_STAGES-1]; // nibble 1 → acc + (prod << 4)
 
     // FINAL counters (registered, valid for the current issue cycle). Issue order
     // is INTERLEAVED so the 4 matrices' final results emerge on consecutive cycles
@@ -1129,38 +1152,26 @@ module Multiple_Processor (
     logic [1:0] fin_nibble_cs; // 0=lo, 1=mid, 2=hi (middle)
     logic       fin_head_cs;   // MHA head 0/1 (outermost; SHA stays 0)
 
-    // Signed 4-bit packed vector to the multiplier's 5-bit A format.
-    function automatic logic [319:0] sign_extend_s4_vec(input logic [255:0] src);
-        begin
-            for (int e = 0; e < 64; e++) begin
-                sign_extend_s4_vec[319 - (e * 5) -: 5] = {
-                    src[255 - (e * 4)], src[255 - (e * 4) -: 4]
-                };
-            end
-        end
-    endfunction
-
-    // Extract one score nibble vector directly as 5-bit packed A.
-    // phase 0/1 are unsigned nibbles; phase 2 is signed bits[10:8].
-    function automatic logic [319:0] extract_score_nibble_s5(
-        input logic [703:0] src,
+    // Extract one phase's signed-digit vector as 4-bit packed A.
+    //
+    // score_mem 已於寫入時 (pack_attention_score) 預先算好 base-16 signed-digit，
+    // 每 lane 存 {d0[11:8], d1[7:4], d2[3:0]}（各 s4）。讀取端只做 phase 切片，
+    // 不再有進位加法 —— 原本掛在 issue→in_data_A 的 XOR carry 移除。
+    function automatic logic [255:0] extract_score_nibble_s4(
+        input logic [767:0] src,
         input logic [1:0]   phase
     );
-        logic [10:0] ls;
+        logic [11:0] ld;
+        logic [3:0]  d;
         begin
             for (int s = 0; s < 64; s++) begin
-                ls = src[703 - (s * 11) -: 11];
+                ld = src[767 - (s * 12) -: 12];
                 case (phase)
-                    2'd0: begin
-                        extract_score_nibble_s5[319 - (s * 5) -: 5] = {1'b0, ls[3:0]};
-                    end
-                    2'd1: begin
-                        extract_score_nibble_s5[319 - (s * 5) -: 5] = {1'b0, ls[7:4]};
-                    end
-                    default: begin
-                        extract_score_nibble_s5[319 - (s * 5) -: 5] = {{2{ls[10]}}, ls[10:8]};
-                    end
+                    2'd0:    d = ld[11:8];   // d0
+                    2'd1:    d = ld[7:4];    // d1
+                    default: d = ld[3:0];    // d2
                 endcase
+                extract_score_nibble_s4[255 - (s * 4) -: 4] = d;
             end
         end
     endfunction
@@ -1169,7 +1180,6 @@ module Multiple_Processor (
         mult_issue_valid       = 1'b0;
         mult_issue_b_transpose = 1'b0;
         mult_issue_A           = 256'd0;
-        mult_issue_A_s5        = 320'd0;
         mult_issue_B           = 256'd0;
         mult_issue_tag         = MT_NONE;
         mult_issue_idx         = 3'd0;
@@ -1181,7 +1191,6 @@ module Multiple_Processor (
             case (issue_mode)
                 IM_NORM: begin
                     mult_issue_A   = rd_data;
-                    mult_issue_A_s5 = sign_extend_s4_vec(rd_data);
                     mult_issue_B   = param;
                     mult_issue_tag = MT_NORM;
                 end
@@ -1194,7 +1203,6 @@ module Multiple_Processor (
                         default:             mult_issue_idx = 3'd3;
                     endcase
                     mult_issue_A = x_mem[mult_issue_idx[1:0]];
-                    mult_issue_A_s5 = sign_extend_s4_vec(mult_issue_A);
 
                     case (issue_idx)
                         5'd0, 5'd3, 5'd6, 5'd9: begin
@@ -1236,7 +1244,6 @@ module Multiple_Processor (
                     else begin
                         mult_issue_idx = {1'b0, issue_idx[1:0]};
                     end
-                    mult_issue_A_s5        = sign_extend_s4_vec(mult_issue_A);
                     mult_issue_b_transpose = 1'b1;
                     mult_issue_tag         = MT_SCORE;
                 end
@@ -1247,7 +1254,7 @@ module Multiple_Processor (
                                             {fin_head_cs, fin_mat_cs} :
                                             {1'b0, fin_mat_cs};
                     mult_issue_nibble     = fin_nibble_cs;
-                    mult_issue_A_s5       = extract_score_nibble_s5(
+                    mult_issue_A          = extract_score_nibble_s4(
                                                score_mem[mult_issue_idx], fin_nibble_cs);
                     mult_issue_B          = v_mem[fin_mat_cs];
                     // No head_mask in FINAL: MHA does a full 8-tap score×V dot;
@@ -1258,6 +1265,24 @@ module Multiple_Processor (
                 default: begin
                     mult_issue_valid = 1'b0;
                 end
+            endcase
+        end
+    end
+
+    // Pre-decode 一次 nibb_acc 的 one-hot 寫致能（stage 0 的輸入）。
+    // 這裡做的事跟原本 stage 4 nibb_acc_cs always_ff 裡那組 valid & tag &
+    // case(nibble) 完全一樣，只是搬到 issue 端，往後 5 級 register 同步傳遞，
+    // critical path 起點不再是 mult_idx_cs[4][0]。
+    logic [3:0] nibb_we_p0_in;
+    logic [3:0] nibb_we_p1_in;
+    always_comb begin
+        nibb_we_p0_in = 4'd0;
+        nibb_we_p1_in = 4'd0;
+        if (mult_issue_valid && (mult_issue_tag == MT_FINAL)) begin
+            case (mult_issue_nibble)
+                2'd0:    nibb_we_p0_in[mult_issue_idx[1:0]] = 1'b1;
+                2'd1:    nibb_we_p1_in[mult_issue_idx[1:0]] = 1'b1;
+                default: ; // phase 2 走 combinational nibb_final_data，不寫 acc
             endcase
         end
     end
@@ -1304,7 +1329,7 @@ module Multiple_Processor (
         .op          (op),
         .b_transpose (mult_issue_b_transpose),
         .in_valid    (mult_issue_valid),
-        .in_data_A   (mult_issue_A_s5),
+        .in_data_A   (mult_issue_A),
         .in_data_B   (mult_issue_B),
         .out_valid   (mult_raw_valid),
         .out_data    (mult_raw_data)
@@ -1317,16 +1342,22 @@ module Multiple_Processor (
                 mult_tag_cs[i]    <= MT_NONE;
                 mult_idx_cs[i]    <= 3'd0;
                 mult_nibble_cs[i] <= 2'd0;
+                nibb_we_p0_cs[i]  <= 4'd0;
+                nibb_we_p1_cs[i]  <= 4'd0;
             end
         end
         else begin
             mult_tag_cs[0]    <= mult_issue_valid ? mult_issue_tag    : MT_NONE;
             mult_idx_cs[0]    <= mult_issue_idx;
             mult_nibble_cs[0] <= mult_issue_nibble;
+            nibb_we_p0_cs[0]  <= nibb_we_p0_in;
+            nibb_we_p1_cs[0]  <= nibb_we_p1_in;
             for (int i = 1; i < MULT_STAGES; i++) begin
                 mult_tag_cs[i]    <= mult_tag_cs[i - 1];
                 mult_idx_cs[i]    <= mult_idx_cs[i - 1];
                 mult_nibble_cs[i] <= mult_nibble_cs[i - 1];
+                nibb_we_p0_cs[i]  <= nibb_we_p0_cs[i - 1];
+                nibb_we_p1_cs[i]  <= nibb_we_p1_cs[i - 1];
             end
         end
     end
@@ -1337,9 +1368,23 @@ module Multiple_Processor (
     // round (nibble 2) yields the 4 finals on consecutive cycles.
     logic [1023:0] nibb_acc_cs [0:3];
     logic [1023:0] nibb_final_data;
-    logic [1:0]    fin_mat_out; // matrix index of the result currently emerging
 
-    assign fin_mat_out = mult_idx_cs[MULT_STAGES-1][1:0];
+    // phase-2 最終 combinational accumulate 的 bank select。原本單一
+    // mult_idx_cs[4][1:0] 要驅動整個 1024-bit 的 nibb_acc 4-to-1 讀取 mux
+    // (扇出 ~1024 loads → 大 BUFX12 tree，吃掉 ~0.43ns)。改成 4 份複製，
+    // 每份只驅動 16 lanes (group i/16) 的讀取 mux，把扇出拆成 4×256。
+    // dont_touch 防止 synthesis 合回單一高扇出 driver。
+    (* dont_touch = "true" *) logic [1:0] fin_sel_cs [0:3];
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int g = 0; g < 4; g++) fin_sel_cs[g] <= 2'd0;
+        end else begin
+            // 從 stage-3 register 取值，下一拍即等於 mult_idx_cs[4][1:0]。
+            for (int g = 0; g < 4; g++)
+                fin_sel_cs[g] <= mult_idx_cs[MULT_STAGES-2][1:0];
+        end
+    end
 
     // Per-lane shift-accumulate: each 16-bit slot does acc + (prod << sh)
     // INDEPENDENTLY, truncated to 16 bits. Doing one 1024-bit add would let a
@@ -1360,21 +1405,37 @@ module Multiple_Processor (
         end
     endfunction
 
+    // 每個 bank 各自靠 registered one-hot WE 觸發，D-pin 只剩 2-to-1
+    // (raw_data | acc + (prod<<4)) + write enable 的小 cone，不再有
+    // mult_idx_cs[4][1:0] 的 4-to-1 decode 跟 tag/nibble compare。
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < 4; i++) nibb_acc_cs[i] <= 1024'd0;
-        end else if (mult_raw_valid && (mult_tag_cs[MULT_STAGES-1] == MT_FINAL)) begin
-            case (mult_nibble_cs[MULT_STAGES-1])
-                2'd0: nibb_acc_cs[fin_mat_out] <= mult_raw_data;
-                2'd1: nibb_acc_cs[fin_mat_out] <=
-                          lane_shift_add(nibb_acc_cs[fin_mat_out], mult_raw_data, 4);
-                default: ; // phase 2 handled combinationally; acc not updated
-            endcase
+        end else begin
+            for (int i = 0; i < 4; i++) begin
+                if (nibb_we_p0_cs[MULT_STAGES-1][i])
+                    nibb_acc_cs[i] <= mult_raw_data;
+                else if (nibb_we_p1_cs[MULT_STAGES-1][i])
+                    nibb_acc_cs[i] <= lane_shift_add(nibb_acc_cs[i], mult_raw_data, 4);
+            end
         end
     end
 
-    // Combinational: phase 2 final per-lane accumulation for this matrix
-    assign nibb_final_data = lane_shift_add(nibb_acc_cs[fin_mat_out], mult_raw_data, 8);
+    // Combinational: phase 2 final per-lane accumulation for this matrix.
+    // 每 16-lane group 用各自的 fin_sel_cs 複製選 bank（扇出已拆 4 份），
+    // 再做 per-lane 16-bit shift-add（等價原 lane_shift_add(sh=8)）。
+    always_comb begin
+        nibb_final_data = 1024'd0;
+        for (int i = 0; i < 64; i++) begin
+            logic [1:0]         sel;
+            logic signed [15:0] a;
+            logic signed [15:0] p;
+            sel = fin_sel_cs[i / 16];
+            a   = nibb_acc_cs[sel][1023 - (i * 16) -: 16];
+            p   = mult_raw_data   [1023 - (i * 16) -: 16];
+            nibb_final_data[1023 - (i * 16) -: 16] = a + (p <<< 8);
+        end
+    end
 
     // 內部 combinational 版本（這條 path：FINAL MUX + lane_shift_add 約 1.3 ns）
     logic          mult_valid_comb;
@@ -1414,7 +1475,7 @@ module Mult_5Stage_Parallel (
     input  logic [1:0]   op,
     input  logic         b_transpose,
     input  logic         in_valid,
-    input  logic [319:0] in_data_A,   // 5-bit packed (zero/sign-extend pre-applied upstream)
+    input  logic [255:0] in_data_A,   // signed 4-bit packed (s4 per lane)
     input  logic [255:0] in_data_B,
     output logic         out_valid,
     output logic [1023:0] out_data
@@ -1425,37 +1486,33 @@ module Mult_5Stage_Parallel (
     localparam int DOT_SIZE = 9;
 
     typedef logic signed [3:0]  s4_t;
-    typedef logic signed [4:0]  s5_t;  // A operand: sign- or zero-extended 4-bit
-    // 範圍分析: sel_a ∈ [-8, 15], sel_b ∈ [-8, 7]
-    //   → product ∈ [15×-8, 15×7] = [-120, 105]，落在 s8 [-128, 127] 內
-    // 比 s9 多省 64×9 = 576 flops（prod_cs），比原 s16 共省 4608 flops。
-    typedef logic signed [7:0]  s8_t;   // product: s5 × s4 → s8 (max ±120 fits)
-    typedef logic signed [11:0] s12_t;  // partial sum: 5×s8 ≤ 600 fits s12
+    // 範圍分析: sel_a ∈ [-8, 7]（FINAL score 改用 signed-digit 也落在此區間）,
+    //   sel_b ∈ [-8, 7] → product ∈ [-8×-8, ...] = [-56, 64]，落在 s8 [-128, 127] 內。
+    //   A 從 s5 降到 s4：乘法器由 s5×s4 (5 PP rows) → s4×s4 (4 PP rows)，
+    //   partial-product reduction 少一級，並省 operand_a 576 flops。
+    typedef logic signed [7:0]  s8_t;   // product: s4 × s4 → s8 (max +64 fits)
+    typedef logic signed [11:0] s12_t;  // partial sum: 5×s8 fits s12
     typedef logic signed [15:0] s16_t;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
     endfunction
 
-    function automatic s5_t get_s5(input logic [319:0] vec, input integer idx);
-        get_s5 = $signed(vec[319 - (idx * 5) -: 5]);
-    endfunction
-
-    function automatic s5_t get_pad_s5(
-        input logic [319:0] vec, input integer row, input integer col
+    function automatic s4_t get_pad_s4(
+        input logic [255:0] vec, input integer row, input integer col
     );
         if ((row < 0) || (row >= ROW_ELEM) || (col < 0) || (col >= ROW_ELEM))
-            get_pad_s5 = 5'sd0;
+            get_pad_s4 = 4'sd0;
         else
-            get_pad_s5 = get_s5(vec, (row * ROW_ELEM) + col);
+            get_pad_s4 = get_s4(vec, (row * ROW_ELEM) + col);
     endfunction
 
-    // Returns 5-bit signed A element.
-    //   Conv:    sign-extended padded 4-bit element (a_unsigned 永遠為 0)
+    // Returns signed 4-bit A element.
+    //   Conv:    padded 4-bit element (zero-pad out of range)
     //   tap==8:  zero (bias slot — non-Conv only;此分支對 Conv 不會命中)
-    //   normal:  upstream 已套 a_unsigned，直接拿 5-bit
-    function automatic s5_t sel_a(
-        input logic [319:0] mat_A,
+    //   normal:  raw signed 4-bit；FINAL 為 signed-digit（皆 [-8,7]）
+    function automatic s4_t sel_a(
+        input logic [255:0] mat_A,
         input logic [1:0]   op_sel,
         input integer       row_idx,
         input integer       lane,
@@ -1469,13 +1526,13 @@ module Mult_5Stage_Parallel (
                 idx   = (row_idx * ROW_ELEM) + lane;
                 row   = idx / ROW_ELEM;
                 col   = idx % ROW_ELEM;
-                sel_a = get_pad_s5(mat_A, row + (tap / 3) - 1, col + (tap % 3) - 1);
+                sel_a = get_pad_s4(mat_A, row + (tap / 3) - 1, col + (tap % 3) - 1);
             end
             else if (tap == 8) begin
-                sel_a = 5'sd0;
+                sel_a = 4'sd0;
             end
             else begin
-                sel_a = get_s5(mat_A, (row_idx * ROW_ELEM) + tap);
+                sel_a = get_s4(mat_A, (row_idx * ROW_ELEM) + tap);
             end
         end
     endfunction
@@ -1500,29 +1557,29 @@ module Mult_5Stage_Parallel (
     endfunction
 
     // Stage 0: input buffer (operands + control)。Decouples upstream issue mux。
-    // Stage 1: 576 個 (s5_a, s4_b) operand pair：op-dependent sel_a/sel_b 在這級 register，
+    // Stage 1: 576 個 (s4_a, s4_b) operand pair：op-dependent sel_a/sel_b 在這級 register，
     //          下一級的 prod_next cone 就跟 op 解耦了。
-    // Stage 2: 576 partial products s5×s4 → s8 (max ±120)。
+    // Stage 2: 576 partial products s4×s4 → s8 (max +64)。
     // Stage 3: split 9-input sum 5+4 → 2 partial sums (s12)，加法樹深度切半。
     // Stage 4: 2-input add → s16 sum。
     // (從 4-stage 變 5-stage：把 op[1:0] 從 multiplier 的 input cone 移出去，clk 大幅縮短。)
     logic         in_valid_cs;
     // op 在一個 job 內為常數（exec_op 已存在 Control），不需要 input register。
     logic         b_transpose_cs;
-    logic [319:0] in_data_A_cs;
+    logic [255:0] in_data_A_cs;
     logic [255:0] in_data_B_cs;
 
     logic stage1_valid_cs;
     logic stage2_valid_cs;
     logic stage3_valid_cs;
     logic stage4_valid_cs;
-    s5_t  operand_a_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s4_t  operand_a_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s4_t  operand_b_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s8_t  prod_cs      [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s12_t partial_cs   [0:MAT_SIZE-1][0:1];
     s16_t sum_cs       [0:MAT_SIZE-1];
 
-    s5_t  operand_a_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s4_t  operand_a_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s4_t  operand_b_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s8_t  prod_next      [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s12_t partial_next   [0:MAT_SIZE-1][0:1];
@@ -1542,7 +1599,7 @@ module Mult_5Stage_Parallel (
         end
     end
 
-    // Stage 2: pure s5×s4 multiplier，input 已被 stage 1 register 隔開 op
+    // Stage 2: pure s4×s4 multiplier，input 已被 stage 1 register 隔開 op
     always_comb begin
         for (int i = 0; i < MAT_SIZE; i++) begin
             for (int t = 0; t < DOT_SIZE; t++) begin
