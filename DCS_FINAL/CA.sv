@@ -56,10 +56,6 @@ module CA #(
     logic          datapath_issue_valid;
     issue_mode_t   datapath_issue_mode;
     logic [5:0]    datapath_issue_idx;
-    logic          datapath_capture_valid;
-    logic [4:0]    datapath_capture_idx;
-    logic          datapath_qkv_ready;
-    logic          datapath_sv_ready;
     logic          datapath_result_valid;
 
     CA_Control #(
@@ -75,8 +71,6 @@ module CA #(
         .rd_ready(rd_ready), .rd_valid(rd_valid),
 
         // Receive DataPath
-        .datapath_qkv_ready     (datapath_qkv_ready),
-        .datapath_sv_ready      (datapath_sv_ready),
         .datapath_result_valid  (datapath_result_valid),
 
         // Output to DataPath
@@ -88,8 +82,6 @@ module CA #(
         .datapath_issue_valid   (datapath_issue_valid),
         .datapath_issue_mode    (datapath_issue_mode),
         .datapath_issue_idx     (datapath_issue_idx),
-        .datapath_capture_valid (datapath_capture_valid),
-        .datapath_capture_idx   (datapath_capture_idx),
 
         // Output for RAM interface
         .rd_en(rd_en), .rd_addr(rd_addr), .rd_burst(rd_burst),
@@ -105,8 +97,6 @@ module CA #(
         .issue_valid            (datapath_issue_valid),
         .issue_mode             (datapath_issue_mode),
         .issue_idx              (datapath_issue_idx),
-        .capture_valid          (datapath_capture_valid),
-        .capture_idx            (datapath_capture_idx),
         .op                     (exec_op),
         .act                    (exec_act),
         .param                  (exec_param),
@@ -115,8 +105,6 @@ module CA #(
         // Reading from RAM
         .rd_data                (rd_data),
         // Output to Control Module
-        .qkv_ready              (datapath_qkv_ready),
-        .sv_ready               (datapath_sv_ready),
         .result_valid           (datapath_result_valid),
         // Output to Top Module
         .wr_data                (wr_data),
@@ -139,8 +127,6 @@ module CA_Control #(
     input  logic [255:0]                    param,
     input  logic                            rd_ready,
     input  logic                            rd_valid,
-    input  logic                            datapath_qkv_ready,
-    input  logic                            datapath_sv_ready,
     input  logic                            datapath_result_valid,
 
     output logic [1:0]                      exec_op,
@@ -151,8 +137,6 @@ module CA_Control #(
     output logic                            datapath_issue_valid,
     output issue_mode_t                     datapath_issue_mode,
     output logic [5:0]                      datapath_issue_idx,
-    output logic                            datapath_capture_valid,
-    output logic [4:0]                      datapath_capture_idx,
 
     output logic                            rd_en,
     output logic [$clog2(RAM_DEPTH)-1:0]    rd_addr,
@@ -186,6 +170,8 @@ module CA_Control #(
     localparam logic [6:0] HA_RESTART_MHA = 7'd67;
     localparam logic [6:0] HA_WR_SHA      = 7'd11;
     localparam logic [6:0] HA_WR_MHA      = 7'd43;
+    localparam logic [5:0] HA_PF_SHA_SV_PHASE = 6'd2;
+    localparam logic [6:0] HA_PF_MHA_WR_CNT   = 7'd17; // HA_RESTART_MHA - 50
 
     typedef enum logic [2:0] {
         S_IDLE,
@@ -223,8 +209,6 @@ module CA_Control #(
     logic [6:0]  ha_wr_cnt_cs;
     logic        ha_wr_run_cs;
     logic        ha_prefetch_pending_cs;
-    logic [4:0]  ha_pf_word_cs;
-    logic        ha_pf_done_cs;
 
     logic        job_start;
     logic        ha_start;
@@ -235,7 +219,8 @@ module CA_Control #(
     logic        ha_read_fire;
     logic        ha_first_read_fire;
     logic        ha_prefetch_fire;
-    logic        ha_pf_capture;
+    logic        ha_qkv_stream_fire;
+    logic        ha_wait_stream_start;
     logic        ha_has_next_group;
     logic        ha_next_group_fire;
     logic        result_last;
@@ -253,28 +238,24 @@ module CA_Control #(
     assign fast_first_rd_fire     = job_start && !ha_start && rd_ready;
     assign ha_read_fire          = (state_cs == S_HA_READ) &&
                                     !ha_prefetch_pending_cs &&
-                                    !ha_pf_done_cs &&
-                                    (rd_req_cnt_cs == 2'd0) &&
                                     rd_ready;
     assign ha_first_read_fire     = (state_cs == S_HA_PARAM) && in_valid &&
                                     ha_param_phase_cs && rd_ready;
     assign ha_has_next_group      = (ha_group_base_cs != LAST_BASE);
-    // x_mem is released once QKV has issued, so the one-group-ahead prefetch can
-    // fire as early as the QKV issue (rd_ready permitting); the 50-cycle data
-    // return still lands well after QKV has finished reading x_mem.
-    assign ha_prefetch_fire      = ((state_cs == S_HA_ISSUE) ||
-                                     (state_cs == S_HA_WAIT)) &&
-                                    (ha_stage_cs == ST_QKV) &&
+    // With x_mem removed, read data must return exactly when the next QKV stream
+    // can consume it. SHA needs the command during SV; MHA needs it during FINAL.
+    assign ha_prefetch_fire      = ha_has_next_group &&
                                     !ha_prefetch_pending_cs &&
-                                    !ha_pf_done_cs &&
-                                    ha_has_next_group &&
-                                    rd_ready;
-    // Prefetched words land in x_mem as soon as they arrive: x_mem is free once
-    // the QKV issue is done (only QKV reads it), so capture is decoupled from the
-    // FSM state and the fixed 50-cycle read latency hides behind the current group.
-    assign ha_pf_capture         = ha_prefetch_pending_cs && !ha_pf_done_cs && rd_valid;
+                                    rd_ready &&
+                                    (((exec_op != 2'b11) &&
+                                      (state_cs == S_HA_ISSUE) &&
+                                      (ha_stage_cs == ST_SV) &&
+                                      (ha_phase_cnt_cs == HA_PF_SHA_SV_PHASE)) ||
+                                     ((exec_op == 2'b11) &&
+                                      ha_wr_run_cs &&
+                                      (ha_wr_cnt_cs == HA_PF_MHA_WR_CNT)));
     // Barrier 放寬後 SV→FINAL 在 S_HA_ISSUE 內直接接，FINAL phase 0 在 ISSUE 發，
-    // 計時器即於該拍啟動（不再經 S_HA_WAIT）。qkv_ready/sv_ready 已不參與轉態。
+    // 計時器即於該拍啟動（固定排程，不等待 DataPath ready bitmap）。
     assign ha_final_start        = (state_cs == S_HA_ISSUE) &&
                                     (ha_stage_cs == ST_FINAL) &&
                                     (ha_phase_cnt_cs == 6'd0);
@@ -290,6 +271,12 @@ module CA_Control #(
                                     (ha_wr_cnt_cs == ((exec_op == 2'b11) ?
                                                      HA_WR_MHA : HA_WR_SHA));
     assign ha_next_group_base    = ha_group_base_cs + GROUP_STEP;
+    assign ha_wait_stream_start  = (state_cs == S_HA_WAIT) &&
+                                    ha_has_next_group &&
+                                    ha_next_group_fire;
+    assign ha_qkv_stream_fire    = rd_valid &&
+                                    ((state_cs == S_HA_READ) ||
+                                     ha_wait_stream_start);
     // Issue-phase upper bound (Burst-32, group-of-32)：
     //   QKV: 32 phases (32 matrix；Q/K/V 由 3 路引擎並行)
     //   SV:  2-way（engine0/engine1 並行）→ SHA=16, MHA=32（原 32/64 砍半）
@@ -302,8 +289,6 @@ module CA_Control #(
         datapath_issue_valid   = 1'b0;
         datapath_issue_mode    = IM_NONE;
         datapath_issue_idx     = 6'd0;
-        datapath_capture_valid = 1'b0;
-        datapath_capture_idx   = ha_rd_word_cnt_cs;
 
         case (state_cs)
             S_FAST_RUN: begin
@@ -314,9 +299,10 @@ module CA_Control #(
             end
 
             S_HA_READ: begin
-                if (!ha_prefetch_pending_cs && !ha_pf_done_cs && rd_valid) begin
-                    datapath_capture_valid = 1'b1;
-                    datapath_capture_idx   = ha_rd_word_cnt_cs;
+                if (rd_valid) begin
+                    datapath_issue_valid = 1'b1;
+                    datapath_issue_mode  = IM_QKV;
+                    datapath_issue_idx   = {1'b0, ha_rd_word_cnt_cs};
                 end
             end
 
@@ -331,6 +317,11 @@ module CA_Control #(
             end
 
             S_HA_WAIT: begin
+                if (ha_wait_stream_start && rd_valid) begin
+                    datapath_issue_valid = 1'b1;
+                    datapath_issue_mode  = IM_QKV;
+                    datapath_issue_idx   = 6'd0;
+                end
                 // FINAL drain：不發 issue（QKV/SV/FINAL phase 0 皆在 S_HA_ISSUE 內發）。
             end
 
@@ -338,12 +329,6 @@ module CA_Control #(
             end
         endcase
 
-        // Prefetched words are captured wherever they arrive (x_mem is already
-        // free), independent of FSM state. Takes priority over the in-state read.
-        if (ha_pf_capture) begin
-            datapath_capture_valid = 1'b1;
-            datapath_capture_idx   = ha_pf_word_cs;
-        end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -362,8 +347,6 @@ module CA_Control #(
             ha_wr_cnt_cs           <= 7'd0;
             ha_wr_run_cs           <= 1'b0;
             ha_prefetch_pending_cs <= 1'b0;
-            ha_pf_word_cs          <= 5'd0;
-            ha_pf_done_cs          <= 1'b0;
         end
         else begin
             // Timer update for next-group and write taps. State-specific resets
@@ -383,23 +366,12 @@ module CA_Control #(
                 ha_wr_cnt_cs <= ha_wr_cnt_cs + 1'b1;
             end
 
-            // Prefetched burst lands while the current group is still computing;
-            // collect the 8 words then flag the next group's x_mem ready.
-            if (ha_pf_capture) begin
-                if (ha_pf_word_cs == 5'd31) begin
-                    ha_pf_done_cs          <= 1'b1;
-                    ha_prefetch_pending_cs <= 1'b0;
-                end
-                else begin
-                    ha_pf_word_cs <= ha_pf_word_cs + 1'b1;
-                end
+            if (ha_first_read_fire || ha_read_fire || ha_prefetch_fire) begin
+                ha_prefetch_pending_cs <= 1'b1;
             end
 
-            // One-group-ahead prefetch (fires while ha_stage_cs == ST_QKV, see wire).
-            // rd_addr/rd_en/rd_burst for this read are driven in the RAM-read block.
-            if (ha_prefetch_fire) begin
-                ha_prefetch_pending_cs <= 1'b1;
-                ha_pf_word_cs          <= 3'd0;
+            if (ha_qkv_stream_fire && (ha_rd_word_cnt_cs == 5'd31)) begin
+                ha_prefetch_pending_cs <= 1'b0;
             end
 
             case (state_cs)
@@ -464,9 +436,7 @@ module CA_Control #(
                             out_cnt_cs              <= 8'd0;
                             ha_wr_cnt_cs           <= 7'd0;
                             ha_wr_run_cs           <= 1'b0;
-                            ha_prefetch_pending_cs <= 1'b0;
-                            ha_pf_word_cs          <= 5'd0;
-                            ha_pf_done_cs          <= 1'b0;
+                            ha_prefetch_pending_cs <= ha_first_read_fire;
                             state_cs                <= S_HA_READ;
                         end
                     end
@@ -477,19 +447,11 @@ module CA_Control #(
                         rd_req_cnt_cs <= 2'd1;
                     end
 
-                    if (ha_pf_done_cs) begin
-                        // Next group's input was already prefetched into x_mem.
-                        ha_pf_done_cs   <= 1'b0;
-                        ha_phase_cnt_cs <= 6'd0;
-                        ha_stage_cs     <= ST_QKV;
-                        state_cs        <= S_HA_ISSUE;
-                    end
-                    else if (!ha_prefetch_pending_cs && rd_valid) begin
-                        // First group (no prefetch yet): capture the burst here.
+                    if (ha_qkv_stream_fire) begin
                         if (ha_rd_word_cnt_cs == 5'd31) begin
                             ha_rd_word_cnt_cs <= 5'd0;
                             ha_phase_cnt_cs   <= 6'd0;
-                            ha_stage_cs       <= ST_QKV;
+                            ha_stage_cs       <= ST_SV;
                             state_cs           <= S_HA_ISSUE;
                         end
                         else begin
@@ -501,7 +463,7 @@ module CA_Control #(
                 S_HA_ISSUE: begin
                     if (ha_phase_cnt_cs == ha_phase_last) begin
                         // Barrier 放寬：QKV/SV 的 issue 一發完就直接接下一 stage，
-                        //   不再進 S_HA_WAIT 等 qkv_ready/sv_ready。SV/FINAL 照 issue
+                        //   不再進 S_HA_WAIT 等 ready bitmap。SV/FINAL 照 issue
                         //   順序消費 q/k/v_mem、score_mem，而 PoT/score 照順序生產且
                         //   領先 ≥5(SHA SV)/≥21(MHA SV) cycle，operand 必已就緒。
                         //   只有 FINAL 仍進 WAIT 做 drain + 切下一組。
@@ -531,16 +493,10 @@ module CA_Control #(
                     if (ha_has_next_group && ha_next_group_fire) begin
                         ha_group_base_cs  <= ha_next_group_base;
                         rd_req_cnt_cs      <= ha_prefetch_pending_cs ? 2'd1 : 2'd0;
-                        ha_rd_word_cnt_cs <= 5'd0;
+                        ha_rd_word_cnt_cs <= rd_valid ? 5'd1 : 5'd0;
                         ha_phase_cnt_cs   <= 6'd0;
                         ha_stage_cs       <= ST_QKV;
-                        if (ha_pf_done_cs) begin
-                            ha_pf_done_cs    <= 1'b0;
-                            state_cs        <= S_HA_ISSUE;
-                        end
-                        else begin
-                            state_cs <= S_HA_READ;
-                        end
+                        state_cs          <= S_HA_READ;
                     end
                     else if (!ha_has_next_group && result_last) begin
                         state_cs <= S_IDLE;
@@ -649,8 +605,6 @@ module CA_DataPath #(
     input  logic                 issue_valid,
     input  issue_mode_t          issue_mode,
     input  logic [5:0]           issue_idx,
-    input  logic                 capture_valid,
-    input  logic [4:0]           capture_idx,
     input  logic [1:0]           op,
     input  logic [1:0]           act,
     input  logic [255:0]         param,
@@ -658,8 +612,6 @@ module CA_DataPath #(
     input  logic [255:0]         weight_v,
     input  logic [RAM_WIDTH-1:0] rd_data,
 
-    output logic                 qkv_ready,
-    output logic                 sv_ready,
     output logic                 result_valid,
     output logic [RAM_WIDTH-1:0] wr_data,
     output logic                 out_valid,
@@ -692,20 +644,10 @@ module CA_DataPath #(
     //   slot（MHA 2 head × 32 matrix）。mult_idx = {head, matrix[4:0]} = 6-bit。
     // MHA head0 FINAL 部份積借用 q_mem/k_mem（SV 完 Q/K 已死），480-bit packed
     // 拆成 q_mem(256) + k_mem[255:32](224)，省 flops。
-    logic [255:0]              x_mem        [0:31];
     logic [255:0]              q_mem        [0:31];
     logic [255:0]              k_mem        [0:31];
     logic [255:0]              v_mem        [0:31];
     logic [SCORE_PACK_W-1:0]   score_mem    [0:63];
-
-    logic [31:0]               q_ready_cs;
-    logic [31:0]               k_ready_cs;
-    logic [31:0]               v_ready_cs;
-    logic [63:0]               score_ready_cs;
-    logic [31:0]               q_ready_ns;
-    logic [31:0]               k_ready_ns;
-    logic [31:0]               v_ready_ns;
-    logic [63:0]               score_ready_ns;
 
     // ------------------------------------------------------------------------
     // 區塊 3：Submodule output 線（comb，從各 submodule 出來的訊號）
@@ -744,8 +686,6 @@ module CA_DataPath #(
     logic                 issue_valid_cs;
     issue_mode_t          issue_mode_cs;
     logic [5:0]           issue_idx_cs;
-    logic                 capture_valid_cs;
-    logic [4:0]           capture_idx_cs;
     logic [RAM_WIDTH-1:0] rd_data_cs;
 
     // ------------------------------------------------------------------------
@@ -863,36 +803,10 @@ module CA_DataPath #(
     endfunction
 
     // ========================================================================
-    // 區塊 7：Ready / result_valid 給 Control 看的回報訊號
+    // 區塊 7：result_valid 給 Control 看的回報訊號
     // ========================================================================
-    always_comb begin
-        q_ready_ns     = q_ready_cs;
-        k_ready_ns     = k_ready_cs;
-        v_ready_ns     = v_ready_cs;
-        score_ready_ns = score_ready_cs;
-
-        // lane0：只剩 Q（NORM/FINAL 不寫 q/k/v ready）。K/V 改由 lane1/2 set。
-        if (pot_valid && (pot_tag_cs[4] == MT_Q)) begin
-            q_ready_ns[pot_idx_cs[4][4:0]] = 1'b1;
-        end
-        if (pot_k_valid) begin
-            k_ready_ns[pot_k_idx_cs[4][4:0]] = 1'b1;
-        end
-        if (pot_v_valid) begin
-            v_ready_ns[pot_v_idx_cs[4][4:0]] = 1'b1;
-        end
-
-        if (mult_valid && (mult_tag_out == MT_SCORE)) begin
-            score_ready_ns[mult_idx_out] = 1'b1;
-        end
-        // engine1 平行 score（SV head1/奇數 matrix）
-        if (mult_k_score_valid) begin
-            score_ready_ns[mult_k_idx] = 1'b1;
-        end
-    end
-
-    assign qkv_ready    = (&q_ready_ns) && (&k_ready_ns) && (&v_ready_ns);
-    assign sv_ready     = (op == 2'b11) ? (&score_ready_ns) : (&score_ready_ns[31:0]);
+    // Fixed attention scheduling guarantees QKV/SV availability; no ready
+    // bitmap feedback is needed after the stream-in rewrite.
     assign result_valid = pot_valid &&
                           ((pot_tag_cs[4] == MT_NORM) ||
                            (pot_tag_cs[4] == MT_FINAL));
@@ -972,7 +886,6 @@ module CA_DataPath #(
         .weight_k     (weight_k),
         .weight_v     (weight_v),
         .rd_data      (rd_data_cs),
-        .x_mem        (x_mem),
         .q_mem        (q_mem),
         .k_mem        (k_mem),
         .v_mem        (v_mem),
@@ -1031,19 +944,17 @@ module CA_DataPath #(
 
     // ========================================================================
     // 區塊 11：所有狀態更新 (always_ff)
-    //   1. Issue / capture 入口 buffer
+    //   1. Issue 入口 buffer
     //   2. Sideband pipeline (act_*_cs / pot_*_cs)
-    //   3. Memory writes (x/q/k/v/score + ready flags；MHA head0 借 q/k_mem)
+    //   3. Memory writes (q/k/v/score；MHA head0 借 q/k_mem)
     //   4. Output buffer (wr_data / out_valid / out_data)
     // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            // (1) issue / capture buffer
+            // (1) issue buffer
             issue_valid_cs   <= 1'b0;
             issue_mode_cs    <= IM_NONE;
             issue_idx_cs     <= 6'd0;
-            capture_valid_cs <= 1'b0;
-            capture_idx_cs   <= 3'd0;
             rd_data_cs       <= '0;
 
             // (2) sideband
@@ -1060,23 +971,15 @@ module CA_DataPath #(
                 pot_v_idx_cs[i] <= 6'd0;
             end
 
-            // (3) ready flags
-            q_ready_cs     <= 32'd0;
-            k_ready_cs     <= 32'd0;
-            v_ready_cs     <= 32'd0;
-            score_ready_cs <= 64'd0;
-
             // (4) output buffer
             out_valid <= 1'b0;
             out_data  <= 32'd0;
         end
         else begin
-            // ---------------- (1) Issue / capture buffer --------------------
+            // ---------------- (1) Issue buffer ------------------------------
             issue_valid_cs   <= issue_valid;
             issue_mode_cs    <= issue_valid ? issue_mode : IM_NONE;
             issue_idx_cs     <= issue_valid ? issue_idx  : 6'd0;
-            capture_valid_cs <= capture_valid;
-            capture_idx_cs   <= capture_idx;
             rd_data_cs       <= rd_data;
 
             // ---------------- (2) Sideband pipeline -------------------------
@@ -1105,29 +1008,14 @@ module CA_DataPath #(
             end
 
             // ---------------- (3) Memory writes -----------------------------
-            // x_mem capture (from RAM)
-            if (capture_valid_cs) begin
-                x_mem[capture_idx_cs] <= rd_data_cs[255:0];
-            end
-
-            // 新 QKV 組開始：清掉前一組的 ready flags
-            if (issue_valid_cs && (issue_mode_cs == IM_QKV) && (issue_idx_cs == 6'd0)) begin
-                q_ready_cs     <= 32'd0;
-                k_ready_cs     <= 32'd0;
-                v_ready_cs     <= 32'd0;
-                score_ready_cs <= 64'd0;
-            end
-
             // score_mem ← Mult (MT_SCORE) — attention activation 內嵌於 pack_attention_score
             // 省掉 ACT pipeline 4 cycles（SCORE 是 SV→FINAL 的 critical path）。
             if (mult_valid && (mult_tag_out == MT_SCORE)) begin
                 score_mem[mult_idx_out]      <= pack_attention_score(mult_data);
-                score_ready_cs[mult_idx_out] <= 1'b1;
             end
             // engine1 平行 score（SV head1/奇數 matrix）→ 與 engine0 同拍寫不同 slot
             if (mult_k_score_valid) begin
                 score_mem[mult_k_idx]      <= pack_attention_score(mult_k_data);
-                score_ready_cs[mult_k_idx] <= 1'b1;
             end
 
             // MHA head0 partial → 借用 q_mem/k_mem（這時 Q/K 已死，下一組 QKV
@@ -1141,16 +1029,13 @@ module CA_DataPath #(
             // q_mem ← lane0 PoT（只剩 MT_Q；NORM/FINAL 走 output buffer）
             if (pot_valid && (pot_tag_cs[4] == MT_Q)) begin
                 q_mem[pot_idx_cs[4][4:0]]      <= pot_data;
-                q_ready_cs[pot_idx_cs[4][4:0]] <= 1'b1;
             end
             // k_mem ← lane1 PoT、v_mem ← lane2 PoT（QKV 三路並行）
             if (pot_k_valid) begin
                 k_mem[pot_k_idx_cs[4][4:0]]      <= pot_k_data;
-                k_ready_cs[pot_k_idx_cs[4][4:0]] <= 1'b1;
             end
             if (pot_v_valid) begin
                 v_mem[pot_v_idx_cs[4][4:0]]      <= pot_v_data;
-                v_ready_cs[pot_v_idx_cs[4][4:0]] <= 1'b1;
             end
 
             // ---------------- (4) Output buffer -----------------------------
@@ -1178,7 +1063,6 @@ module Multiple_Processor (
     input  logic [255:0]   weight_v,
     input  logic [255:0]   rd_data,
 
-    input  logic [255:0]   x_mem       [0:31],
     input  logic [255:0]   q_mem       [0:31],
     input  logic [255:0]   k_mem       [0:31],
     input  logic [255:0]   v_mem       [0:31],
@@ -1293,7 +1177,7 @@ module Multiple_Processor (
                     // 3 路並行：32 phase = 32 matrix。engine0 算 Q，engine1/2 算 K/V
                     // （見下方 mult_kv_issue_*）。同 x、3 個權重 → Q/K/V 同拍出。
                     mult_issue_idx = {1'b0, issue_idx[4:0]};
-                    mult_issue_A   = x_mem[issue_idx[4:0]];
+                    mult_issue_A   = rd_data;
                     mult_issue_B   = param;       // W_Q
                     mult_issue_tag = MT_Q;
                 end
@@ -1364,9 +1248,9 @@ module Multiple_Processor (
                 IM_QKV: begin
                     mult_k_issue_valid = 1'b1;
                     mult_v_issue_valid = 1'b1;
-                    mult_k_issue_A     = x_mem[issue_idx[4:0]];
+                    mult_k_issue_A     = rd_data;
                     mult_k_issue_B     = weight_k;
-                    mult_v_issue_A     = x_mem[issue_idx[4:0]];
+                    mult_v_issue_A     = rd_data;
                     mult_v_issue_B     = weight_v;
                     mult_kv_issue_idx  = {1'b0, issue_idx[4:0]};
                     mult_kv_is_qkv     = 1'b1;
