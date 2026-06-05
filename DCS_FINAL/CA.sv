@@ -166,23 +166,16 @@ module CA_Control #(
     localparam logic [BURST_BIT-1:0] BURST_8   = 3'd3;
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
-    // Burst-8（group-of-8）：FINAL first-final phase SHA=16/MHA=40。
-    //   HA_RESTART = first-final + group_size + 3 = first-final + 11 → SHA 27 / MHA 51
-    //   HA_WR      = first-final + 11 → SHA 27 / MHA 51（需 6-bit counter）
-    // 為何 HA_RESTART = first-final + group_size + 3：避免上一組 FINAL ACT output
-    // (group_size 個連續 cycle) 與下一組 QKV mult 競爭 pot_in_valid。下一組第一個 Q
-    // mult 在 ha_next_group_fire 後 +8 cycle 出現，必須晚於上一組最後一個 ACT
-    // (= first-final + group_size - 1 + 12)。推導：
-    //   first-final + (group_size-1) + 12 < (HA_RESTART+1) + 8
-    //   → HA_RESTART > first-final + group_size + 2
-    //   → HA_RESTART = first-final + group_size + 3
-    // burst-4 baseline 用 +7（= 4 + 3），burst-8 必須 +11（= 8 + 3）。
-    // 注意：HA_RESTART == HA_WR 同 cycle fire 沒問題（ha_wr_fire 只清 ha_wr_run_cs，
-    // ha_next_group_fire 在 S_HA_WAIT ST_FINAL 同 cycle 仍會觸發 transition）。
-    localparam logic [5:0] HA_RESTART_SHA = 6'd27;
-    localparam logic [5:0] HA_RESTART_MHA = 6'd51;
-    localparam logic [5:0] HA_WR_SHA      = 6'd27;
-    localparam logic [5:0] HA_WR_MHA      = 6'd51;
+    // Burst-8 + 3 路 nibble FINAL：FINAL 只剩 16(MHA)/8(SHA) phase。
+    //   first useful-output issue phase：MHA=8（head0 phases 0-7 borrow，head1 8-15
+    //   才輸出）、SHA=0（無 head split，phase 0 即輸出）。
+    //   HA_RESTART = HA_WR = first-final + group_size + 3 = first-final + 11
+    //     → MHA 8+11=19、SHA 0+11=11
+    // 規則同前（避免下一組 QKV-Q mult 與上一組 FINAL ACT output 在 lane0 pot_in 撞）。
+    localparam logic [5:0] HA_RESTART_SHA = 6'd11;
+    localparam logic [5:0] HA_RESTART_MHA = 6'd19;
+    localparam logic [5:0] HA_WR_SHA      = 6'd11;
+    localparam logic [5:0] HA_WR_MHA      = 6'd19;
 
     typedef enum logic [2:0] {
         S_IDLE,
@@ -294,12 +287,12 @@ module CA_Control #(
                                                      HA_WR_MHA : HA_WR_SHA));
     assign ha_next_group_base    = ha_group_base_cs + 8'd8;
     // Issue-phase upper bound (Burst-8, group-of-8)：
-    //   QKV: 8 phases (8 matrix；Q/K/V 由 3 路引擎並行，每 phase 一個 matrix)
+    //   QKV: 8 phases (8 matrix；Q/K/V 由 3 路引擎並行)
     //   SV:  SHA=8, MHA=16  (rows × heads)
-    //   FINAL: SHA=24, MHA=48 (× 3 nibble phases per row) ← Stage B 再降
+    //   FINAL: SHA=8, MHA=16 (d0/d1/d2 由 3 路引擎同 phase 並行，無 nibble 維度)
     assign ha_phase_last         = (ha_stage_cs == ST_QKV)  ? 6'd7 :
                                     (ha_stage_cs == ST_SV)   ? ((exec_op == 2'b11) ? 6'd15 : 6'd7) :
-                                    /* ST_FINAL */              ((exec_op == 2'b11) ? 6'd47 : 6'd23);
+                                    /* ST_FINAL */              ((exec_op == 2'b11) ? 6'd15 : 6'd7);
 
     always_comb begin
         datapath_issue_valid   = 1'b0;
@@ -1211,33 +1204,28 @@ module Multiple_Processor (
     logic [255:0]  mult_issue_B;
     mult_tag_t     mult_issue_tag;
     logic [3:0]    mult_issue_idx;
-    logic [1:0]    mult_issue_nibble;      // FINAL nibble phase 0/1/2
 
-    // engine1 / engine2 issue operands（只在 IM_QKV 有效）。
-    logic          mult_kv_issue_valid;
+    // engine1 / engine2 issue operands（QKV 的 K/V，或 FINAL 的 d1/d2）。
+    logic          mult_k_issue_valid;
     logic [255:0]  mult_k_issue_A;
+    logic [255:0]  mult_k_issue_B;
+    logic          mult_v_issue_valid;
     logic [255:0]  mult_v_issue_A;
+    logic [255:0]  mult_v_issue_B;
     logic [3:0]    mult_kv_issue_idx;
+    logic          mult_kv_is_qkv;   // 1 = QKV(K/V→PoT), 0 = FINAL(d1/d2→combine)
 
     mult_tag_t  mult_tag_cs    [0:MULT_STAGES-1];
     logic [3:0] mult_idx_cs    [0:MULT_STAGES-1];
-    logic [1:0] mult_nibble_cs [0:MULT_STAGES-1]; // nibble phase through pipeline
 
-    // 8-bit one-hot write enables for nibb_acc（group-of-8 → 8 banks），跟 idx
-    // pipeline 一起傳。把 stage 4 對 mult_idx_cs[4][2:0] 的 8-to-1 decode +
-    // (valid & tag==FINAL & nibble phase) 的 AND chain 推到 issue 端先 register。
-    logic [7:0] nibb_we_p0_cs [0:MULT_STAGES-1]; // nibble 0 → 載入 mult_raw_data
-    logic [7:0] nibb_we_p1_cs [0:MULT_STAGES-1]; // nibble 1 → acc + (prod << 4)
+    // engine1/2 用途 pipeline：1 = QKV(K/V→PoT)，0 = FINAL(d1/d2 internal)。
+    // 跟 idx 一起傳，stage4 用來 gate 下游 mult_k_valid/mult_v_valid。
+    logic       mult_kv_role_cs [0:MULT_STAGES-1];
 
-    // FINAL counters (registered, valid for the current issue cycle). Issue order
-    // is INTERLEAVED so the 4 matrices' final results emerge on consecutive cycles
-    // (needed for the burst-4 write to stream wr_data correctly):
-    //   loop nesting = head (outer) > nibble (mid) > matrix (inner)
-    //   SHA: 8 mat × 3 nibble          = 24 issues
-    //   MHA: 2 head × 3 nibble × 8 mat = 48 issues
-    logic [2:0] fin_mat_cs;    // matrix within group 0..7 (innermost)
-    logic [1:0] fin_nibble_cs; // 0=lo, 1=mid, 2=hi (middle)
-    logic       fin_head_cs;   // MHA head 0/1 (outermost; SHA stays 0)
+    // FINAL counters：head(outer) > mat(inner)。3 路並行做 d0/d1/d2，無 nibble 維度。
+    //   SHA: 8 mat = 8 phase；MHA: 2 head × 8 mat = 16 phase。
+    logic [2:0] fin_mat_cs;    // matrix within group 0..7 (inner)
+    logic       fin_head_cs;   // MHA head 0/1 (outer; SHA stays 0)
 
     // Extract one phase's signed-digit vector as 4-bit packed A.
     //
@@ -1263,6 +1251,11 @@ module Multiple_Processor (
         end
     endfunction
 
+    // FINAL 的 score_mem 索引（engine0 d0 與 engine1/2 d1/d2 共用）。
+    logic [3:0] fin_score_idx;
+    assign fin_score_idx = (op == 2'b11) ? {fin_head_cs, fin_mat_cs}
+                                         : {1'b0, fin_mat_cs};
+
     always_comb begin
         mult_issue_valid       = 1'b0;
         mult_issue_b_transpose = 1'b0;
@@ -1270,7 +1263,6 @@ module Multiple_Processor (
         mult_issue_B           = 256'd0;
         mult_issue_tag         = MT_NONE;
         mult_issue_idx         = 4'd0;
-        mult_issue_nibble      = 2'd0;
 
         if (issue_valid) begin
             mult_issue_valid = 1'b1;
@@ -1320,14 +1312,13 @@ module Multiple_Processor (
                 end
 
                 IM_FINAL: begin
-                    // head/nibble/matrix from registered counters (interleaved order).
-                    mult_issue_idx        = (op == 2'b11) ?
-                                            {fin_head_cs, fin_mat_cs} :
-                                            {1'b0, fin_mat_cs};
-                    mult_issue_nibble     = fin_nibble_cs;
-                    mult_issue_A          = extract_score_nibble_s4(
-                                               score_mem[mult_issue_idx], fin_nibble_cs);
-                    mult_issue_B          = v_mem[fin_mat_cs];
+                    // engine0 = nibble d0；engine1/2 = d1/d2（見下方 mult_kv issue）。
+                    // 3 路同 phase 算 score×V 的三個 base-16 digit，輸出端一拍重組
+                    //   result = P0 + (P1<<4) + (P2<<8)（= 原 3-pass nibble 累加）。
+                    mult_issue_idx = fin_score_idx;
+                    mult_issue_A   = extract_score_nibble_s4(
+                                         score_mem[fin_score_idx], 2'd0);  // d0
+                    mult_issue_B   = v_mem[fin_mat_cs];
                     // No head_mask in FINAL: MHA does a full 8-tap score×V dot;
                     // the per-head column split happens later in combine_mha_heads.
                     mult_issue_tag = MT_FINAL;
@@ -1340,61 +1331,66 @@ module Multiple_Processor (
         end
     end
 
-    // engine1 (K) / engine2 (V) operand：只在 IM_QKV 餵料，其餘 stage idle。
-    //   同 A = x_mem[matrix]，B = weight_k / weight_v。idx = matrix。
+    // engine1 / engine2 operand：QKV 算 K/V（downstream→PoT）；FINAL 算 d1/d2
+    //   （internal→engine0 輸出端重組，不下游）。mult_kv_is_qkv 標記用途。
     always_comb begin
-        mult_kv_issue_valid = issue_valid && (issue_mode == IM_QKV);
-        mult_kv_issue_idx   = {1'b0, issue_idx[2:0]};
-        mult_k_issue_A      = x_mem[issue_idx[2:0]];
-        mult_v_issue_A      = x_mem[issue_idx[2:0]];
-    end
+        mult_k_issue_valid = 1'b0;
+        mult_v_issue_valid = 1'b0;
+        mult_k_issue_A     = 256'd0;
+        mult_k_issue_B     = 256'd0;
+        mult_v_issue_A     = 256'd0;
+        mult_v_issue_B     = 256'd0;
+        mult_kv_issue_idx  = {1'b0, issue_idx[2:0]};
+        mult_kv_is_qkv     = 1'b0;
 
-    // Pre-decode 一次 nibb_acc 的 one-hot 寫致能（stage 0 的輸入）。
-    // 這裡做的事跟原本 stage 4 nibb_acc_cs always_ff 裡那組 valid & tag &
-    // case(nibble) 完全一樣，只是搬到 issue 端，往後 5 級 register 同步傳遞，
-    // critical path 起點不再是 mult_idx_cs[4][0]。
-    logic [7:0] nibb_we_p0_in;
-    logic [7:0] nibb_we_p1_in;
-    always_comb begin
-        nibb_we_p0_in = 8'd0;
-        nibb_we_p1_in = 8'd0;
-        if (mult_issue_valid && (mult_issue_tag == MT_FINAL)) begin
-            case (mult_issue_nibble)
-                2'd0:    nibb_we_p0_in[mult_issue_idx[2:0]] = 1'b1;
-                2'd1:    nibb_we_p1_in[mult_issue_idx[2:0]] = 1'b1;
-                default: ; // phase 2 走 combinational nibb_final_data，不寫 acc
+        if (issue_valid) begin
+            case (issue_mode)
+                IM_QKV: begin
+                    mult_k_issue_valid = 1'b1;
+                    mult_v_issue_valid = 1'b1;
+                    mult_k_issue_A     = x_mem[issue_idx[2:0]];
+                    mult_k_issue_B     = weight_k;
+                    mult_v_issue_A     = x_mem[issue_idx[2:0]];
+                    mult_v_issue_B     = weight_v;
+                    mult_kv_issue_idx  = {1'b0, issue_idx[2:0]};
+                    mult_kv_is_qkv     = 1'b1;
+                end
+                IM_FINAL: begin
+                    mult_k_issue_valid = 1'b1;
+                    mult_v_issue_valid = 1'b1;
+                    mult_k_issue_A     = extract_score_nibble_s4(
+                                             score_mem[fin_score_idx], 2'd1);  // d1
+                    mult_k_issue_B     = v_mem[fin_mat_cs];
+                    mult_v_issue_A     = extract_score_nibble_s4(
+                                             score_mem[fin_score_idx], 2'd2);  // d2
+                    mult_v_issue_B     = v_mem[fin_mat_cs];
+                    mult_kv_is_qkv     = 1'b0;  // internal partial, gated off downstream
+                end
+                default: begin end
             endcase
         end
     end
 
-    // ---- FINAL interleaved counters ----------------------------------------
-    // Nesting: matrix (inner) wraps into nibble (mid) wraps into head (outer).
-    // This emits matrix 0..3 back-to-back within each nibble round, so the
-    // nibble-2 round yields 4 consecutive final results.
+    // ---- FINAL counters：去掉 nibble 維度（3 路並行）。head(outer) > mat(inner) ----
+    //   MHA: 2 head × 8 mat = 16 phase；SHA: 8 mat = 8 phase。
+    //   head0 先算（partial 借 q/k_mem），head1 再 combine→ACT→output。
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            fin_mat_cs    <= 3'd0;
-            fin_nibble_cs <= 2'd0;
-            fin_head_cs   <= 1'b0;
+            fin_mat_cs  <= 3'd0;
+            fin_head_cs <= 1'b0;
         end
         else if (issue_valid) begin
             if (issue_mode == IM_FINAL) begin
                 if (fin_mat_cs == 3'd7) begin
-                    fin_mat_cs <= 3'd0;
-                    if (fin_nibble_cs == 2'd2) begin
-                        fin_nibble_cs <= 2'd0;
-                        fin_head_cs   <= fin_head_cs + 1'b1; // MHA: head0→head1
-                    end else begin
-                        fin_nibble_cs <= fin_nibble_cs + 1'b1;
-                    end
+                    fin_mat_cs  <= 3'd0;
+                    fin_head_cs <= fin_head_cs + 1'b1; // MHA: head0→head1
                 end else begin
                     fin_mat_cs <= fin_mat_cs + 1'b1;
                 end
             end else begin
                 // Reset at start of any non-FINAL issue (QKV / SV)
-                fin_mat_cs    <= 3'd0;
-                fin_nibble_cs <= 2'd0;
-                fin_head_cs   <= 1'b0;
+                fin_mat_cs  <= 3'd0;
+                fin_head_cs <= 1'b0;
             end
         end
     end
@@ -1415,7 +1411,7 @@ module Multiple_Processor (
         .out_data    (mult_raw_data)
     );
 
-    // engine1 (K) / engine2 (V)：純 matmul，無 transpose、無 nibble。只在 QKV 餵料。
+    // engine1 / engine2：QKV 算 K/V，FINAL 算 d1/d2。無 transpose。
     logic          mult_k_raw_valid;
     logic [1023:0] mult_k_raw_data;
     logic          mult_v_raw_valid;
@@ -1428,9 +1424,9 @@ module Multiple_Processor (
         .rst_n       (rst_n),
         .op          (op),
         .b_transpose (1'b0),
-        .in_valid    (mult_kv_issue_valid),
+        .in_valid    (mult_k_issue_valid),
         .in_data_A   (mult_k_issue_A),
-        .in_data_B   (weight_k),
+        .in_data_B   (mult_k_issue_B),
         .out_valid   (mult_k_raw_valid),
         .out_data    (mult_k_raw_data)
     );
@@ -1440,143 +1436,81 @@ module Multiple_Processor (
         .rst_n       (rst_n),
         .op          (op),
         .b_transpose (1'b0),
-        .in_valid    (mult_kv_issue_valid),
+        .in_valid    (mult_v_issue_valid),
         .in_data_A   (mult_v_issue_A),
-        .in_data_B   (weight_v),
+        .in_data_B   (mult_v_issue_B),
         .out_valid   (mult_v_raw_valid),
         .out_data    (mult_v_raw_data)
     );
 
-    // K/V idx pipeline（對齊 mult 5-stage）。tag 恆為 K/V，下游硬接。
+    // K/V idx + role pipeline（對齊 mult 5-stage）。
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < MULT_STAGES; i++) begin
-                mult_k_idx_cs[i] <= 4'd0;
-                mult_v_idx_cs[i] <= 4'd0;
+                mult_k_idx_cs[i]   <= 4'd0;
+                mult_v_idx_cs[i]   <= 4'd0;
+                mult_kv_role_cs[i] <= 1'b0;
             end
         end
         else begin
-            mult_k_idx_cs[0] <= mult_kv_issue_idx;
-            mult_v_idx_cs[0] <= mult_kv_issue_idx;
+            mult_k_idx_cs[0]   <= mult_kv_issue_idx;
+            mult_v_idx_cs[0]   <= mult_kv_issue_idx;
+            mult_kv_role_cs[0] <= mult_kv_is_qkv;
             for (int i = 1; i < MULT_STAGES; i++) begin
-                mult_k_idx_cs[i] <= mult_k_idx_cs[i - 1];
-                mult_v_idx_cs[i] <= mult_v_idx_cs[i - 1];
+                mult_k_idx_cs[i]   <= mult_k_idx_cs[i - 1];
+                mult_v_idx_cs[i]   <= mult_v_idx_cs[i - 1];
+                mult_kv_role_cs[i] <= mult_kv_role_cs[i - 1];
             end
         end
     end
 
-    // Tag / nibble phase pipeline (mirrors Mult internal pipeline depth)
+    // Tag / idx pipeline (mirrors Mult internal pipeline depth)
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < MULT_STAGES; i++) begin
-                mult_tag_cs[i]    <= MT_NONE;
-                mult_idx_cs[i]    <= 4'd0;
-                mult_nibble_cs[i] <= 2'd0;
-                nibb_we_p0_cs[i]  <= 8'd0;
-                nibb_we_p1_cs[i]  <= 8'd0;
+                mult_tag_cs[i] <= MT_NONE;
+                mult_idx_cs[i] <= 4'd0;
             end
         end
         else begin
-            mult_tag_cs[0]    <= mult_issue_valid ? mult_issue_tag    : MT_NONE;
-            mult_idx_cs[0]    <= mult_issue_idx;
-            mult_nibble_cs[0] <= mult_issue_nibble;
-            nibb_we_p0_cs[0]  <= nibb_we_p0_in;
-            nibb_we_p1_cs[0]  <= nibb_we_p1_in;
+            mult_tag_cs[0] <= mult_issue_valid ? mult_issue_tag : MT_NONE;
+            mult_idx_cs[0] <= mult_issue_idx;
             for (int i = 1; i < MULT_STAGES; i++) begin
-                mult_tag_cs[i]    <= mult_tag_cs[i - 1];
-                mult_idx_cs[i]    <= mult_idx_cs[i - 1];
-                mult_nibble_cs[i] <= mult_nibble_cs[i - 1];
-                nibb_we_p0_cs[i]  <= nibb_we_p0_cs[i - 1];
-                nibb_we_p1_cs[i]  <= nibb_we_p1_cs[i - 1];
+                mult_tag_cs[i] <= mult_tag_cs[i - 1];
+                mult_idx_cs[i] <= mult_idx_cs[i - 1];
             end
         end
     end
 
-    // ---- Nibble accumulator (FINAL stage only) ------------------------------
-    // Interleaved: each matrix m has its own running accumulator. A matrix sees
-    // its 3 nibbles spaced 4 issues apart (lo ×1 → mid ×16 → hi ×256). The hi
-    // round (nibble 2) yields the 4 finals on consecutive cycles.
-    logic [1023:0] nibb_acc_cs [0:7];
-    logic [1023:0] nibb_final_data;
-
-    // phase-2 最終 combinational accumulate 的 bank select（group-of-8 → 8 banks，
-    // 3-bit select）。原本單一 mult_idx_cs[4][2:0] 要驅動整個 1024-bit 的 nibb_acc
-    // 8-to-1 讀取 mux（扇出大）。改成 4 份複製，每份只驅動 16 lanes (group i/16)。
-    // dont_touch 防止 synthesis 合回單一高扇出 driver。
-    (* dont_touch = "true" *) logic [2:0] fin_sel_cs [0:3];
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int g = 0; g < 4; g++) fin_sel_cs[g] <= 3'd0;
-        end else begin
-            // 從 stage-3 register 取值，下一拍即等於 mult_idx_cs[4][2:0]。
-            for (int g = 0; g < 4; g++)
-                fin_sel_cs[g] <= mult_idx_cs[MULT_STAGES-2][2:0];
-        end
-    end
-
-    // Per-lane shift-accumulate: each 16-bit slot does acc + (prod << sh)
-    // INDEPENDENTLY, truncated to 16 bits. Doing one 1024-bit add would let a
-    // lane overflow carry into the neighbouring lane (off-by-one corruption).
-    function automatic logic [1023:0] lane_shift_add(
-        input logic [1023:0] acc,
-        input logic [1023:0] prod,
-        input int            sh
-    );
-        logic signed [15:0] a;
-        logic signed [15:0] p;
-        begin
-            for (int i = 0; i < 64; i++) begin
-                a = acc [1023 - (i * 16) -: 16];
-                p = prod[1023 - (i * 16) -: 16];
-                lane_shift_add[1023 - (i * 16) -: 16] = a + (p <<< sh);
-            end
-        end
-    endfunction
-
-    // 每個 bank 各自靠 registered one-hot WE 觸發，D-pin 只剩 2-to-1
-    // (raw_data | acc + (prod<<4)) + write enable 的小 cone，不再有
-    // mult_idx_cs[4][1:0] 的 4-to-1 decode 跟 tag/nibble compare。
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 0; i < 8; i++) nibb_acc_cs[i] <= 1024'd0;
-        end else begin
-            for (int i = 0; i < 8; i++) begin
-                if (nibb_we_p0_cs[MULT_STAGES-1][i])
-                    nibb_acc_cs[i] <= mult_raw_data;
-                else if (nibb_we_p1_cs[MULT_STAGES-1][i])
-                    nibb_acc_cs[i] <= lane_shift_add(nibb_acc_cs[i], mult_raw_data, 4);
-            end
-        end
-    end
-
-    // Combinational: phase 2 final per-lane accumulation for this matrix.
-    // 每 16-lane group 用各自的 fin_sel_cs 複製選 bank（扇出已拆 4 份），
-    // 再做 per-lane 16-bit shift-add（等價原 lane_shift_add(sh=8)）。
+    // ---- FINAL nibble 一拍重組（取代舊 3-pass nibb_acc）---------------------
+    // 3 路引擎同 phase 算出 score 的 3 個 base-16 digit × V：
+    //   engine0 = d0×V (P0)、engine1 = d1×V (P1)、engine2 = d2×V (P2)
+    // 重組 result = P0 + (P1<<4) + (P2<<8)（per-lane 16-bit 截斷，與舊
+    // lane_shift_add 同語義；score = d0 + 16·d1 + 256·d2 → score×V 等值）。
+    logic [1023:0] nibb_combine;
     always_comb begin
-        nibb_final_data = 1024'd0;
+        nibb_combine = 1024'd0;
         for (int i = 0; i < 64; i++) begin
-            logic [2:0]         sel;
-            logic signed [15:0] a;
-            logic signed [15:0] p;
-            sel = fin_sel_cs[i / 16];
-            a   = nibb_acc_cs[sel][1023 - (i * 16) -: 16];
-            p   = mult_raw_data   [1023 - (i * 16) -: 16];
-            nibb_final_data[1023 - (i * 16) -: 16] = a + (p <<< 8);
+            logic signed [15:0] p0;
+            logic signed [15:0] p1;
+            logic signed [15:0] p2;
+            p0 = mult_raw_data  [1023 - (i * 16) -: 16];
+            p1 = mult_k_raw_data[1023 - (i * 16) -: 16];
+            p2 = mult_v_raw_data[1023 - (i * 16) -: 16];
+            nibb_combine[1023 - (i * 16) -: 16] = p0 + (p1 <<< 4) + (p2 <<< 8);
         end
     end
 
-    // 內部 combinational 版本（這條 path：FINAL MUX + lane_shift_add 約 1.3 ns）
+    // 內部 combinational 版本（FINAL：選 nibb_combine；其餘：raw_data 直通）
     logic          mult_valid_comb;
     logic [1023:0] mult_data_comb;
     mult_tag_t     mult_tag_comb;
     logic [3:0]    mult_idx_comb;
 
-    assign mult_valid_comb = mult_raw_valid &&
-                             ((mult_tag_cs[MULT_STAGES-1] != MT_FINAL) ||
-                              (mult_nibble_cs[MULT_STAGES-1] == 2'd2));
+    // 每個 issue 都產生一個結果（FINAL 不再有 nibble 累加的 0/1 phase）。
+    assign mult_valid_comb = mult_raw_valid;
     assign mult_data_comb  = (mult_tag_cs[MULT_STAGES-1] == MT_FINAL) ?
-                              nibb_final_data : mult_raw_data;
+                              nibb_combine : mult_raw_data;
     assign mult_tag_comb   = mult_tag_cs[MULT_STAGES-1];
     assign mult_idx_comb   = mult_idx_cs[MULT_STAGES-1];
 
@@ -1599,10 +1533,12 @@ module Multiple_Processor (
             mult_tag_out <= mult_tag_comb;
             mult_idx_out <= mult_idx_comb;
 
-            mult_k_valid <= mult_k_raw_valid;
+            // 下游 K/V valid 只在 QKV（role=1）；FINAL 的 d1/d2 partial 由
+            // nibb_combine 內部消化，不可送 PoT（gate 掉）。
+            mult_k_valid <= mult_k_raw_valid && mult_kv_role_cs[MULT_STAGES-1];
             mult_k_data  <= mult_k_raw_data;
             mult_k_idx   <= mult_k_idx_cs[MULT_STAGES-1];
-            mult_v_valid <= mult_v_raw_valid;
+            mult_v_valid <= mult_v_raw_valid && mult_kv_role_cs[MULT_STAGES-1];
             mult_v_data  <= mult_v_raw_data;
             mult_v_idx   <= mult_v_idx_cs[MULT_STAGES-1];
         end
