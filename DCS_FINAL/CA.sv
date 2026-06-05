@@ -294,10 +294,10 @@ module CA_Control #(
                                                      HA_WR_MHA : HA_WR_SHA));
     assign ha_next_group_base    = ha_group_base_cs + 8'd8;
     // Issue-phase upper bound (Burst-8, group-of-8)：
-    //   QKV: 24 phases (8 rows × Q/K/V)
+    //   QKV: 8 phases (8 matrix；Q/K/V 由 3 路引擎並行，每 phase 一個 matrix)
     //   SV:  SHA=8, MHA=16  (rows × heads)
-    //   FINAL: SHA=24, MHA=48 (× 3 nibble phases per row)
-    assign ha_phase_last         = (ha_stage_cs == ST_QKV)  ? 6'd23 :
+    //   FINAL: SHA=24, MHA=48 (× 3 nibble phases per row) ← Stage B 再降
+    assign ha_phase_last         = (ha_stage_cs == ST_QKV)  ? 6'd7 :
                                     (ha_stage_cs == ST_SV)   ? ((exec_op == 2'b11) ? 6'd15 : 6'd7) :
                                     /* ST_FINAL */              ((exec_op == 2'b11) ? 6'd47 : 6'd23);
 
@@ -726,12 +726,24 @@ module CA_DataPath #(
     logic [1023:0] mult_data;
     mult_tag_t     mult_tag_out;
     logic [3:0]    mult_idx_out;
+    // engine1/2：QKV 並行的 K / V（tag 恆 MT_K / MT_V）
+    logic          mult_k_valid;
+    logic [1023:0] mult_k_data;
+    logic [3:0]    mult_k_idx;
+    logic          mult_v_valid;
+    logic [1023:0] mult_v_data;
+    logic [3:0]    mult_v_idx;
 
     logic          act_valid;
     logic [1023:0] act_data;
 
+    // 3 路 PoT：lane0 = engine0 的 Q / NORM / FINAL（經 ACT）；lane1/2 = K / V。
     logic          pot_valid;
     logic [255:0]  pot_data;
+    logic          pot_k_valid;
+    logic [255:0]  pot_k_data;
+    logic          pot_v_valid;
+    logic [255:0]  pot_v_data;
 
     // ------------------------------------------------------------------------
     // 區塊 4：Issue / capture 入口 buffer
@@ -760,6 +772,12 @@ module CA_DataPath #(
     mult_tag_t     pot_in_tag;
     logic [3:0]    pot_in_idx;
 
+    // K/V PoT lane 入口（純 bypass：直接拿 mult engine1/2 輸出）
+    logic          pot_k_in_valid;
+    logic [3:0]    pot_k_in_idx;
+    logic          pot_v_in_valid;
+    logic [3:0]    pot_v_in_idx;
+
     logic                      mha_comb_valid;
     logic [1023:0]             mha_comb_data;
     logic [3:0]                mha_comb_idx;
@@ -776,6 +794,9 @@ module CA_DataPath #(
     logic [3:0]    act_idx_cs [0:4];
     mult_tag_t     pot_tag_cs [0:4];
     logic [3:0]    pot_idx_cs [0:4];
+    // K/V PoT lane idx sideband（tag 恆 K/V，valid 直接用 PoT out_valid）。對齊 5-stage。
+    logic [3:0]    pot_k_idx_cs   [0:4];
+    logic [3:0]    pot_v_idx_cs   [0:4];
 
     // ========================================================================
     // 函式：MHA head 合併 / score 壓縮 / mha_out0 壓縮解壓
@@ -860,13 +881,15 @@ module CA_DataPath #(
         v_ready_ns     = v_ready_cs;
         score_ready_ns = score_ready_cs;
 
-        if (pot_valid) begin
-            case (pot_tag_cs[4])
-                MT_Q: q_ready_ns[pot_idx_cs[4][2:0]] = 1'b1;
-                MT_K: k_ready_ns[pot_idx_cs[4][2:0]] = 1'b1;
-                MT_V: v_ready_ns[pot_idx_cs[4][2:0]] = 1'b1;
-                default: begin end
-            endcase
+        // lane0：只剩 Q（NORM/FINAL 不寫 q/k/v ready）。K/V 改由 lane1/2 set。
+        if (pot_valid && (pot_tag_cs[4] == MT_Q)) begin
+            q_ready_ns[pot_idx_cs[4][2:0]] = 1'b1;
+        end
+        if (pot_k_valid) begin
+            k_ready_ns[pot_k_idx_cs[4][2:0]] = 1'b1;
+        end
+        if (pot_v_valid) begin
+            v_ready_ns[pot_v_idx_cs[4][2:0]] = 1'b1;
         end
 
         if (mult_valid && (mult_tag_out == MT_SCORE)) begin
@@ -928,15 +951,18 @@ module CA_DataPath #(
     assign use_act_for_pot = act_valid &&
                              ((act_tag_cs[4] == MT_NORM) || (act_tag_cs[4] == MT_FINAL));
 
+    // lane0：ACT 輸出 (NORM/FINAL) 或 engine0 的 Q（K/V 改走 lane1/2）。
     assign pot_in_valid = use_act_for_pot ||
-                          (mult_valid && ((mult_tag_out == MT_Q) ||
-                                          (mult_tag_out == MT_K) ||
-                                          (mult_tag_out == MT_V)));
+                          (mult_valid && (mult_tag_out == MT_Q));
     assign pot_in_data  = use_act_for_pot ? act_data       : mult_data;
     assign pot_in_idx   = use_act_for_pot ? act_idx_cs[4]  : mult_idx_out;
-
-    // tags pass through; Q/K/V branch gated by pot_in_valid downstream
     assign pot_in_tag   = use_act_for_pot ? act_tag_cs[4]  : mult_tag_out;
+
+    // lane1 (K) / lane2 (V)：直接 bypass engine1/2 輸出（tag 恆 K/V）。
+    assign pot_k_in_valid = mult_k_valid;
+    assign pot_k_in_idx   = mult_k_idx;
+    assign pot_v_in_valid = mult_v_valid;
+    assign pot_v_in_idx   = mult_v_idx;
 
     // ========================================================================
     // 區塊 10：Submodule 例化（純連線，沒有額外邏輯）
@@ -960,7 +986,13 @@ module CA_DataPath #(
         .mult_valid   (mult_valid),
         .mult_data    (mult_data),
         .mult_tag_out (mult_tag_out),
-        .mult_idx_out (mult_idx_out)
+        .mult_idx_out (mult_idx_out),
+        .mult_k_valid (mult_k_valid),
+        .mult_k_data  (mult_k_data),
+        .mult_k_idx   (mult_k_idx),
+        .mult_v_valid (mult_v_valid),
+        .mult_v_data  (mult_v_data),
+        .mult_v_idx   (mult_v_idx)
     );
 
     ACT_5Stage_Parallel u_act (
@@ -981,6 +1013,25 @@ module CA_DataPath #(
         .in_data   (pot_in_data),
         .out_valid (pot_valid),
         .out_data  (pot_data)
+    );
+
+    // lane1 (K) / lane2 (V)：QKV 並行三路的後兩路。輸入直接拿 mult engine1/2。
+    PoT_5Stage_Parallel u_pot_k (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (pot_k_in_valid),
+        .in_data   (mult_k_data),
+        .out_valid (pot_k_valid),
+        .out_data  (pot_k_data)
+    );
+
+    PoT_5Stage_Parallel u_pot_v (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (pot_v_in_valid),
+        .in_data   (mult_v_data),
+        .out_valid (pot_v_valid),
+        .out_data  (pot_v_data)
     );
 
     // ========================================================================
@@ -1008,6 +1059,10 @@ module CA_DataPath #(
             for (int i = 0; i < 5; i++) begin
                 pot_tag_cs[i] <= MT_NONE;
                 pot_idx_cs[i] <= 4'd0;
+            end
+            for (int i = 0; i < 5; i++) begin
+                pot_k_idx_cs[i] <= 4'd0;
+                pot_v_idx_cs[i] <= 4'd0;
             end
 
             // (3) ready flags
@@ -1046,6 +1101,14 @@ module CA_DataPath #(
                 pot_idx_cs[i] <= pot_idx_cs[i - 1];
             end
 
+            // K/V lane idx sideband（對齊 PoT 5-stage）
+            pot_k_idx_cs[0] <= pot_k_in_idx;
+            pot_v_idx_cs[0] <= pot_v_in_idx;
+            for (int i = 1; i < 5; i++) begin
+                pot_k_idx_cs[i] <= pot_k_idx_cs[i - 1];
+                pot_v_idx_cs[i] <= pot_v_idx_cs[i - 1];
+            end
+
             // ---------------- (3) Memory writes -----------------------------
             // x_mem capture (from RAM)
             if (capture_valid_cs) begin
@@ -1075,23 +1138,19 @@ module CA_DataPath #(
                 k_mem[mult_idx_out[2:0]] <= {mha_head0_pack[MHA_OUT_PACK_W-257:0], 32'd0};
             end
 
-            // q/k/v_mem ← PoT
-            if (pot_valid) begin
-                case (pot_tag_cs[4])
-                    MT_Q: begin
-                        q_mem[pot_idx_cs[4][2:0]]      <= pot_data;
-                        q_ready_cs[pot_idx_cs[4][2:0]] <= 1'b1;
-                    end
-                    MT_K: begin
-                        k_mem[pot_idx_cs[4][2:0]]      <= pot_data;
-                        k_ready_cs[pot_idx_cs[4][2:0]] <= 1'b1;
-                    end
-                    MT_V: begin
-                        v_mem[pot_idx_cs[4][2:0]]      <= pot_data;
-                        v_ready_cs[pot_idx_cs[4][2:0]] <= 1'b1;
-                    end
-                    default: begin end
-                endcase
+            // q_mem ← lane0 PoT（只剩 MT_Q；NORM/FINAL 走 output buffer）
+            if (pot_valid && (pot_tag_cs[4] == MT_Q)) begin
+                q_mem[pot_idx_cs[4][2:0]]      <= pot_data;
+                q_ready_cs[pot_idx_cs[4][2:0]] <= 1'b1;
+            end
+            // k_mem ← lane1 PoT、v_mem ← lane2 PoT（QKV 三路並行）
+            if (pot_k_valid) begin
+                k_mem[pot_k_idx_cs[4][2:0]]      <= pot_k_data;
+                k_ready_cs[pot_k_idx_cs[4][2:0]] <= 1'b1;
+            end
+            if (pot_v_valid) begin
+                v_mem[pot_v_idx_cs[4][2:0]]      <= pot_v_data;
+                v_ready_cs[pot_v_idx_cs[4][2:0]] <= 1'b1;
             end
 
             // ---------------- (4) Output buffer -----------------------------
@@ -1125,10 +1184,20 @@ module Multiple_Processor (
     input  logic [255:0]   v_mem       [0:7],
     input  logic [767:0]   score_mem   [0:15], // 12-bit signed-digit {d0,d1,d2} × 64 lanes
 
+    // engine0：QKV 的 Q / SCORE / FINAL / NORM（保留全部原機制，含 nibble 累加）
     output logic           mult_valid,
     output logic [1023:0]  mult_data,
     output mult_tag_t      mult_tag_out,
-    output logic [3:0]     mult_idx_out
+    output logic [3:0]     mult_idx_out,
+    // engine1 / engine2：QKV 並行的 K / V（純 matmul，bypass ACT/nibble）。
+    //   tag 恆為 MT_K / MT_V，所以只輸出 valid/data/idx。latency 與 engine0 對齊
+    //   (mult 5 stage + output reg 1 = 6)，故 Q/K/V 同拍抵達下游 3 路 PoT。
+    output logic           mult_k_valid,
+    output logic [1023:0]  mult_k_data,
+    output logic [3:0]     mult_k_idx,
+    output logic           mult_v_valid,
+    output logic [1023:0]  mult_v_data,
+    output logic [3:0]     mult_v_idx
 );
 
     // Matches Mult internal pipeline depth
@@ -1143,6 +1212,12 @@ module Multiple_Processor (
     mult_tag_t     mult_issue_tag;
     logic [3:0]    mult_issue_idx;
     logic [1:0]    mult_issue_nibble;      // FINAL nibble phase 0/1/2
+
+    // engine1 / engine2 issue operands（只在 IM_QKV 有效）。
+    logic          mult_kv_issue_valid;
+    logic [255:0]  mult_k_issue_A;
+    logic [255:0]  mult_v_issue_A;
+    logic [3:0]    mult_kv_issue_idx;
 
     mult_tag_t  mult_tag_cs    [0:MULT_STAGES-1];
     logic [3:0] mult_idx_cs    [0:MULT_STAGES-1];
@@ -1208,35 +1283,12 @@ module Multiple_Processor (
                 end
 
                 IM_QKV: begin
-                    // 24 phases = 8 matrices × {Q,K,V}（matrix-major）。
-                    case (issue_idx)
-                        6'd0,  6'd1,  6'd2:  mult_issue_idx = 4'd0;
-                        6'd3,  6'd4,  6'd5:  mult_issue_idx = 4'd1;
-                        6'd6,  6'd7,  6'd8:  mult_issue_idx = 4'd2;
-                        6'd9,  6'd10, 6'd11: mult_issue_idx = 4'd3;
-                        6'd12, 6'd13, 6'd14: mult_issue_idx = 4'd4;
-                        6'd15, 6'd16, 6'd17: mult_issue_idx = 4'd5;
-                        6'd18, 6'd19, 6'd20: mult_issue_idx = 4'd6;
-                        default:             mult_issue_idx = 4'd7;
-                    endcase
-                    mult_issue_A = x_mem[mult_issue_idx[2:0]];
-
-                    case (issue_idx)
-                        6'd0, 6'd3,  6'd6,  6'd9,
-                        6'd12, 6'd15, 6'd18, 6'd21: begin
-                            mult_issue_B   = param;
-                            mult_issue_tag = MT_Q;
-                        end
-                        6'd1, 6'd4,  6'd7,  6'd10,
-                        6'd13, 6'd16, 6'd19, 6'd22: begin
-                            mult_issue_B   = weight_k;
-                            mult_issue_tag = MT_K;
-                        end
-                        default: begin
-                            mult_issue_B   = weight_v;
-                            mult_issue_tag = MT_V;
-                        end
-                    endcase
+                    // 3 路並行：8 phase = 8 matrix。engine0 算 Q，engine1/2 算 K/V
+                    // （見下方 mult_kv_issue_*）。同 x、3 個權重 → Q/K/V 同拍出。
+                    mult_issue_idx = {1'b0, issue_idx[2:0]};
+                    mult_issue_A   = x_mem[issue_idx[2:0]];
+                    mult_issue_B   = param;       // W_Q
+                    mult_issue_tag = MT_Q;
                 end
 
                 IM_SV: begin
@@ -1286,6 +1338,15 @@ module Multiple_Processor (
                 end
             endcase
         end
+    end
+
+    // engine1 (K) / engine2 (V) operand：只在 IM_QKV 餵料，其餘 stage idle。
+    //   同 A = x_mem[matrix]，B = weight_k / weight_v。idx = matrix。
+    always_comb begin
+        mult_kv_issue_valid = issue_valid && (issue_mode == IM_QKV);
+        mult_kv_issue_idx   = {1'b0, issue_idx[2:0]};
+        mult_k_issue_A      = x_mem[issue_idx[2:0]];
+        mult_v_issue_A      = x_mem[issue_idx[2:0]];
     end
 
     // Pre-decode 一次 nibb_acc 的 one-hot 寫致能（stage 0 的輸入）。
@@ -1353,6 +1414,56 @@ module Multiple_Processor (
         .out_valid   (mult_raw_valid),
         .out_data    (mult_raw_data)
     );
+
+    // engine1 (K) / engine2 (V)：純 matmul，無 transpose、無 nibble。只在 QKV 餵料。
+    logic          mult_k_raw_valid;
+    logic [1023:0] mult_k_raw_data;
+    logic          mult_v_raw_valid;
+    logic [1023:0] mult_v_raw_data;
+    logic [3:0]    mult_k_idx_cs [0:MULT_STAGES-1];
+    logic [3:0]    mult_v_idx_cs [0:MULT_STAGES-1];
+
+    Mult_5Stage_Parallel u_mult_k (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .op          (op),
+        .b_transpose (1'b0),
+        .in_valid    (mult_kv_issue_valid),
+        .in_data_A   (mult_k_issue_A),
+        .in_data_B   (weight_k),
+        .out_valid   (mult_k_raw_valid),
+        .out_data    (mult_k_raw_data)
+    );
+
+    Mult_5Stage_Parallel u_mult_v (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .op          (op),
+        .b_transpose (1'b0),
+        .in_valid    (mult_kv_issue_valid),
+        .in_data_A   (mult_v_issue_A),
+        .in_data_B   (weight_v),
+        .out_valid   (mult_v_raw_valid),
+        .out_data    (mult_v_raw_data)
+    );
+
+    // K/V idx pipeline（對齊 mult 5-stage）。tag 恆為 K/V，下游硬接。
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < MULT_STAGES; i++) begin
+                mult_k_idx_cs[i] <= 4'd0;
+                mult_v_idx_cs[i] <= 4'd0;
+            end
+        end
+        else begin
+            mult_k_idx_cs[0] <= mult_kv_issue_idx;
+            mult_v_idx_cs[0] <= mult_kv_issue_idx;
+            for (int i = 1; i < MULT_STAGES; i++) begin
+                mult_k_idx_cs[i] <= mult_k_idx_cs[i - 1];
+                mult_v_idx_cs[i] <= mult_v_idx_cs[i - 1];
+            end
+        end
+    end
 
     // Tag / nibble phase pipeline (mirrors Mult internal pipeline depth)
     always_ff @(posedge clk or negedge rst_n) begin
@@ -1471,17 +1582,29 @@ module Multiple_Processor (
 
     // 輸出 register：把 FINAL MUX cone 跟下游 ACT/PoT 的 abs/MUX cone 切到兩個
     // cycle，clk 從原本的 ~3 ns 邊界繼續往下推。+1 cycle latency。
+    // engine1/2（K/V）共用同一拍 output reg，與 engine0 latency 對齊（6 cycle）。
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             mult_valid   <= 1'b0;
             mult_tag_out <= MT_NONE;
             mult_idx_out <= 4'd0;
+            mult_k_valid <= 1'b0;
+            mult_k_idx   <= 4'd0;
+            mult_v_valid <= 1'b0;
+            mult_v_idx   <= 4'd0;
         end
         else begin
             mult_valid   <= mult_valid_comb;
             mult_data    <= mult_data_comb;
             mult_tag_out <= mult_tag_comb;
             mult_idx_out <= mult_idx_comb;
+
+            mult_k_valid <= mult_k_raw_valid;
+            mult_k_data  <= mult_k_raw_data;
+            mult_k_idx   <= mult_k_idx_cs[MULT_STAGES-1];
+            mult_v_valid <= mult_v_raw_valid;
+            mult_v_data  <= mult_v_raw_data;
+            mult_v_idx   <= mult_v_idx_cs[MULT_STAGES-1];
         end
     end
 
