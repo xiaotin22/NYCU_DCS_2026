@@ -55,9 +55,9 @@ module CA #(
 
     logic          datapath_issue_valid;
     issue_mode_t   datapath_issue_mode;
-    logic [4:0]    datapath_issue_idx;
+    logic [5:0]    datapath_issue_idx;
     logic          datapath_capture_valid;
-    logic [1:0]    datapath_capture_idx;
+    logic [2:0]    datapath_capture_idx;
     logic          datapath_qkv_ready;
     logic          datapath_sv_ready;
     logic          datapath_result_valid;
@@ -150,9 +150,9 @@ module CA_Control #(
     output logic [255:0]                    exec_weight_v,
     output logic                            datapath_issue_valid,
     output issue_mode_t                     datapath_issue_mode,
-    output logic [4:0]                      datapath_issue_idx,
+    output logic [5:0]                      datapath_issue_idx,
     output logic                            datapath_capture_valid,
-    output logic [1:0]                      datapath_capture_idx,
+    output logic [2:0]                      datapath_capture_idx,
 
     output logic                            rd_en,
     output logic [$clog2(RAM_DEPTH)-1:0]    rd_addr,
@@ -163,13 +163,16 @@ module CA_Control #(
 );
 
     localparam int ADDR_W = $clog2(RAM_DEPTH);
-    localparam logic [BURST_BIT-1:0] BURST_4   = 3'd2;
+    localparam logic [BURST_BIT-1:0] BURST_8   = 3'd3;
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
-    localparam logic [4:0] HA_RESTART_SHA = 5'd15;
-    localparam logic [4:0] HA_RESTART_MHA = 5'd27;
-    localparam logic [4:0] HA_WR_SHA      = 5'd19;
-    localparam logic [4:0] HA_WR_MHA      = 5'd31;
+    // Burst-8（group-of-8）：FINAL first-final phase SHA=16/MHA=40。
+    //   HA_RESTART = first-final + 7  → SHA 23 / MHA 47
+    //   HA_WR      = first-final + 11 → SHA 27 / MHA 51（需 6-bit counter）
+    localparam logic [5:0] HA_RESTART_SHA = 6'd23;
+    localparam logic [5:0] HA_RESTART_MHA = 6'd47;
+    localparam logic [5:0] HA_WR_SHA      = 6'd27;
+    localparam logic [5:0] HA_WR_MHA      = 6'd51;
 
     typedef enum logic [2:0] {
         S_IDLE,
@@ -192,7 +195,7 @@ module CA_Control #(
     ha_stage_t  ha_stage_cs;
     logic        ha_param_phase_cs;
     logic [1:0]  rd_req_cnt_cs;
-    logic [1:0]  ha_rd_word_cnt_cs;
+    logic [2:0]  ha_rd_word_cnt_cs;
     logic [7:0]  wr_cmd_cnt_cs;
     logic [7:0]  out_cnt_cs;
     logic [11:0] wr_pre_pipe_cs;  // Multiple_Processor output reg plus one cycle: tap [11].
@@ -200,13 +203,13 @@ module CA_Control #(
     // Stored at FINAL start so write-back stays on the draining group while
     // ha_group_base_cs can advance to the next compute group.
     logic [7:0]  ha_write_base_cs;
-    logic [4:0]  ha_phase_cnt_cs;
+    logic [5:0]  ha_phase_cnt_cs;
     // Counter equivalent of the old ha_wr_pipe shift register.
     // ha_final_start launches one timer per group; ha_wr_fire stops it.
-    logic [4:0]  ha_wr_cnt_cs;
+    logic [5:0]  ha_wr_cnt_cs;
     logic        ha_wr_run_cs;
     logic        ha_prefetch_pending_cs;
-    logic [1:0]  ha_pf_word_cs;
+    logic [2:0]  ha_pf_word_cs;
     logic        ha_pf_done_cs;
 
     logic        job_start;
@@ -227,7 +230,7 @@ module CA_Control #(
     logic        ha_final_start;
     logic        ha_wr_fire;
     logic [7:0]  ha_next_group_base;
-    logic [4:0]  ha_phase_last;
+    logic [5:0]  ha_phase_last;
 
     assign job_start              = (state_cs == S_IDLE) && mem_set && in_valid;
     assign ha_start        = job_start && ((op == 2'b10) || (op == 2'b11));
@@ -243,7 +246,7 @@ module CA_Control #(
                                     rd_ready;
     assign ha_first_read_fire     = (state_cs == S_HA_PARAM) && in_valid &&
                                     ha_param_phase_cs && rd_ready;
-    assign ha_has_next_group      = (ha_group_base_cs != 8'd252);
+    assign ha_has_next_group      = (ha_group_base_cs != 8'd248);
     // x_mem is released once QKV has issued, so the one-group-ahead prefetch can
     // fire as early as the QKV issue (rd_ready permitting); the 50-cycle data
     // return still lands well after QKV has finished reading x_mem.
@@ -266,7 +269,7 @@ module CA_Control #(
                                       datapath_sv_ready;
     assign ha_final_start        = ((state_cs == S_HA_ISSUE) &&
                                     (ha_stage_cs == ST_FINAL) &&
-                                    (ha_phase_cnt_cs == 5'd0)) ||
+                                    (ha_phase_cnt_cs == 6'd0)) ||
                                     ha_wait_sv_to_final_fire;
     assign ha_next_group_fire    = ha_wr_run_cs &&
                                     (ha_wr_cnt_cs == ((exec_op == 2'b11) ?
@@ -279,14 +282,14 @@ module CA_Control #(
     assign ha_wr_fire            = ha_wr_run_cs &&
                                     (ha_wr_cnt_cs == ((exec_op == 2'b11) ?
                                                      HA_WR_MHA : HA_WR_SHA));
-    assign ha_next_group_base    = ha_group_base_cs + 8'd4;
-    // Issue-phase upper bound:
-    //   QKV: 12 phases (4 rows × Q/K/V)
-    //   SV:  SHA=4, MHA=8  (rows × heads)
-    //   FINAL: SHA=12, MHA=24 (× 3 nibble phases per row)
-    assign ha_phase_last         = (ha_stage_cs == ST_QKV)  ? 5'd11 :
-                                    (ha_stage_cs == ST_SV)   ? ((exec_op == 2'b11) ? 5'd7  : 5'd3) :
-                                    /* ST_FINAL */              ((exec_op == 2'b11) ? 5'd23 : 5'd11);
+    assign ha_next_group_base    = ha_group_base_cs + 8'd8;
+    // Issue-phase upper bound (Burst-8, group-of-8)：
+    //   QKV: 24 phases (8 rows × Q/K/V)
+    //   SV:  SHA=8, MHA=16  (rows × heads)
+    //   FINAL: SHA=24, MHA=48 (× 3 nibble phases per row)
+    assign ha_phase_last         = (ha_stage_cs == ST_QKV)  ? 6'd23 :
+                                    (ha_stage_cs == ST_SV)   ? ((exec_op == 2'b11) ? 6'd15 : 6'd7) :
+                                    /* ST_FINAL */              ((exec_op == 2'b11) ? 6'd47 : 6'd23);
 
     always_comb begin
         datapath_issue_valid   = 1'b0;
@@ -380,9 +383,9 @@ module CA_Control #(
             end
 
             // Prefetched burst lands while the current group is still computing;
-            // collect the 4 words then flag the next group's x_mem ready.
+            // collect the 8 words then flag the next group's x_mem ready.
             if (ha_pf_capture) begin
-                if (ha_pf_word_cs == 2'd3) begin
+                if (ha_pf_word_cs == 3'd7) begin
                     ha_pf_done_cs          <= 1'b1;
                     ha_prefetch_pending_cs <= 1'b0;
                 end
@@ -482,9 +485,9 @@ module CA_Control #(
                     end
                     else if (!ha_prefetch_pending_cs && rd_valid) begin
                         // First group (no prefetch yet): capture the burst here.
-                        if (ha_rd_word_cnt_cs == 2'd3) begin
-                            ha_rd_word_cnt_cs <= 2'd0;
-                            ha_phase_cnt_cs   <= 5'd0;
+                        if (ha_rd_word_cnt_cs == 3'd7) begin
+                            ha_rd_word_cnt_cs <= 3'd0;
+                            ha_phase_cnt_cs   <= 6'd0;
                             ha_stage_cs       <= ST_QKV;
                             state_cs           <= S_HA_ISSUE;
                         end
@@ -578,17 +581,17 @@ module CA_Control #(
             end
             else if (ha_first_read_fire) begin
                 rd_en    <= 1'b1;
-                rd_burst <= BURST_4;
+                rd_burst <= BURST_8;
                 rd_addr  <= '0;
             end
             else if (ha_read_fire) begin
                 rd_en    <= 1'b1;
-                rd_burst <= BURST_4;
+                rd_burst <= BURST_8;
                 rd_addr  <= ha_group_base_cs[ADDR_W-1:0];
             end
             else if (ha_prefetch_fire) begin
                 rd_en    <= 1'b1;
-                rd_burst <= BURST_4;
+                rd_burst <= BURST_8;
                 rd_addr  <= ha_next_group_base[ADDR_W-1:0];
             end
         end
@@ -605,11 +608,11 @@ module CA_Control #(
             wr_en    <= 1'b0;
             wr_burst <= '0;
 
-            // Attention: one BURST_4 per group, timed by ha_wr_cnt_cs.
+            // Attention: one BURST_8 per group, timed by ha_wr_cnt_cs.
             if (ha_wr_fire) begin
                 wr_en    <= 1'b1;
                 wr_addr  <= ha_write_base_cs[ADDR_W-1:0];
-                wr_burst <= BURST_4;
+                wr_burst <= BURST_8;
             end
 
             // FAST_RUN: a single BURST_128 covering all 256 results.
