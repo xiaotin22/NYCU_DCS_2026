@@ -167,10 +167,20 @@ module CA_Control #(
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
     // Burst-8（group-of-8）：FINAL first-final phase SHA=16/MHA=40。
-    //   HA_RESTART = first-final + 7  → SHA 23 / MHA 47
+    //   HA_RESTART = first-final + group_size + 3 = first-final + 11 → SHA 27 / MHA 51
     //   HA_WR      = first-final + 11 → SHA 27 / MHA 51（需 6-bit counter）
-    localparam logic [5:0] HA_RESTART_SHA = 6'd23;
-    localparam logic [5:0] HA_RESTART_MHA = 6'd47;
+    // 為何 HA_RESTART = first-final + group_size + 3：避免上一組 FINAL ACT output
+    // (group_size 個連續 cycle) 與下一組 QKV mult 競爭 pot_in_valid。下一組第一個 Q
+    // mult 在 ha_next_group_fire 後 +8 cycle 出現，必須晚於上一組最後一個 ACT
+    // (= first-final + group_size - 1 + 12)。推導：
+    //   first-final + (group_size-1) + 12 < (HA_RESTART+1) + 8
+    //   → HA_RESTART > first-final + group_size + 2
+    //   → HA_RESTART = first-final + group_size + 3
+    // burst-4 baseline 用 +7（= 4 + 3），burst-8 必須 +11（= 8 + 3）。
+    // 注意：HA_RESTART == HA_WR 同 cycle fire 沒問題（ha_wr_fire 只清 ha_wr_run_cs，
+    // ha_next_group_fire 在 S_HA_WAIT ST_FINAL 同 cycle 仍會觸發 transition）。
+    localparam logic [5:0] HA_RESTART_SHA = 6'd27;
+    localparam logic [5:0] HA_RESTART_MHA = 6'd51;
     localparam logic [5:0] HA_WR_SHA      = 6'd27;
     localparam logic [5:0] HA_WR_MHA      = 6'd51;
 
