@@ -294,7 +294,7 @@ module CA_Control #(
     always_comb begin
         datapath_issue_valid   = 1'b0;
         datapath_issue_mode    = IM_NONE;
-        datapath_issue_idx     = 5'd0;
+        datapath_issue_idx     = 6'd0;
         datapath_capture_valid = 1'b0;
         datapath_capture_idx   = ha_rd_word_cnt_cs;
 
@@ -327,12 +327,12 @@ module CA_Control #(
                 if (ha_wait_qkv_to_sv_fire) begin
                     datapath_issue_valid = 1'b1;
                     datapath_issue_mode  = IM_SV;
-                    datapath_issue_idx   = 5'd0;
+                    datapath_issue_idx   = 6'd0;
                 end
                 else if (ha_wait_sv_to_final_fire) begin
                     datapath_issue_valid = 1'b1;
                     datapath_issue_mode  = IM_FINAL;
-                    datapath_issue_idx   = 5'd0;
+                    datapath_issue_idx   = 6'd0;
                 end
             end
 
@@ -354,17 +354,17 @@ module CA_Control #(
             ha_stage_cs            <= ST_QKV;
             ha_param_phase_cs      <= 1'b0;
             rd_req_cnt_cs          <= 2'd0;
-            ha_rd_word_cnt_cs      <= 2'd0;
+            ha_rd_word_cnt_cs      <= 3'd0;
             wr_cmd_cnt_cs          <= 8'd0;
             out_cnt_cs             <= 8'd0;
             wr_pre_pipe_cs         <= 12'd0;
             ha_group_base_cs       <= 8'd0;
             ha_write_base_cs       <= 8'd0;
-            ha_phase_cnt_cs        <= 5'd0;
-            ha_wr_cnt_cs           <= 5'd0;
+            ha_phase_cnt_cs        <= 6'd0;
+            ha_wr_cnt_cs           <= 6'd0;
             ha_wr_run_cs           <= 1'b0;
             ha_prefetch_pending_cs <= 1'b0;
-            ha_pf_word_cs          <= 2'd0;
+            ha_pf_word_cs          <= 3'd0;
             ha_pf_done_cs          <= 1'b0;
         end
         else begin
@@ -372,7 +372,7 @@ module CA_Control #(
             // below intentionally override these defaults in this always_ff block.
             if (ha_final_start) begin
                 ha_wr_run_cs     <= 1'b1;
-                ha_wr_cnt_cs     <= 5'd0;
+                ha_wr_cnt_cs     <= 6'd0;
                 ha_write_base_cs <= ha_group_base_cs;
             end
             else if (ha_wr_fire) begin
@@ -398,7 +398,7 @@ module CA_Control #(
             // rd_addr/rd_en/rd_burst for this read are driven in the RAM-read block.
             if (ha_prefetch_fire) begin
                 ha_prefetch_pending_cs <= 1'b1;
-                ha_pf_word_cs          <= 2'd0;
+                ha_pf_word_cs          <= 3'd0;
             end
 
             case (state_cs)
@@ -459,12 +459,12 @@ module CA_Control #(
                             ha_group_base_cs       <= 8'd0;
                             ha_write_base_cs       <= 8'd0;
                             rd_req_cnt_cs           <= ha_first_read_fire ? 2'd1 : 2'd0;
-                            ha_rd_word_cnt_cs      <= 2'd0;
+                            ha_rd_word_cnt_cs      <= 3'd0;
                             out_cnt_cs              <= 8'd0;
-                            ha_wr_cnt_cs           <= 5'd0;
+                            ha_wr_cnt_cs           <= 6'd0;
                             ha_wr_run_cs           <= 1'b0;
                             ha_prefetch_pending_cs <= 1'b0;
-                            ha_pf_word_cs          <= 2'd0;
+                            ha_pf_word_cs          <= 3'd0;
                             ha_pf_done_cs          <= 1'b0;
                             state_cs                <= S_HA_READ;
                         end
@@ -479,7 +479,7 @@ module CA_Control #(
                     if (ha_pf_done_cs) begin
                         // Next group's input was already prefetched into x_mem.
                         ha_pf_done_cs   <= 1'b0;
-                        ha_phase_cnt_cs <= 5'd0;
+                        ha_phase_cnt_cs <= 6'd0;
                         ha_stage_cs     <= ST_QKV;
                         state_cs        <= S_HA_ISSUE;
                     end
@@ -510,7 +510,7 @@ module CA_Control #(
                     case (ha_stage_cs)
                         ST_QKV: begin
                             if (datapath_qkv_ready) begin
-                                ha_phase_cnt_cs <= 5'd1;
+                                ha_phase_cnt_cs <= 6'd1;
                                 ha_stage_cs     <= ST_SV;
                                 state_cs         <= S_HA_ISSUE;
                             end
@@ -518,8 +518,8 @@ module CA_Control #(
 
                         ST_SV: begin
                             if (datapath_sv_ready) begin
-                                ha_phase_cnt_cs  <= 5'd1;
-                                ha_wr_cnt_cs     <= 5'd0;
+                                ha_phase_cnt_cs  <= 6'd1;
+                                ha_wr_cnt_cs     <= 6'd0;
                                 ha_wr_run_cs     <= 1'b1;
                                 ha_write_base_cs <= ha_group_base_cs;
                                 ha_stage_cs      <= ST_FINAL;
@@ -531,8 +531,8 @@ module CA_Control #(
                             if (ha_has_next_group && ha_next_group_fire) begin
                                 ha_group_base_cs  <= ha_next_group_base;
                                 rd_req_cnt_cs      <= ha_prefetch_pending_cs ? 2'd1 : 2'd0;
-                                ha_rd_word_cnt_cs <= 2'd0;
-                                ha_phase_cnt_cs   <= 5'd0;
+                                ha_rd_word_cnt_cs <= 3'd0;
+                                ha_phase_cnt_cs   <= 6'd0;
                                 ha_stage_cs       <= ST_QKV;
                                 if (ha_pf_done_cs) begin
                                     ha_pf_done_cs    <= 1'b0;
@@ -650,9 +650,9 @@ module CA_DataPath #(
     input  logic                 rst_n,
     input  logic                 issue_valid,
     input  issue_mode_t          issue_mode,
-    input  logic [4:0]           issue_idx,
+    input  logic [5:0]           issue_idx,
     input  logic                 capture_valid,
-    input  logic [1:0]           capture_idx,
+    input  logic [2:0]           capture_idx,
     input  logic [1:0]           op,
     input  logic [1:0]           act,
     input  logic [255:0]         param,
@@ -1351,8 +1351,8 @@ module Multiple_Processor (
                 mult_tag_cs[i]    <= MT_NONE;
                 mult_idx_cs[i]    <= 4'd0;
                 mult_nibble_cs[i] <= 2'd0;
-                nibb_we_p0_cs[i]  <= 4'd0;
-                nibb_we_p1_cs[i]  <= 4'd0;
+                nibb_we_p0_cs[i]  <= 8'd0;
+                nibb_we_p1_cs[i]  <= 8'd0;
             end
         end
         else begin
@@ -1449,7 +1449,7 @@ module Multiple_Processor (
     logic          mult_valid_comb;
     logic [1023:0] mult_data_comb;
     mult_tag_t     mult_tag_comb;
-    logic [2:0]    mult_idx_comb;
+    logic [3:0]    mult_idx_comb;
 
     assign mult_valid_comb = mult_raw_valid &&
                              ((mult_tag_cs[MULT_STAGES-1] != MT_FINAL) ||
@@ -1465,7 +1465,7 @@ module Multiple_Processor (
         if (!rst_n) begin
             mult_valid   <= 1'b0;
             mult_tag_out <= MT_NONE;
-            mult_idx_out <= 3'd0;
+            mult_idx_out <= 4'd0;
         end
         else begin
             mult_valid   <= mult_valid_comb;
