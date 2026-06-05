@@ -690,23 +690,24 @@ module CA_DataPath #(
     // ------------------------------------------------------------------------
     // 區塊 2：跨 issue 的中間儲存（這些是 DataPath 的「狀態」，必須留在這層）
     // ------------------------------------------------------------------------
-    // x/q/k/v_mem: 4 個 256-bit slot；score_mem: 8 個 (12-bit signed-digit × 64) slot。
+    // Burst-8：x/q/k/v_mem: 8 個 256-bit slot；score_mem: 16 個 (12-bit digit × 64)
+    //   slot（MHA 2 head × 8 matrix）。mult_idx = {head, matrix[2:0]} = 4-bit。
     // MHA head0 FINAL 部份積借用 q_mem/k_mem（SV 完 Q/K 已死），480-bit packed
-    // 拆成 q_mem(256) + k_mem[255:32](224)，省 1920 flops。
-    logic [255:0]              x_mem        [0:3];
-    logic [255:0]              q_mem        [0:3];
-    logic [255:0]              k_mem        [0:3];
-    logic [255:0]              v_mem        [0:3];
-    logic [SCORE_PACK_W-1:0]   score_mem    [0:7];
+    // 拆成 q_mem(256) + k_mem[255:32](224)，省 flops。
+    logic [255:0]              x_mem        [0:7];
+    logic [255:0]              q_mem        [0:7];
+    logic [255:0]              k_mem        [0:7];
+    logic [255:0]              v_mem        [0:7];
+    logic [SCORE_PACK_W-1:0]   score_mem    [0:15];
 
-    logic [3:0]                q_ready_cs;
-    logic [3:0]                k_ready_cs;
-    logic [3:0]                v_ready_cs;
-    logic [7:0]                score_ready_cs;
-    logic [3:0]                q_ready_ns;
-    logic [3:0]                k_ready_ns;
-    logic [3:0]                v_ready_ns;
-    logic [7:0]                score_ready_ns;
+    logic [7:0]                q_ready_cs;
+    logic [7:0]                k_ready_cs;
+    logic [7:0]                v_ready_cs;
+    logic [15:0]               score_ready_cs;
+    logic [7:0]                q_ready_ns;
+    logic [7:0]                k_ready_ns;
+    logic [7:0]                v_ready_ns;
+    logic [15:0]               score_ready_ns;
 
     // ------------------------------------------------------------------------
     // 區塊 3：Submodule output 線（comb，從各 submodule 出來的訊號）
@@ -714,7 +715,7 @@ module CA_DataPath #(
     logic          mult_valid;
     logic [1023:0] mult_data;
     mult_tag_t     mult_tag_out;
-    logic [2:0]    mult_idx_out;
+    logic [3:0]    mult_idx_out;
 
     logic          act_valid;
     logic [1023:0] act_data;
@@ -730,9 +731,9 @@ module CA_DataPath #(
     // ------------------------------------------------------------------------
     logic                 issue_valid_cs;
     issue_mode_t          issue_mode_cs;
-    logic [4:0]           issue_idx_cs;
+    logic [5:0]           issue_idx_cs;
     logic                 capture_valid_cs;
-    logic [1:0]           capture_idx_cs;
+    logic [2:0]           capture_idx_cs;
     logic [RAM_WIDTH-1:0] rd_data_cs;
 
     // ------------------------------------------------------------------------
@@ -742,16 +743,16 @@ module CA_DataPath #(
     logic [1:0]    act_in_mode;
     logic [1023:0] act_in_data;
     mult_tag_t     act_in_tag;
-    logic [2:0]    act_in_idx;
+    logic [3:0]    act_in_idx;
 
     logic          pot_in_valid;
     logic [1023:0] pot_in_data;
     mult_tag_t     pot_in_tag;
-    logic [2:0]    pot_in_idx;
+    logic [3:0]    pot_in_idx;
 
     logic                      mha_comb_valid;
     logic [1023:0]             mha_comb_data;
-    logic [2:0]                mha_comb_idx;
+    logic [3:0]                mha_comb_idx;
     logic [MHA_OUT_PACK_W-1:0] mha_head0_pack;  // packed 480-bit head0 partial
 
     logic          use_act_for_pot;
@@ -762,9 +763,9 @@ module CA_DataPath #(
     //   pot_*_cs: 5 級 (input buf + Matrix_Max 3 stages + final 1 stage)
     // ------------------------------------------------------------------------
     mult_tag_t     act_tag_cs [0:4];  // ACT 5-stage (input_buf + pair + psum + thr + apply)
-    logic [2:0]    act_idx_cs [0:4];
+    logic [3:0]    act_idx_cs [0:4];
     mult_tag_t     pot_tag_cs [0:4];
-    logic [2:0]    pot_idx_cs [0:4];
+    logic [3:0]    pot_idx_cs [0:4];
 
     // ========================================================================
     // 函式：MHA head 合併 / score 壓縮 / mha_out0 壓縮解壓
@@ -864,7 +865,7 @@ module CA_DataPath #(
     end
 
     assign qkv_ready    = (&q_ready_ns) && (&k_ready_ns) && (&v_ready_ns);
-    assign sv_ready     = (op == 2'b11) ? (&score_ready_ns) : (&score_ready_ns[3:0]);
+    assign sv_ready     = (op == 2'b11) ? (&score_ready_ns) : (&score_ready_ns[7:0]);
     assign result_valid = pot_valid &&
                           ((pot_tag_cs[4] == MT_NORM) ||
                            (pot_tag_cs[4] == MT_FINAL));
@@ -880,13 +881,13 @@ module CA_DataPath #(
     //   MT_Q/K/V           → PoT (直接，不過 ACT)
     // ========================================================================
     assign mha_comb_valid = mult_valid && (op == 2'b11) &&
-                            (mult_tag_out == MT_FINAL) && mult_idx_out[2];
-    assign mha_comb_idx   = {1'b0, mult_idx_out[1:0]};
+                            (mult_tag_out == MT_FINAL) && mult_idx_out[3];
+    assign mha_comb_idx   = {1'b0, mult_idx_out[2:0]};
     // Head0 write packed (給 always_ff 切成 q_mem / k_mem)
     assign mha_head0_pack = pack_mha_out(mult_data);
     // Head0 read：從 q_mem/k_mem 拼回 480-bit（q=[479:224]、k[255:32]=[223:0]）
     assign mha_comb_data  = combine_mha_heads(
-        unpack_mha_out({q_mem[mult_idx_out[1:0]], k_mem[mult_idx_out[1:0]][255:32]}),
+        unpack_mha_out({q_mem[mult_idx_out[2:0]], k_mem[mult_idx_out[2:0]][255:32]}),
         mult_data);
 
     // SCORE 直接走 mult → score_mem 不過 ACT，因此 ACT 入口只剩 NORM / FINAL(SHA) / MHA combined。
@@ -897,7 +898,7 @@ module CA_DataPath #(
     assign act_in_data  = mha_comb_valid ? mha_comb_data : mult_data;
     assign act_in_idx   = mha_comb_valid              ? mha_comb_idx :
                           (mult_tag_out == MT_FINAL)  ? mult_idx_out :
-                                                        3'd0;
+                                                        4'd0;
 
     always_comb begin
         // ACT 永遠 USER mode（SCORE 的 SPECIAL act 已內嵌進 pack_attention_score）。
@@ -1042,11 +1043,11 @@ module CA_DataPath #(
             end
 
             // 新 QKV 組開始：清掉前一組的 ready flags
-            if (issue_valid_cs && (issue_mode_cs == IM_QKV) && (issue_idx_cs == 5'd0)) begin
-                q_ready_cs     <= 4'd0;
-                k_ready_cs     <= 4'd0;
-                v_ready_cs     <= 4'd0;
-                score_ready_cs <= 8'd0;
+            if (issue_valid_cs && (issue_mode_cs == IM_QKV) && (issue_idx_cs == 6'd0)) begin
+                q_ready_cs     <= 8'd0;
+                k_ready_cs     <= 8'd0;
+                v_ready_cs     <= 8'd0;
+                score_ready_cs <= 16'd0;
             end
 
             // score_mem ← Mult (MT_SCORE) — attention activation 內嵌於 pack_attention_score
@@ -1059,25 +1060,25 @@ module CA_DataPath #(
             // MHA head0 partial → 借用 q_mem/k_mem（這時 Q/K 已死，下一組 QKV
             // 才會覆蓋）。480-bit packed: top 256 → q_mem, bottom 224 → k_mem[255:32]。
             if (mult_valid && (mult_tag_out == MT_FINAL) &&
-                (op == 2'b11) && !mult_idx_out[2]) begin
-                q_mem[mult_idx_out[1:0]] <= mha_head0_pack[MHA_OUT_PACK_W-1 -: 256];
-                k_mem[mult_idx_out[1:0]] <= {mha_head0_pack[MHA_OUT_PACK_W-257:0], 32'd0};
+                (op == 2'b11) && !mult_idx_out[3]) begin
+                q_mem[mult_idx_out[2:0]] <= mha_head0_pack[MHA_OUT_PACK_W-1 -: 256];
+                k_mem[mult_idx_out[2:0]] <= {mha_head0_pack[MHA_OUT_PACK_W-257:0], 32'd0};
             end
 
             // q/k/v_mem ← PoT
             if (pot_valid) begin
                 case (pot_tag_cs[4])
                     MT_Q: begin
-                        q_mem[pot_idx_cs[4][1:0]]      <= pot_data;
-                        q_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
+                        q_mem[pot_idx_cs[4][2:0]]      <= pot_data;
+                        q_ready_cs[pot_idx_cs[4][2:0]] <= 1'b1;
                     end
                     MT_K: begin
-                        k_mem[pot_idx_cs[4][1:0]]      <= pot_data;
-                        k_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
+                        k_mem[pot_idx_cs[4][2:0]]      <= pot_data;
+                        k_ready_cs[pot_idx_cs[4][2:0]] <= 1'b1;
                     end
                     MT_V: begin
-                        v_mem[pot_idx_cs[4][1:0]]      <= pot_data;
-                        v_ready_cs[pot_idx_cs[4][1:0]] <= 1'b1;
+                        v_mem[pot_idx_cs[4][2:0]]      <= pot_data;
+                        v_ready_cs[pot_idx_cs[4][2:0]] <= 1'b1;
                     end
                     default: begin end
                 endcase
