@@ -156,9 +156,9 @@ module CA_Control #(
 
     logic [1:0] fast_rd_req_cnt_cs;
     logic [6:0] fast_group_result_cnt_cs;
-    logic [ADDR_W-1:0] fast_write_base_cs;
+    logic fast_result_half_cs;
     logic [6:0] fast_pre_result_cnt_cs;
-    logic [ADDR_W-1:0] fast_pre_write_base_cs;
+    logic fast_pre_write_half_cs;
     logic fast_wr_pending_cs;
     logic fast_pre_wr_issued_cs;
 
@@ -166,43 +166,65 @@ module CA_Control #(
     logic att_rd_issued_cs;
     logic [7:0] att_rd_word_cnt_cs;
     logic [ADDR_W-1:0] att_read_base_cs;
-    logic [ADDR_W-1:0] att_result_base_cs;
+    logic att_result_half_cs;
     logic [6:0] att_pre_result_cnt_cs;
-    logic [ADDR_W-1:0] att_pre_write_base_cs;
+    logic att_pre_write_half_cs;
     logic [6:0] att_group_result_cnt_cs;
     logic att_wr_pending_cs;
     logic att_pre_wr_issued_cs;
 
     logic job_start;
-    logic fast_first_rd_fire;
+    logic fast_rd_req;
+    logic [ADDR_W-1:0] fast_rd_addr;
     logic fast_rd_fire;
     logic fast_first_pre_result;
+    logic fast_wr_req;
+    logic [ADDR_W-1:0] fast_wr_addr;
     logic fast_wr_fire;
-    logic att_param_done_fire;
+    logic att_first_rd_req;
+    logic att_read_rd_req;
+    logic att_half_rd_req;
+    logic att_rd_req;
+    logic [ADDR_W-1:0] att_rd_addr;
     logic att_rd_fire;
-    logic att_next_rd_fire;
     logic att_rd_data_fire;
     logic att_result_active;
     logic att_first_pre_result;
+    logic att_wr_req;
+    logic [ADDR_W-1:0] att_wr_addr;
     logic att_wr_fire;
+    logic rd_cmd_req;
+    logic [ADDR_W-1:0] rd_cmd_addr;
+    logic rd_cmd_fire;
+    logic wr_cmd_req;
+    logic [ADDR_W-1:0] wr_cmd_addr;
+    logic wr_cmd_fire;
 
     assign job_start          = (state_cs == S_IDLE) && mem_set && in_valid;
-    assign fast_first_rd_fire = job_start && !op[1] && rd_ready;
-    assign fast_rd_fire       = (state_cs == S_FAST_RUN) &&
-                                (fast_rd_req_cnt_cs < 2'd2) && rd_ready;
+    assign fast_rd_req        = (job_start && !op[1]) ||
+                                ((state_cs == S_FAST_RUN) &&
+                                 (fast_rd_req_cnt_cs < 2'd2));
+    assign fast_rd_addr       = ((state_cs == S_FAST_RUN) && fast_rd_req_cnt_cs[0]) ?
+                                HALF_ADDR : '0;
+    assign fast_rd_fire       = fast_rd_req && rd_ready;
     assign fast_first_pre_result = (state_cs == S_FAST_RUN) &&
                                    datapath_result_pre_valid &&
                                    (fast_pre_result_cnt_cs == 7'd0) &&
                                    !fast_pre_wr_issued_cs;
-    assign fast_wr_fire       = (state_cs == S_FAST_RUN) && wr_ready &&
+    assign fast_wr_req        = (state_cs == S_FAST_RUN) &&
                                 (fast_wr_pending_cs || fast_first_pre_result);
+    assign fast_wr_addr       = fast_pre_write_half_cs ? HALF_ADDR : '0;
+    assign fast_wr_fire       = fast_wr_req && wr_ready;
 
-    assign att_param_done_fire = (state_cs == S_ATT_PARAM) && in_valid &&
-                                 att_param_phase_cs && rd_ready;
-    assign att_rd_fire         = (state_cs == S_ATT_READ) && !att_rd_issued_cs && rd_ready;
-    assign att_next_rd_fire    = (state_cs == S_ATT_WAIT) &&
+    assign att_first_rd_req    = (state_cs == S_ATT_PARAM) && in_valid &&
+                                 att_param_phase_cs;
+    assign att_read_rd_req     = (state_cs == S_ATT_READ) && !att_rd_issued_cs;
+    assign att_half_rd_req     = (state_cs == S_ATT_WAIT) &&
                                  (att_read_base_cs != HALF_ADDR) &&
-                                 att_pre_wr_issued_cs && rd_ready;
+                                 att_pre_wr_issued_cs;
+    assign att_rd_req          = att_first_rd_req || att_read_rd_req || att_half_rd_req;
+    assign att_rd_addr         = att_half_rd_req ? HALF_ADDR : att_read_base_cs;
+    assign att_rd_fire         = att_rd_req && rd_ready;
     assign att_rd_data_fire    = (state_cs == S_ATT_READ) && rd_valid &&
                                  (att_rd_word_cnt_cs < 8'd128);
     assign att_result_active   = (state_cs == S_ATT_READ) || (state_cs == S_ATT_WAIT);
@@ -210,8 +232,16 @@ module CA_Control #(
                                   datapath_result_pre_valid &&
                                   (att_pre_result_cnt_cs == 7'd0) &&
                                   !att_pre_wr_issued_cs;
-    assign att_wr_fire         = att_result_active && wr_ready &&
+    assign att_wr_req          = att_result_active &&
                                  (att_wr_pending_cs || att_first_pre_result);
+    assign att_wr_addr         = att_pre_write_half_cs ? HALF_ADDR : '0;
+    assign att_wr_fire         = att_wr_req && wr_ready;
+    assign rd_cmd_req          = fast_rd_req || att_rd_req;
+    assign rd_cmd_addr         = fast_rd_req ? fast_rd_addr : att_rd_addr;
+    assign rd_cmd_fire         = rd_cmd_req && rd_ready;
+    assign wr_cmd_req          = fast_wr_req || att_wr_req;
+    assign wr_cmd_addr         = fast_wr_req ? fast_wr_addr : att_wr_addr;
+    assign wr_cmd_fire         = wr_cmd_req && wr_ready;
 
     always_comb begin
         datapath_issue_valid = 1'b0;
@@ -239,18 +269,18 @@ module CA_Control #(
             exec_weight_v            <= 256'd0;
             fast_rd_req_cnt_cs       <= 2'd0;
             fast_group_result_cnt_cs <= 7'd0;
-            fast_write_base_cs       <= '0;
+            fast_result_half_cs      <= 1'b0;
             fast_pre_result_cnt_cs   <= 7'd0;
-            fast_pre_write_base_cs   <= '0;
+            fast_pre_write_half_cs   <= 1'b0;
             fast_wr_pending_cs       <= 1'b0;
             fast_pre_wr_issued_cs    <= 1'b0;
             att_param_phase_cs       <= 1'b0;
             att_rd_issued_cs         <= 1'b0;
             att_rd_word_cnt_cs       <= 8'd0;
             att_read_base_cs         <= '0;
-            att_result_base_cs       <= '0;
+            att_result_half_cs       <= 1'b0;
             att_pre_result_cnt_cs    <= 7'd0;
-            att_pre_write_base_cs    <= '0;
+            att_pre_write_half_cs    <= 1'b0;
             att_group_result_cnt_cs  <= 7'd0;
             att_wr_pending_cs        <= 1'b0;
             att_pre_wr_issued_cs     <= 1'b0;
@@ -279,11 +309,11 @@ module CA_Control #(
                         exec_act   <= act;
                         exec_param <= param;
 
-                        fast_rd_req_cnt_cs       <= fast_first_rd_fire ? 2'd1 : 2'd0;
+                        fast_rd_req_cnt_cs       <= fast_rd_fire ? 2'd1 : 2'd0;
                         fast_group_result_cnt_cs <= 7'd0;
-                        fast_write_base_cs       <= '0;
+                        fast_result_half_cs      <= 1'b0;
                         fast_pre_result_cnt_cs   <= 7'd0;
-                        fast_pre_write_base_cs   <= '0;
+                        fast_pre_write_half_cs   <= 1'b0;
                         fast_wr_pending_cs       <= 1'b0;
                         fast_pre_wr_issued_cs    <= 1'b0;
 
@@ -291,9 +321,9 @@ module CA_Control #(
                         att_rd_issued_cs         <= 1'b0;
                         att_rd_word_cnt_cs       <= 8'd0;
                         att_read_base_cs         <= '0;
-                        att_result_base_cs       <= '0;
+                        att_result_half_cs       <= 1'b0;
                         att_pre_result_cnt_cs    <= 7'd0;
-                        att_pre_write_base_cs    <= '0;
+                        att_pre_write_half_cs    <= 1'b0;
                         att_group_result_cnt_cs  <= 7'd0;
                         att_wr_pending_cs        <= 1'b0;
                         att_pre_wr_issued_cs     <= 1'b0;
@@ -310,8 +340,8 @@ module CA_Control #(
                     if (datapath_result_pre_valid) begin
                         if (fast_pre_result_cnt_cs == 7'd127) begin
                             fast_pre_result_cnt_cs <= 7'd0;
-                            if (fast_pre_write_base_cs != HALF_ADDR) begin
-                                fast_pre_write_base_cs <= HALF_ADDR;
+                            if (!fast_pre_write_half_cs) begin
+                                fast_pre_write_half_cs <= 1'b1;
                                 fast_pre_wr_issued_cs  <= 1'b0;
                                 fast_wr_pending_cs     <= 1'b0;
                             end
@@ -323,11 +353,11 @@ module CA_Control #(
 
                     if (datapath_result_valid) begin
                         if (fast_group_result_cnt_cs == 7'd127) begin
-                            if (fast_write_base_cs == HALF_ADDR) begin
+                            if (fast_result_half_cs) begin
                                 state_cs <= S_IDLE;
                             end
                             else begin
-                                fast_write_base_cs       <= HALF_ADDR;
+                                fast_result_half_cs      <= 1'b1;
                                 fast_group_result_cnt_cs <= 7'd0;
                             end
                         end
@@ -345,12 +375,12 @@ module CA_Control #(
                         end
                         else begin
                             exec_weight_v            <= param;
-                            att_rd_issued_cs         <= att_param_done_fire;
+                            att_rd_issued_cs         <= att_rd_fire;
                             att_rd_word_cnt_cs       <= 8'd0;
                             att_read_base_cs         <= '0;
-                            att_result_base_cs       <= '0;
+                            att_result_half_cs       <= 1'b0;
                             att_pre_result_cnt_cs    <= 7'd0;
-                            att_pre_write_base_cs    <= '0;
+                            att_pre_write_half_cs    <= 1'b0;
                             att_group_result_cnt_cs  <= 7'd0;
                             att_pre_wr_issued_cs     <= 1'b0;
                             att_wr_pending_cs        <= 1'b0;
@@ -376,7 +406,7 @@ module CA_Control #(
                 end
 
                 S_ATT_WAIT: begin
-                    if (att_next_rd_fire) begin
+                    if (att_rd_fire) begin
                         att_read_base_cs  <= HALF_ADDR;
                         att_rd_issued_cs  <= 1'b1;
                         att_rd_word_cnt_cs <= 8'd0;
@@ -392,8 +422,8 @@ module CA_Control #(
             if (att_result_active && datapath_result_pre_valid) begin
                 if (att_pre_result_cnt_cs == 7'd127) begin
                     att_pre_result_cnt_cs <= 7'd0;
-                    if (att_pre_write_base_cs != HALF_ADDR) begin
-                        att_pre_write_base_cs <= HALF_ADDR;
+                    if (!att_pre_write_half_cs) begin
+                        att_pre_write_half_cs <= 1'b1;
                         att_pre_wr_issued_cs  <= 1'b0;
                         att_wr_pending_cs     <= 1'b0;
                     end
@@ -406,11 +436,11 @@ module CA_Control #(
             if (att_result_active && datapath_result_valid) begin
                 if (att_group_result_cnt_cs == 7'd127) begin
                     att_group_result_cnt_cs <= 7'd0;
-                    if (att_result_base_cs == HALF_ADDR) begin
+                    if (att_result_half_cs) begin
                         state_cs <= S_IDLE;
                     end
                     else begin
-                        att_result_base_cs <= HALF_ADDR;
+                        att_result_half_cs <= 1'b1;
                     end
                 end
                 else begin
@@ -431,29 +461,9 @@ module CA_Control #(
             rd_addr  <= '0;
             rd_burst <= '0;
 
-            if (fast_first_rd_fire) begin
+            if (rd_cmd_fire) begin
                 rd_en    <= 1'b1;
-                rd_addr  <= '0;
-                rd_burst <= BURST_128;
-            end
-            else if (fast_rd_fire) begin
-                rd_en    <= 1'b1;
-                rd_addr  <= fast_rd_req_cnt_cs[0] ? HALF_ADDR : '0;
-                rd_burst <= BURST_128;
-            end
-            else if (att_param_done_fire) begin
-                rd_en    <= 1'b1;
-                rd_addr  <= att_read_base_cs;
-                rd_burst <= BURST_128;
-            end
-            else if (att_next_rd_fire) begin
-                rd_en    <= 1'b1;
-                rd_addr  <= HALF_ADDR;
-                rd_burst <= BURST_128;
-            end
-            else if (att_rd_fire) begin
-                rd_en    <= 1'b1;
-                rd_addr  <= att_read_base_cs;
+                rd_addr  <= rd_cmd_addr;
                 rd_burst <= BURST_128;
             end
         end
@@ -470,14 +480,9 @@ module CA_Control #(
             wr_addr  <= '0;
             wr_burst <= '0;
 
-            if (fast_wr_fire) begin
+            if (wr_cmd_fire) begin
                 wr_en    <= 1'b1;
-                wr_addr  <= fast_pre_write_base_cs;
-                wr_burst <= BURST_128;
-            end
-            else if (att_wr_fire) begin
-                wr_en    <= 1'b1;
-                wr_addr  <= att_pre_write_base_cs;
+                wr_addr  <= wr_cmd_addr;
                 wr_burst <= BURST_128;
             end
         end
