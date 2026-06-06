@@ -1367,21 +1367,6 @@ module Multiple_Processor (
     // Raw multiplier outputs (before nibble accumulation)
     logic          mult_raw_valid;
     logic [1023:0] mult_raw_data;
-
-    Mult_5Stage_Parallel u_mult (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .op          (op),
-        .b_transpose (mult_issue_b_transpose),
-        .in_valid    (mult_issue_valid),
-        .in_data_A   (mult_issue_A),
-        .in_data_B   (mult_issue_B),
-        .out_valid   (mult_raw_valid),
-        .out_data    (mult_raw_data)
-    );
-
-    // engine1：QKV 算 K、SV 算 head1/奇數 score（transpose）、FINAL 算 d1。
-    // engine2：QKV 算 V、FINAL 算 d2。無 transpose。
     logic          mult_k_raw_valid;
     logic [1023:0] mult_k_raw_data;
     logic          mult_v_raw_valid;
@@ -1395,64 +1380,53 @@ module Multiple_Processor (
     logic [5:0]    mult_k_idx_cs [0:MULT_STAGES-1];
     logic [5:0]    mult_v_idx_cs [0:MULT_STAGES-1];
 
-    Mult_5Stage_Parallel u_mult_k (
+    Mult3_5Stage_Parallel u_mult3_main (
         .clk         (clk),
         .rst_n       (rst_n),
         .op          (op),
-        .b_transpose (mult_k_issue_btr),
-        .in_valid    (mult_k_issue_valid),
-        .in_data_A   (mult_k_issue_A),
-        .in_data_B   (mult_k_issue_B),
-        .out_valid   (mult_k_raw_valid),
-        .out_data    (mult_k_raw_data)
+        .lane0_b_transpose (mult_issue_b_transpose),
+        .lane0_in_valid    (mult_issue_valid),
+        .lane0_in_data_A   (mult_issue_A),
+        .lane0_in_data_B   (mult_issue_B),
+        .lane0_out_valid   (mult_raw_valid),
+        .lane0_out_data    (mult_raw_data),
+        .lane1_b_transpose (mult_k_issue_btr),
+        .lane1_in_valid    (mult_k_issue_valid),
+        .lane1_in_data_A   (mult_k_issue_A),
+        .lane1_in_data_B   (mult_k_issue_B),
+        .lane1_out_valid   (mult_k_raw_valid),
+        .lane1_out_data    (mult_k_raw_data),
+        .lane2_b_transpose (1'b0),
+        .lane2_in_valid    (mult_v_issue_valid),
+        .lane2_in_data_A   (mult_v_issue_A),
+        .lane2_in_data_B   (mult_v_issue_B),
+        .lane2_out_valid   (mult_v_raw_valid),
+        .lane2_out_data    (mult_v_raw_data)
     );
 
-    Mult_5Stage_Parallel u_mult_v (
+    // engine1：QKV 算 K、SV 算 head1/奇數 score（transpose）、FINAL 算 d1。
+    // engine2：QKV 算 V、FINAL 算 d2。無 transpose。
+    Mult3_Attn8_5Stage_Parallel u_mult3_aux (
         .clk         (clk),
         .rst_n       (rst_n),
-        .op          (op),
-        .b_transpose (1'b0),
-        .in_valid    (mult_v_issue_valid),
-        .in_data_A   (mult_v_issue_A),
-        .in_data_B   (mult_v_issue_B),
-        .out_valid   (mult_v_raw_valid),
-        .out_data    (mult_v_raw_data)
-    );
-
-    Mult_5Stage_Parallel u_mult_aux0 (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .op          (op),
-        .b_transpose (aux0_issue_btr),
-        .in_valid    (aux0_issue_valid),
-        .in_data_A   (aux0_issue_A),
-        .in_data_B   (aux0_issue_B),
-        .out_valid   (aux0_raw_valid),
-        .out_data    (aux0_raw_data)
-    );
-
-    Mult_5Stage_Parallel u_mult_aux1 (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .op          (op),
-        .b_transpose (aux1_issue_btr),
-        .in_valid    (aux1_issue_valid),
-        .in_data_A   (aux1_issue_A),
-        .in_data_B   (aux1_issue_B),
-        .out_valid   (aux1_raw_valid),
-        .out_data    (aux1_raw_data)
-    );
-
-    Mult_5Stage_Parallel u_mult_aux2 (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .op          (op),
-        .b_transpose (1'b0),
-        .in_valid    (aux2_issue_valid),
-        .in_data_A   (aux2_issue_A),
-        .in_data_B   (aux2_issue_B),
-        .out_valid   (aux2_raw_valid),
-        .out_data    (aux2_raw_data)
+        .lane0_b_transpose (aux0_issue_btr),
+        .lane0_in_valid    (aux0_issue_valid),
+        .lane0_in_data_A   (aux0_issue_A),
+        .lane0_in_data_B   (aux0_issue_B),
+        .lane0_out_valid   (aux0_raw_valid),
+        .lane0_out_data    (aux0_raw_data),
+        .lane1_b_transpose (aux1_issue_btr),
+        .lane1_in_valid    (aux1_issue_valid),
+        .lane1_in_data_A   (aux1_issue_A),
+        .lane1_in_data_B   (aux1_issue_B),
+        .lane1_out_valid   (aux1_raw_valid),
+        .lane1_out_data    (aux1_raw_data),
+        .lane2_b_transpose (1'b0),
+        .lane2_in_valid    (aux2_issue_valid),
+        .lane2_in_data_A   (aux2_issue_A),
+        .lane2_in_data_B   (aux2_issue_B),
+        .lane2_out_valid   (aux2_raw_valid),
+        .lane2_out_data    (aux2_raw_data)
     );
 
     // K/V idx + role + score pipeline（對齊 mult 5-stage）。
@@ -1599,6 +1573,279 @@ module Multiple_Processor (
             sv1_score_data     <= aux1_raw_data;
             sv1_score_idx      <= aux1_idx_cs[MULT_STAGES-1];
         end
+    end
+
+endmodule
+
+module Mult3_5Stage_Parallel (
+    input  logic          clk,
+    input  logic          rst_n,
+    input  logic [1:0]    op,
+
+    input  logic          lane0_b_transpose,
+    input  logic          lane0_in_valid,
+    input  logic [255:0]  lane0_in_data_A,
+    input  logic [255:0]  lane0_in_data_B,
+    output logic          lane0_out_valid,
+    output logic [1023:0] lane0_out_data,
+
+    input  logic          lane1_b_transpose,
+    input  logic          lane1_in_valid,
+    input  logic [255:0]  lane1_in_data_A,
+    input  logic [255:0]  lane1_in_data_B,
+    output logic          lane1_out_valid,
+    output logic [1023:0] lane1_out_data,
+
+    input  logic          lane2_b_transpose,
+    input  logic          lane2_in_valid,
+    input  logic [255:0]  lane2_in_data_A,
+    input  logic [255:0]  lane2_in_data_B,
+    output logic          lane2_out_valid,
+    output logic [1023:0] lane2_out_data
+);
+
+    Mult_5Stage_Parallel u_lane0 (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .op          (op),
+        .b_transpose (lane0_b_transpose),
+        .in_valid    (lane0_in_valid),
+        .in_data_A   (lane0_in_data_A),
+        .in_data_B   (lane0_in_data_B),
+        .out_valid   (lane0_out_valid),
+        .out_data    (lane0_out_data)
+    );
+
+    Mult_Attn8_5Stage_Parallel u_lane1 (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .b_transpose (lane1_b_transpose),
+        .in_valid    (lane1_in_valid),
+        .in_data_A   (lane1_in_data_A),
+        .in_data_B   (lane1_in_data_B),
+        .out_valid   (lane1_out_valid),
+        .out_data    (lane1_out_data)
+    );
+
+    Mult_Attn8_5Stage_Parallel u_lane2 (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .b_transpose (lane2_b_transpose),
+        .in_valid    (lane2_in_valid),
+        .in_data_A   (lane2_in_data_A),
+        .in_data_B   (lane2_in_data_B),
+        .out_valid   (lane2_out_valid),
+        .out_data    (lane2_out_data)
+    );
+
+endmodule
+
+module Mult3_Attn8_5Stage_Parallel (
+    input  logic          clk,
+    input  logic          rst_n,
+
+    input  logic          lane0_b_transpose,
+    input  logic          lane0_in_valid,
+    input  logic [255:0]  lane0_in_data_A,
+    input  logic [255:0]  lane0_in_data_B,
+    output logic          lane0_out_valid,
+    output logic [1023:0] lane0_out_data,
+
+    input  logic          lane1_b_transpose,
+    input  logic          lane1_in_valid,
+    input  logic [255:0]  lane1_in_data_A,
+    input  logic [255:0]  lane1_in_data_B,
+    output logic          lane1_out_valid,
+    output logic [1023:0] lane1_out_data,
+
+    input  logic          lane2_b_transpose,
+    input  logic          lane2_in_valid,
+    input  logic [255:0]  lane2_in_data_A,
+    input  logic [255:0]  lane2_in_data_B,
+    output logic          lane2_out_valid,
+    output logic [1023:0] lane2_out_data
+);
+
+    Mult_Attn8_5Stage_Parallel u_lane0 (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .b_transpose (lane0_b_transpose),
+        .in_valid    (lane0_in_valid),
+        .in_data_A   (lane0_in_data_A),
+        .in_data_B   (lane0_in_data_B),
+        .out_valid   (lane0_out_valid),
+        .out_data    (lane0_out_data)
+    );
+
+    Mult_Attn8_5Stage_Parallel u_lane1 (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .b_transpose (lane1_b_transpose),
+        .in_valid    (lane1_in_valid),
+        .in_data_A   (lane1_in_data_A),
+        .in_data_B   (lane1_in_data_B),
+        .out_valid   (lane1_out_valid),
+        .out_data    (lane1_out_data)
+    );
+
+    Mult_Attn8_5Stage_Parallel u_lane2 (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .b_transpose (lane2_b_transpose),
+        .in_valid    (lane2_in_valid),
+        .in_data_A   (lane2_in_data_A),
+        .in_data_B   (lane2_in_data_B),
+        .out_valid   (lane2_out_valid),
+        .out_data    (lane2_out_data)
+    );
+
+endmodule
+
+module Mult_Attn8_5Stage_Parallel (
+    input  logic          clk,
+    input  logic          rst_n,
+    input  logic          b_transpose,
+    input  logic          in_valid,
+    input  logic [255:0]  in_data_A,
+    input  logic [255:0]  in_data_B,
+    output logic          out_valid,
+    output logic [1023:0] out_data
+);
+
+    localparam int ROW_ELEM = 8;
+    localparam int MAT_SIZE = 64;
+    localparam int DOT_SIZE = 8;
+
+    typedef logic signed [3:0]  s4_t;
+    typedef logic signed [7:0]  s8_t;
+    typedef logic signed [11:0] s12_t;
+    typedef logic signed [15:0] s16_t;
+
+    logic         in_valid_cs;
+    logic         b_transpose_cs;
+    logic [255:0] in_data_A_cs;
+    logic [255:0] in_data_B_cs;
+
+    logic stage1_valid_cs;
+    logic stage2_valid_cs;
+    logic stage3_valid_cs;
+    logic stage4_valid_cs;
+    s4_t  operand_a_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s4_t  operand_b_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s8_t  prod_cs      [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s12_t partial_cs   [0:MAT_SIZE-1][0:1];
+    s16_t sum_cs       [0:MAT_SIZE-1];
+
+    s4_t  operand_a_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s4_t  operand_b_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s8_t  prod_next      [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s12_t partial_next   [0:MAT_SIZE-1][0:1];
+    s16_t sum_next       [0:MAT_SIZE-1];
+
+    function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
+        get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
+    endfunction
+
+    function automatic s4_t sel_a(
+        input logic [255:0] mat_A,
+        input integer       row_idx,
+        input integer       tap
+    );
+        sel_a = get_s4(mat_A, (row_idx * ROW_ELEM) + tap);
+    endfunction
+
+    function automatic s4_t sel_b(
+        input logic [255:0] mat_B,
+        input logic         b_transpose_sel,
+        input integer       lane,
+        input integer       tap
+    );
+        begin
+            if (b_transpose_sel)
+                sel_b = get_s4(mat_B, (lane * ROW_ELEM) + tap);
+            else
+                sel_b = get_s4(mat_B, (tap * ROW_ELEM) + lane);
+        end
+    endfunction
+
+    always_comb begin
+        for (int row = 0; row < ROW_ELEM; row++) begin
+            for (int lane = 0; lane < ROW_ELEM; lane++) begin
+                for (int tap = 0; tap < DOT_SIZE; tap++) begin
+                    operand_a_next[(row * ROW_ELEM) + lane][tap] =
+                        sel_a(in_data_A_cs, row, tap);
+                    operand_b_next[(row * ROW_ELEM) + lane][tap] =
+                        sel_b(in_data_B_cs, b_transpose_cs, lane, tap);
+                end
+            end
+        end
+    end
+
+    always_comb begin
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            for (int t = 0; t < DOT_SIZE; t++) begin
+                prod_next[i][t] = s8_t'(
+                    $signed(operand_a_cs[i][t]) * $signed(operand_b_cs[i][t]));
+            end
+        end
+    end
+
+    always_comb begin
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            partial_next[i][0] = s12_t'(prod_cs[i][0]) + s12_t'(prod_cs[i][1]) +
+                                 s12_t'(prod_cs[i][2]) + s12_t'(prod_cs[i][3]);
+            partial_next[i][1] = s12_t'(prod_cs[i][4]) + s12_t'(prod_cs[i][5]) +
+                                 s12_t'(prod_cs[i][6]) + s12_t'(prod_cs[i][7]);
+        end
+    end
+
+    always_comb begin
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            sum_next[i] = s16_t'(partial_cs[i][0]) + s16_t'(partial_cs[i][1]);
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            in_valid_cs     <= 1'b0;
+            stage1_valid_cs <= 1'b0;
+            stage2_valid_cs <= 1'b0;
+            stage3_valid_cs <= 1'b0;
+            stage4_valid_cs <= 1'b0;
+        end
+        else begin
+            in_valid_cs     <= in_valid;
+            b_transpose_cs  <= b_transpose;
+            in_data_A_cs    <= in_data_A;
+            in_data_B_cs    <= in_data_B;
+
+            stage1_valid_cs <= in_valid_cs;
+            stage2_valid_cs <= stage1_valid_cs;
+            stage3_valid_cs <= stage2_valid_cs;
+            stage4_valid_cs <= stage3_valid_cs;
+            for (int i = 0; i < MAT_SIZE; i++)
+                for (int t = 0; t < DOT_SIZE; t++) begin
+                    operand_a_cs[i][t] <= operand_a_next[i][t];
+                    operand_b_cs[i][t] <= operand_b_next[i][t];
+                end
+            for (int i = 0; i < MAT_SIZE; i++)
+                for (int t = 0; t < DOT_SIZE; t++)
+                    prod_cs[i][t] <= prod_next[i][t];
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                partial_cs[i][0] <= partial_next[i][0];
+                partial_cs[i][1] <= partial_next[i][1];
+            end
+            for (int i = 0; i < MAT_SIZE; i++)
+                sum_cs[i] <= sum_next[i];
+        end
+    end
+
+    assign out_valid = stage4_valid_cs;
+
+    always_comb begin
+        out_data = 1024'd0;
+        for (int i = 0; i < MAT_SIZE; i++)
+            out_data[1023 - (i * 16) -: 16] = sum_cs[i];
     end
 
 endmodule
