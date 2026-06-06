@@ -157,14 +157,15 @@ module CA_Control #(
     // 6-mult schedule:
     //   front: 3 engines Q/K/V + 2 engines SV score stream.
     //   final: 6 engines compute MHA head0/head1 d0/d1/d2 in the same 32 phases.
-    //   HA_FRONT_WAIT covers the fixed latency from the last Q/K PoT output to
-    //   the last score_mem write. FINAL phase 0 is useful for both SHA and MHA.
+    //   HA_FRONT_WAIT covers the fixed latency from the last streaming Q/K PoT
+    //   output to the last score_mem write. FINAL phase 0 is useful for both
+    //   SHA and MHA.
     localparam logic [6:0] HA_RESTART_SHA = 7'd35;
     localparam logic [6:0] HA_RESTART_MHA = 7'd35;
     localparam logic [6:0] HA_WR_SHA      = 7'd11;
     localparam logic [6:0] HA_WR_MHA      = 7'd11;
     localparam logic [5:0] HA_FRONT_WAIT  = 6'd18;
-    localparam logic [5:0] HA_PF_SHA_SV_PHASE = 6'd2;
+    localparam logic [5:0] HA_PF_SHA_SV_PHASE = 6'd4;
 
     typedef enum logic [2:0] {
         S_IDLE,
@@ -267,11 +268,11 @@ module CA_Control #(
     assign ha_qkv_stream_fire    = rd_valid &&
                                     ((state_cs == S_HA_READ) ||
                                      ha_wait_stream_start);
-    // QKV is issued directly in S_HA_READ. MHA SV score is launched internally
-    // from the Q/K PoT stream, so MHA ST_SV is a fixed front-drain wait; SHA
-    // keeps the old 2-way IM_SV issue schedule.
+    // QKV is issued directly in S_HA_READ. SHA/MHA SV score is launched
+    // internally from the Q/K PoT stream, so ST_SV is only a fixed front-drain
+    // wait before FINAL can consume score_mem.
     assign ha_phase_last         = (ha_stage_cs == ST_SV) ?
-                                   ((exec_op == 2'b11) ? (HA_FRONT_WAIT - 6'd1) : 6'd15) :
+                                   (HA_FRONT_WAIT - 6'd1) :
                                    /* ST_FINAL */             6'd31;
 
     always_comb begin
@@ -296,14 +297,7 @@ module CA_Control #(
             end
 
             S_HA_ISSUE: begin
-                if (ha_stage_cs == ST_SV) begin
-                    if (exec_op != 2'b11) begin
-                        datapath_issue_valid = 1'b1;
-                        datapath_issue_mode  = IM_SV;
-                        datapath_issue_idx   = ha_phase_cnt_cs;
-                    end
-                end
-                else if (ha_stage_cs == ST_FINAL) begin
+                if (ha_stage_cs == ST_FINAL) begin
                     datapath_issue_valid = 1'b1;
                     datapath_issue_mode  = IM_FINAL;
                     datapath_issue_idx   = ha_phase_cnt_cs;
@@ -631,11 +625,9 @@ module CA_DataPath #(
     // ------------------------------------------------------------------------
     // 區塊 2：跨 issue 的中間儲存（這些是 DataPath 的「狀態」，必須留在這層）
     // ------------------------------------------------------------------------
-    // Burst-32 intermediate state. Q/K are kept as ordinary QKV outputs, while
-    // SV score is now launched from the Q/K PoT stream. v_mem and score_mem are
-    // the storage needed by the later 6-way FINAL phase.
-    logic [255:0]              q_mem        [0:31];
-    logic [255:0]              k_mem        [0:31];
+    // Burst-32 intermediate state. Q/K are streamed directly into the score
+    // path as soon as their PoT outputs are ready; only V and score must be
+    // retained for the later FINAL phase.
     logic [255:0]              v_mem        [0:31];
     logic [SCORE_PACK_W-1:0]   score_mem    [0:63];
 
@@ -700,7 +692,6 @@ module CA_DataPath #(
 
     // K/V PoT lane 入口（純 bypass：直接拿 mult engine1/2 輸出）
     logic          pot_k_in_valid;
-    logic [5:0]    pot_k_in_idx;
     logic          pot_v_in_valid;
     logic [5:0]    pot_v_in_idx;
 
@@ -718,7 +709,6 @@ module CA_DataPath #(
     mult_tag_t     pot_tag_cs [0:4];
     logic [5:0]    pot_idx_cs [0:4];
     // K/V PoT lane idx sideband（tag 恆 K/V，valid 直接用 PoT out_valid）。對齊 5-stage。
-    logic [5:0]    pot_k_idx_cs   [0:4];
     logic [5:0]    pot_v_idx_cs   [0:4];
 
     // ========================================================================
@@ -763,7 +753,7 @@ module CA_DataPath #(
                            (pot_tag_cs[4] == MT_FINAL));
 
     // ========================================================================
-    // 區塊 8：Mult-output dispatch (mult → ACT / PoT / score_mem / q_mem-k_mem)
+    // 區塊 8：Mult-output dispatch (mult → ACT / PoT / score_mem / V storage)
     //
     //   MT_NORM            → ACT (tag=MT_NORM)
     //   MT_SCORE           → score_mem 直接（comb pack_attention_score，省 4 cycles）
@@ -802,13 +792,11 @@ module CA_DataPath #(
 
     // lane1 (K) / lane2 (V)：直接 bypass engine1/2 輸出（tag 恆 K/V）。
     assign pot_k_in_valid = mult_k_valid;
-    assign pot_k_in_idx   = mult_k_idx;
     assign pot_v_in_valid = mult_v_valid;
     assign pot_v_in_idx   = mult_v_idx;
 
     assign qk_stream_valid = pot_valid &&
                              pot_k_valid &&
-                             (op == 2'b11) &&
                              (pot_tag_cs[4] == MT_Q);
 
     // ========================================================================
@@ -829,8 +817,6 @@ module CA_DataPath #(
         .q_stream_idx   (pot_idx_cs[4]),
         .q_stream_data  (pot_data),
         .k_stream_data  (pot_k_data),
-        .q_mem        (q_mem),
-        .k_mem        (k_mem),
         .v_mem        (v_mem),
         .score_mem    (score_mem),
         .mult_valid   (mult_valid),
@@ -916,7 +902,6 @@ module CA_DataPath #(
                 pot_idx_cs[i] <= 6'd0;
             end
             for (int i = 0; i < 5; i++) begin
-                pot_k_idx_cs[i] <= 6'd0;
                 pot_v_idx_cs[i] <= 6'd0;
             end
 
@@ -949,10 +934,8 @@ module CA_DataPath #(
             end
 
             // K/V lane idx sideband（對齊 PoT 5-stage）
-            pot_k_idx_cs[0] <= pot_k_in_idx;
             pot_v_idx_cs[0] <= pot_v_in_idx;
             for (int i = 1; i < 5; i++) begin
-                pot_k_idx_cs[i] <= pot_k_idx_cs[i - 1];
                 pot_v_idx_cs[i] <= pot_v_idx_cs[i - 1];
             end
 
@@ -973,14 +956,8 @@ module CA_DataPath #(
                 score_mem[sv1_score_idx] <= pack_attention_score(sv1_score_data);
             end
 
-            // q_mem ← lane0 PoT（只剩 MT_Q；NORM/FINAL 走 output buffer）
-            if (pot_valid && (pot_tag_cs[4] == MT_Q)) begin
-                q_mem[pot_idx_cs[4][4:0]]      <= pot_data;
-            end
-            // k_mem ← lane1 PoT、v_mem ← lane2 PoT（QKV 三路並行）
-            if (pot_k_valid) begin
-                k_mem[pot_k_idx_cs[4][4:0]]      <= pot_k_data;
-            end
+            // Q/K stream directly into score computation; only V is retained
+            // for FINAL score*V.
             if (pot_v_valid) begin
                 v_mem[pot_v_idx_cs[4][4:0]]      <= pot_v_data;
             end
@@ -1015,8 +992,6 @@ module Multiple_Processor (
     input  logic [255:0]   q_stream_data,
     input  logic [255:0]   k_stream_data,
 
-    input  logic [255:0]   q_mem       [0:31],
-    input  logic [255:0]   k_mem       [0:31],
     input  logic [255:0]   v_mem       [0:31],
     input  logic [767:0]   score_mem   [0:63], // 12-bit signed-digit {d0,d1,d2} × 64 lanes
 
@@ -1202,8 +1177,8 @@ module Multiple_Processor (
                     //   head_mask：每 row 32-bit，high16=tap0..3、low16=tap4..7。
                     if (op == 2'b11) begin
                         // MHA：phase = matrix；engine0 = head0（保留 tap0..3，清 low16）
-                        mult_issue_A   = q_mem[issue_idx[4:0]];
-                        mult_issue_B   = k_mem[issue_idx[4:0]];
+                        mult_issue_A   = 256'd0;
+                        mult_issue_B   = 256'd0;
                         for (int r = 0; r < 8; r++) begin
                             mult_issue_A[239 - 32*r -: 16] = 16'd0;
                             mult_issue_B[239 - 32*r -: 16] = 16'd0;
@@ -1212,12 +1187,13 @@ module Multiple_Processor (
                     end
                     else begin
                         // SHA：engine0 = 偶數 matrix 2·phase（無 head split）
-                        mult_issue_A   = q_mem[{issue_idx[3:0], 1'b0}];
-                        mult_issue_B   = k_mem[{issue_idx[3:0], 1'b0}];
+                        mult_issue_A   = 256'd0;
+                        mult_issue_B   = 256'd0;
                         mult_issue_idx = {issue_idx[3:0], 1'b0};      // score_mem[2·phase]
                     end
                     mult_issue_b_transpose = 1'b1;
                     mult_issue_tag         = MT_SCORE;
+                    mult_issue_valid       = 1'b0;
                 end
 
                 IM_FINAL: begin
@@ -1276,8 +1252,8 @@ module Multiple_Processor (
                     mult_kv_is_score   = 1'b1;
                     if (op == 2'b11) begin
                         // MHA：同 matrix，engine1 = head1（保留 tap4..7，清 high16）
-                        mult_k_issue_A = q_mem[issue_idx[4:0]];
-                        mult_k_issue_B = k_mem[issue_idx[4:0]];
+                        mult_k_issue_A = 256'd0;
+                        mult_k_issue_B = 256'd0;
                         for (int r = 0; r < 8; r++) begin
                             mult_k_issue_A[255 - 32*r -: 16] = 16'd0;
                             mult_k_issue_B[255 - 32*r -: 16] = 16'd0;
@@ -1286,10 +1262,12 @@ module Multiple_Processor (
                     end
                     else begin
                         // SHA：engine1 = 奇數 matrix 2·phase+1（無 head split）
-                        mult_k_issue_A    = q_mem[{issue_idx[3:0], 1'b1}];
-                        mult_k_issue_B    = k_mem[{issue_idx[3:0], 1'b1}];
+                        mult_k_issue_A    = 256'd0;
+                        mult_k_issue_B    = 256'd0;
                         mult_kv_issue_idx = {issue_idx[3:0], 1'b1};   // score_mem[2·phase+1]
                     end
+                    mult_k_issue_valid = 1'b0;
+                    mult_kv_is_score   = 1'b0;
                 end
                 IM_FINAL: begin
                     mult_k_issue_valid = 1'b1;
