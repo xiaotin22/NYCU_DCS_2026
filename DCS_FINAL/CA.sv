@@ -706,11 +706,15 @@ module ATT_Stream_Core #(
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
     localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
 
-    logic qkv_valid_cs;
-    logic qkv_mha_cs;
-    acc_vec_t q_comp_cs;
-    acc_vec_t k_comp_cs;
-    acc_vec_t v_comp_cs;
+    logic qkv_mha_s0_cs;
+    logic qkv_mha_s1_cs;
+    logic q_matmul_valid;
+    logic k_matmul_valid;
+    logic v_matmul_valid;
+    logic matmul_valid;
+    acc_vec_t q_comp_data;
+    acc_vec_t k_comp_data;
+    acc_vec_t v_comp_data;
 
     logic quant_valid_cs;
     logic quant_mha_cs;
@@ -726,9 +730,6 @@ module ATT_Stream_Core #(
     logic final_valid;
     acc_vec_t final_data;
 
-    acc_vec_t q_comp_ns;
-    acc_vec_t k_comp_ns;
-    acc_vec_t v_comp_ns;
     logic [255:0] q_word_ns;
     logic [255:0] k_word_ns;
     logic [255:0] v_word_ns;
@@ -790,24 +791,44 @@ module ATT_Stream_Core #(
         end
     endfunction
 
-    function automatic acc_t calc_matmul_lane(
-        input logic [255:0] a_mat,
-        input logic [255:0] b_mat,
-        input integer       row,
-        input integer       lane
+    ATT_Matmul_8Tap_2Stage #(
+        .ACC_W    (ACC_W),
+        .MAT_SIZE (MAT_SIZE)
+    ) u_att_q_matmul (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (in_valid),
+        .in_data_A (src_data),
+        .in_data_B (wq_data),
+        .out_valid (q_matmul_valid),
+        .out_data  (q_comp_data)
     );
-        prod_t prod;
-        acc_t acc;
-        begin
-            acc = '0;
-            for (int tap = 0; tap < ROW_ELEM; tap++) begin
-                prod = prod_t'($signed(get_s4(a_mat, (row * ROW_ELEM) + tap)) *
-                               $signed(get_s4(b_mat, (tap * ROW_ELEM) + lane)));
-                acc = acc_t'(acc + acc_t'(prod));
-            end
-            calc_matmul_lane = acc;
-        end
-    endfunction
+
+    ATT_Matmul_8Tap_2Stage #(
+        .ACC_W    (ACC_W),
+        .MAT_SIZE (MAT_SIZE)
+    ) u_att_k_matmul (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (in_valid),
+        .in_data_A (src_data),
+        .in_data_B (wk_data),
+        .out_valid (k_matmul_valid),
+        .out_data  (k_comp_data)
+    );
+
+    ATT_Matmul_8Tap_2Stage #(
+        .ACC_W    (ACC_W),
+        .MAT_SIZE (MAT_SIZE)
+    ) u_att_v_matmul (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (in_valid),
+        .in_data_A (src_data),
+        .in_data_B (wv_data),
+        .out_valid (v_matmul_valid),
+        .out_data  (v_comp_data)
+    );
 
     ATT_Score_8Tap #(
         .MAT_SIZE     (MAT_SIZE),
@@ -843,47 +864,121 @@ module ATT_Stream_Core #(
         .out_data    (final_data)
     );
 
+    assign matmul_valid = q_matmul_valid && k_matmul_valid && v_matmul_valid;
     assign out_valid = final_valid;
     assign out_data  = final_data;
 
     always_comb begin
-        for (int row = 0; row < ROW_ELEM; row++) begin
-            for (int lane = 0; lane < ROW_ELEM; lane++) begin
-                q_comp_ns[ACC_VEC_W - 1 - (((row * ROW_ELEM) + lane) * ACC_W) -: ACC_W] =
-                    calc_matmul_lane(src_data, wq_data, row, lane);
-                k_comp_ns[ACC_VEC_W - 1 - (((row * ROW_ELEM) + lane) * ACC_W) -: ACC_W] =
-                    calc_matmul_lane(src_data, wk_data, row, lane);
-                v_comp_ns[ACC_VEC_W - 1 - (((row * ROW_ELEM) + lane) * ACC_W) -: ACC_W] =
-                    calc_matmul_lane(src_data, wv_data, row, lane);
-            end
-        end
-
-        q_word_ns = quant_all(q_comp_cs);
-        k_word_ns = quant_all(k_comp_cs);
-        v_word_ns = quant_all(v_comp_cs);
+        q_word_ns = quant_all(q_comp_data);
+        k_word_ns = quant_all(k_comp_data);
+        v_word_ns = quant_all(v_comp_data);
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            qkv_valid_cs   <= 1'b0;
+            qkv_mha_s0_cs  <= 1'b0;
+            qkv_mha_s1_cs  <= 1'b0;
             quant_valid_cs <= 1'b0;
         end
         else begin
-            qkv_valid_cs   <= in_valid;
-            quant_valid_cs <= qkv_valid_cs;
+            qkv_mha_s0_cs  <= in_valid ? is_mha : 1'b0;
+            qkv_mha_s1_cs  <= qkv_mha_s0_cs;
+            quant_valid_cs <= matmul_valid;
 
-            if (in_valid) begin
-                qkv_mha_cs <= is_mha;
-                q_comp_cs  <= q_comp_ns;
-                k_comp_cs  <= k_comp_ns;
-                v_comp_cs  <= v_comp_ns;
-            end
-
-            if (qkv_valid_cs) begin
-                quant_mha_cs <= qkv_mha_cs;
+            if (matmul_valid) begin
+                quant_mha_cs <= qkv_mha_s1_cs;
                 q_word_cs    <= q_word_ns;
                 k_word_cs    <= k_word_ns;
                 v_word_cs    <= v_word_ns;
+            end
+        end
+    end
+
+endmodule
+
+
+module ATT_Matmul_8Tap_2Stage #(
+    parameter int ACC_W = 16,
+    parameter int MAT_SIZE = 64
+)(
+    input  logic                          clk,
+    input  logic                          rst_n,
+    input  logic                          in_valid,
+    input  logic [255:0]                  in_data_A,
+    input  logic [255:0]                  in_data_B,
+    output logic                          out_valid,
+    output logic [(MAT_SIZE*ACC_W)-1:0]   out_data
+);
+
+    localparam int ROW_ELEM = 8;
+    localparam int NUM_PAIR = 4;
+    localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
+
+    typedef logic signed [3:0]          s4_t;
+    typedef logic signed [7:0]          prod_t;
+    typedef logic signed [8:0]          pair_t;
+    typedef logic signed [ACC_W-1:0]    acc_t;
+
+    logic valid_s1_cs;
+    pair_t pair_cs [0:MAT_SIZE-1][0:NUM_PAIR-1];
+    pair_t pair_ns [0:MAT_SIZE-1][0:NUM_PAIR-1];
+    acc_t  sum_ns  [0:MAT_SIZE-1];
+
+    function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
+        get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
+    endfunction
+
+    always_comb begin
+        for (int row = 0; row < ROW_ELEM; row++) begin
+            for (int lane = 0; lane < ROW_ELEM; lane++) begin
+                int out_idx;
+                out_idx = (row * ROW_ELEM) + lane;
+
+                for (int pair_idx = 0; pair_idx < NUM_PAIR; pair_idx++) begin
+                    int tap0;
+                    int tap1;
+                    prod_t prod0;
+                    prod_t prod1;
+
+                    tap0 = pair_idx * 2;
+                    tap1 = tap0 + 1;
+                    prod0 = prod_t'($signed(get_s4(in_data_A, (row * ROW_ELEM) + tap0)) *
+                                    $signed(get_s4(in_data_B, (tap0 * ROW_ELEM) + lane)));
+                    prod1 = prod_t'($signed(get_s4(in_data_A, (row * ROW_ELEM) + tap1)) *
+                                    $signed(get_s4(in_data_B, (tap1 * ROW_ELEM) + lane)));
+                    pair_ns[out_idx][pair_idx] = pair_t'(prod0) + pair_t'(prod1);
+                end
+            end
+        end
+
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            sum_ns[i] =
+                acc_t'(acc_t'(pair_cs[i][0]) + acc_t'(pair_cs[i][1])) +
+                acc_t'(acc_t'(pair_cs[i][2]) + acc_t'(pair_cs[i][3]));
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid_s1_cs <= 1'b0;
+            out_valid   <= 1'b0;
+        end
+        else begin
+            valid_s1_cs <= in_valid;
+            out_valid   <= valid_s1_cs;
+
+            if (in_valid) begin
+                for (int i = 0; i < MAT_SIZE; i++) begin
+                    for (int pair_idx = 0; pair_idx < NUM_PAIR; pair_idx++) begin
+                        pair_cs[i][pair_idx] <= pair_ns[i][pair_idx];
+                    end
+                end
+            end
+
+            if (valid_s1_cs) begin
+                for (int i = 0; i < MAT_SIZE; i++) begin
+                    out_data[ACC_VEC_W - 1 - (i * ACC_W) -: ACC_W] <= sum_ns[i];
+                end
             end
         end
     end
