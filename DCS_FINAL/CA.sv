@@ -695,19 +695,19 @@ module ATT_Stream_Core #(
 
     localparam int ROW_ELEM  = 8;
     localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
-    localparam int SHIFT_W   = $clog2(ACC_W);
-    localparam logic [SHIFT_W-1:0] SHIFT_TWO = 2;
 
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [7:0]  prod_t;
     typedef logic signed [ACC_W-1:0] acc_t;
-    typedef logic [ACC_W-1:0] mag_t;
     typedef logic signed [SCORE_ELEM_W-1:0] score_t;
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
     localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
 
     logic qkv_mha_s0_cs;
     logic qkv_mha_s1_cs;
+    logic quant_mha_s0_cs;
+    logic quant_mha_s1_cs;
+    logic quant_mha_s2_cs;
     logic q_matmul_valid;
     logic k_matmul_valid;
     logic v_matmul_valid;
@@ -718,6 +718,9 @@ module ATT_Stream_Core #(
 
     logic quant_valid_cs;
     logic quant_mha_cs;
+    logic q_quant_valid;
+    logic k_quant_valid;
+    logic v_quant_valid;
     logic [255:0] q_word_cs;
     logic [255:0] k_word_cs;
     logic [255:0] v_word_cs;
@@ -729,67 +732,6 @@ module ATT_Stream_Core #(
     logic [SCORE_BUS_W-1:0] score1_data;
     logic final_valid;
     acc_vec_t final_data;
-
-    logic [255:0] q_word_ns;
-    logic [255:0] k_word_ns;
-    logic [255:0] v_word_ns;
-
-    function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
-        get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
-    endfunction
-
-    function automatic acc_t get_acc(input acc_vec_t vec, input integer idx);
-        get_acc = $signed(vec[ACC_VEC_W - 1 - (idx * ACC_W) -: ACC_W]);
-    endfunction
-
-    function automatic mag_t abs_acc(input acc_t value);
-        abs_acc = value[ACC_W - 1] ? mag_t'(-value) : mag_t'(value);
-    endfunction
-
-    function automatic logic [SHIFT_W-1:0] pot_shift(input mag_t max_abs);
-        logic [SHIFT_W-1:0] msb;
-        begin
-            msb = '0;
-            for (int b = 0; b < ACC_W; b++) begin
-                if (max_abs[b]) begin
-                    msb = b[SHIFT_W-1:0];
-                end
-            end
-            pot_shift = (msb > SHIFT_TWO) ? (msb - SHIFT_TWO) : '0;
-        end
-    endfunction
-
-    function automatic s4_t clamp_s4(input acc_t value);
-        begin
-            if (value > acc_t'(7)) begin
-                clamp_s4 = 4'sd7;
-            end
-            else if (value < acc_t'(-8)) begin
-                clamp_s4 = -4'sd8;
-            end
-            else begin
-                clamp_s4 = value[3:0];
-            end
-        end
-    endfunction
-
-    function automatic logic [255:0] quant_all(input acc_vec_t src);
-        mag_t max_bits;
-        logic [SHIFT_W-1:0] shift;
-        acc_t scaled;
-        begin
-            max_bits = '0;
-            for (int i = 0; i < MAT_SIZE; i++) begin
-                max_bits |= abs_acc(get_acc(src, i));
-            end
-            shift = pot_shift(max_bits);
-            quant_all = 256'd0;
-            for (int i = 0; i < MAT_SIZE; i++) begin
-                scaled = get_acc(src, i) >>> shift;
-                quant_all[255 - (i * 4) -: 4] = clamp_s4(scaled);
-            end
-        end
-    endfunction
 
     ATT_Matmul_8Tap_2Stage #(
         .ACC_W    (ACC_W),
@@ -830,6 +772,42 @@ module ATT_Stream_Core #(
         .out_data  (v_comp_data)
     );
 
+    ATT_Quant_3Stage #(
+        .ACC_W    (ACC_W),
+        .MAT_SIZE (MAT_SIZE)
+    ) u_att_q_quant (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (matmul_valid),
+        .in_data   (q_comp_data),
+        .out_valid (q_quant_valid),
+        .out_data  (q_word_cs)
+    );
+
+    ATT_Quant_3Stage #(
+        .ACC_W    (ACC_W),
+        .MAT_SIZE (MAT_SIZE)
+    ) u_att_k_quant (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (matmul_valid),
+        .in_data   (k_comp_data),
+        .out_valid (k_quant_valid),
+        .out_data  (k_word_cs)
+    );
+
+    ATT_Quant_3Stage #(
+        .ACC_W    (ACC_W),
+        .MAT_SIZE (MAT_SIZE)
+    ) u_att_v_quant (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (matmul_valid),
+        .in_data   (v_comp_data),
+        .out_valid (v_quant_valid),
+        .out_data  (v_word_cs)
+    );
+
     ATT_Score_8Tap #(
         .MAT_SIZE     (MAT_SIZE),
         .SCORE_ELEM_W (SCORE_ELEM_W)
@@ -865,32 +843,25 @@ module ATT_Stream_Core #(
     );
 
     assign matmul_valid = q_matmul_valid && k_matmul_valid && v_matmul_valid;
+    assign quant_valid_cs = q_quant_valid && k_quant_valid && v_quant_valid;
+    assign quant_mha_cs = quant_mha_s2_cs;
     assign out_valid = final_valid;
     assign out_data  = final_data;
-
-    always_comb begin
-        q_word_ns = quant_all(q_comp_data);
-        k_word_ns = quant_all(k_comp_data);
-        v_word_ns = quant_all(v_comp_data);
-    end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             qkv_mha_s0_cs  <= 1'b0;
             qkv_mha_s1_cs  <= 1'b0;
-            quant_valid_cs <= 1'b0;
+            quant_mha_s0_cs <= 1'b0;
+            quant_mha_s1_cs <= 1'b0;
+            quant_mha_s2_cs <= 1'b0;
         end
         else begin
-            qkv_mha_s0_cs  <= in_valid ? is_mha : 1'b0;
-            qkv_mha_s1_cs  <= qkv_mha_s0_cs;
-            quant_valid_cs <= matmul_valid;
-
-            if (matmul_valid) begin
-                quant_mha_cs <= qkv_mha_s1_cs;
-                q_word_cs    <= q_word_ns;
-                k_word_cs    <= k_word_ns;
-                v_word_cs    <= v_word_ns;
-            end
+            qkv_mha_s0_cs   <= in_valid ? is_mha : 1'b0;
+            qkv_mha_s1_cs   <= qkv_mha_s0_cs;
+            quant_mha_s0_cs <= matmul_valid ? qkv_mha_s1_cs : 1'b0;
+            quant_mha_s1_cs <= quant_mha_s0_cs;
+            quant_mha_s2_cs <= quant_mha_s1_cs;
         end
     end
 
@@ -979,6 +950,121 @@ module ATT_Matmul_8Tap_2Stage #(
                 for (int i = 0; i < MAT_SIZE; i++) begin
                     out_data[ACC_VEC_W - 1 - (i * ACC_W) -: ACC_W] <= sum_ns[i];
                 end
+            end
+        end
+    end
+
+endmodule
+
+
+module ATT_Quant_3Stage #(
+    parameter int ACC_W = 16,
+    parameter int MAT_SIZE = 64
+)(
+    input  logic                         clk,
+    input  logic                         rst_n,
+    input  logic                         in_valid,
+    input  logic [(MAT_SIZE*ACC_W)-1:0]  in_data,
+    output logic                         out_valid,
+    output logic [255:0]                 out_data
+);
+
+    localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
+    localparam int SHIFT_W   = $clog2(ACC_W);
+    localparam logic [SHIFT_W-1:0] SHIFT_TWO = 2;
+
+    typedef logic signed [3:0]       s4_t;
+    typedef logic signed [ACC_W-1:0] acc_t;
+    typedef logic [ACC_W-1:0]        mag_t;
+
+    logic valid_s1_cs;
+    logic valid_s2_cs;
+    logic [ACC_VEC_W-1:0] data_s1_cs;
+    logic [ACC_VEC_W-1:0] data_s2_cs;
+    mag_t max_bits_s1_cs;
+    mag_t max_bits_ns;
+    logic [SHIFT_W-1:0] shift_s2_cs;
+    logic [255:0] quant_ns;
+
+    function automatic acc_t get_acc(input logic [ACC_VEC_W-1:0] vec, input integer idx);
+        get_acc = $signed(vec[ACC_VEC_W - 1 - (idx * ACC_W) -: ACC_W]);
+    endfunction
+
+    function automatic mag_t abs_acc(input acc_t value);
+        abs_acc = value[ACC_W - 1] ? mag_t'(-value) : mag_t'(value);
+    endfunction
+
+    function automatic logic [SHIFT_W-1:0] pot_shift(input mag_t max_abs);
+        logic [SHIFT_W-1:0] msb;
+        begin
+            msb = '0;
+            for (int b = 0; b < ACC_W; b++) begin
+                if (max_abs[b]) begin
+                    msb = b[SHIFT_W-1:0];
+                end
+            end
+            pot_shift = (msb > SHIFT_TWO) ? (msb - SHIFT_TWO) : '0;
+        end
+    endfunction
+
+    function automatic s4_t clamp_s4(input acc_t value);
+        begin
+            if (value > acc_t'(7)) begin
+                clamp_s4 = 4'sd7;
+            end
+            else if (value < acc_t'(-8)) begin
+                clamp_s4 = -4'sd8;
+            end
+            else begin
+                clamp_s4 = value[3:0];
+            end
+        end
+    endfunction
+
+    always_comb begin
+        max_bits_ns = '0;
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            max_bits_ns |= abs_acc(get_acc(in_data, i));
+        end
+    end
+
+    always_comb begin
+        quant_ns = 256'd0;
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            acc_t scaled;
+            scaled = get_acc(data_s2_cs, i) >>> shift_s2_cs;
+            quant_ns[255 - (i * 4) -: 4] = clamp_s4(scaled);
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid_s1_cs   <= 1'b0;
+            valid_s2_cs   <= 1'b0;
+            out_valid     <= 1'b0;
+            data_s1_cs    <= '0;
+            data_s2_cs    <= '0;
+            max_bits_s1_cs <= '0;
+            shift_s2_cs   <= '0;
+            out_data      <= 256'd0;
+        end
+        else begin
+            valid_s1_cs <= in_valid;
+            valid_s2_cs <= valid_s1_cs;
+            out_valid   <= valid_s2_cs;
+
+            if (in_valid) begin
+                data_s1_cs     <= in_data;
+                max_bits_s1_cs <= max_bits_ns;
+            end
+
+            if (valid_s1_cs) begin
+                data_s2_cs  <= data_s1_cs;
+                shift_s2_cs <= pot_shift(max_bits_s1_cs);
+            end
+
+            if (valid_s2_cs) begin
+                out_data <= quant_ns;
             end
         end
     end
