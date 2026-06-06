@@ -1,20 +1,11 @@
 typedef enum logic [2:0] {
     IM_NONE  = 3'd0,
     IM_NORM  = 3'd1,
-    IM_QKV   = 3'd2,
-    IM_SV    = 3'd3,
-    IM_FINAL = 3'd4
+    IM_ATT   = 3'd2,
+    IM_QKV   = 3'd3,
+    IM_SV    = 3'd4,
+    IM_FINAL = 3'd5
 } issue_mode_t;
-
-typedef enum logic [2:0] {
-    MT_NONE,
-    MT_NORM,
-    MT_Q,
-    MT_K,
-    MT_V,
-    MT_SCORE,
-    MT_FINAL
-} mult_tag_t;
 
 module CA #(
     parameter RAM_DEPTH = 256,
@@ -55,25 +46,26 @@ module CA #(
 
     logic          datapath_issue_valid;
     issue_mode_t   datapath_issue_mode;
-    logic [5:0]    datapath_issue_idx;
+    logic [6:0]    datapath_issue_idx;
+    logic          datapath_result_pre_valid;
     logic          datapath_result_valid;
 
     CA_Control #(
-        .RAM_DEPTH (RAM_DEPTH), .BURST_BIT (BURST_BIT)
+        .RAM_DEPTH (RAM_DEPTH),
+        .BURST_BIT (BURST_BIT)
     ) u_control (
-        .clk(clk), .rst_n(rst_n),
-
-        // From Top Module
-        .mem_set(mem_set), .in_valid(in_valid),
-        .op(op), .act(act), .param(param),
-
-        // From RAM interface
-        .rd_ready(rd_ready), .rd_valid(rd_valid),
-
-        // Receive DataPath
+        .clk                    (clk),
+        .rst_n                  (rst_n),
+        .mem_set                (mem_set),
+        .in_valid               (in_valid),
+        .op                     (op),
+        .act                    (act),
+        .param                  (param),
+        .rd_ready               (rd_ready),
+        .rd_valid               (rd_valid),
+        .wr_ready               (wr_ready),
+        .datapath_result_pre_valid (datapath_result_pre_valid),
         .datapath_result_valid  (datapath_result_valid),
-
-        // Output to DataPath
         .exec_op                (exec_op),
         .exec_act               (exec_act),
         .exec_param             (exec_param),
@@ -82,10 +74,12 @@ module CA #(
         .datapath_issue_valid   (datapath_issue_valid),
         .datapath_issue_mode    (datapath_issue_mode),
         .datapath_issue_idx     (datapath_issue_idx),
-
-        // Output for RAM interface
-        .rd_en(rd_en), .rd_addr(rd_addr), .rd_burst(rd_burst),
-        .wr_en(wr_en), .wr_addr(wr_addr), .wr_burst(wr_burst)
+        .rd_en                  (rd_en),
+        .rd_addr                (rd_addr),
+        .rd_burst               (rd_burst),
+        .wr_en                  (wr_en),
+        .wr_addr                (wr_addr),
+        .wr_burst               (wr_burst)
     );
 
     CA_DataPath #(
@@ -93,7 +87,6 @@ module CA #(
     ) u_datapath (
         .clk                    (clk),
         .rst_n                  (rst_n),
-        // From Control Module
         .issue_valid            (datapath_issue_valid),
         .issue_mode             (datapath_issue_mode),
         .issue_idx              (datapath_issue_idx),
@@ -102,11 +95,10 @@ module CA #(
         .param                  (exec_param),
         .weight_k               (exec_weight_k),
         .weight_v               (exec_weight_v),
-        // Reading from RAM
         .rd_data                (rd_data),
-        // Output to Control Module
+        .wr_valid               (wr_valid),
+        .result_pre_valid       (datapath_result_pre_valid),
         .result_valid           (datapath_result_valid),
-        // Output to Top Module
         .wr_data                (wr_data),
         .out_valid              (out_valid),
         .out_data               (out_data)
@@ -127,6 +119,8 @@ module CA_Control #(
     input  logic [255:0]                    param,
     input  logic                            rd_ready,
     input  logic                            rd_valid,
+    input  logic                            wr_ready,
+    input  logic                            datapath_result_pre_valid,
     input  logic                            datapath_result_valid,
 
     output logic [1:0]                      exec_op,
@@ -136,7 +130,7 @@ module CA_Control #(
     output logic [255:0]                    exec_weight_v,
     output logic                            datapath_issue_valid,
     output issue_mode_t                     datapath_issue_mode,
-    output logic [5:0]                      datapath_issue_idx,
+    output logic [6:0]                      datapath_issue_idx,
 
     output logic                            rd_en,
     output logic [$clog2(RAM_DEPTH)-1:0]    rd_addr,
@@ -147,347 +141,246 @@ module CA_Control #(
 );
 
     localparam int ADDR_W = $clog2(RAM_DEPTH);
-    // Attention group-32 streaming（burst-32 in/out）：QKV 直接吃 rd_data，
-    // SV 由 Q/K PoT stream 觸發，FINAL 再切到 6-way MHA head0/head1 並行。
-    localparam logic [ADDR_W-1:0]    GROUP_STEP = 8'd32;   // group size = 32
-    localparam logic [ADDR_W-1:0]    LAST_BASE  = 8'd224;   // 256 - 32
-    localparam logic [BURST_BIT-1:0] BURST_GRP  = 3'd5;     // 2^5 = 32 words
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
-    // 6-mult schedule:
-    //   front: 3 engines Q/K/V + 2 engines SV score stream.
-    //   final: 6 engines compute MHA head0/head1 d0/d1/d2 in the same 32 phases.
-    //   HA_FRONT_WAIT covers the fixed latency from the last streaming Q/K PoT
-    //   output to the last score_mem write. FINAL phase 0 is useful for both
-    //   SHA and MHA.
-    localparam logic [6:0] HA_RESTART_SHA = 7'd35;
-    localparam logic [6:0] HA_RESTART_MHA = 7'd35;
-    localparam logic [6:0] HA_WR_SHA      = 7'd11;
-    localparam logic [6:0] HA_WR_MHA      = 7'd11;
-    localparam logic [5:0] HA_FRONT_WAIT  = 6'd18;
-    localparam logic [5:0] HA_PF_SHA_SV_PHASE = 6'd4;
 
     typedef enum logic [2:0] {
         S_IDLE,
         S_FAST_RUN,
-        S_HA_PARAM,
-        S_HA_READ,
-        S_HA_ISSUE,
-        S_HA_WAIT
+        S_ATT_PARAM,
+        S_ATT_READ,
+        S_ATT_WAIT
     } state_t;
 
-    // QKV / score / context all share one issue+wait skeleton; ha_stage_cs says
-    // which matmul stage S_HA_ISSUE/S_HA_WAIT are currently running.
-    typedef enum logic [1:0] {
-        ST_QKV,
-        ST_SV,
-        ST_FINAL
-    } ha_stage_t;
+    state_t state_cs;
 
-    state_t      state_cs;
-    ha_stage_t  ha_stage_cs;
-    logic        ha_param_phase_cs;
-    logic [1:0]  rd_req_cnt_cs;
-    logic [4:0]  ha_rd_word_cnt_cs;
-    logic [7:0]  wr_cmd_cnt_cs;
-    logic [7:0]  out_cnt_cs;
-    logic [11:0] wr_pre_pipe_cs;  // Multiple_Processor output reg plus one cycle: tap [11].
-    logic [7:0]  ha_group_base_cs;
-    // Stored at FINAL start so write-back stays on the draining group while
-    // ha_group_base_cs can advance to the next compute group.
-    logic [7:0]  ha_write_base_cs;
-    logic [5:0]  ha_phase_cnt_cs;
-    // Counter equivalent of the old ha_wr_pipe shift register.
-    // ha_final_start launches one timer per group; ha_wr_fire stops it.
-    // 7-bit：HA_RESTART_MHA 已達 67（>63），需 7-bit。
-    logic [6:0]  ha_wr_cnt_cs;
-    logic        ha_wr_run_cs;
-    logic        ha_prefetch_pending_cs;
+    logic [1:0] fast_rd_req_cnt_cs;
+    logic [6:0] fast_group_result_cnt_cs;
+    logic [ADDR_W-1:0] fast_write_base_cs;
+    logic [6:0] fast_pre_result_cnt_cs;
+    logic [ADDR_W-1:0] fast_pre_write_base_cs;
+    logic fast_wr_pending_cs;
+    logic fast_pre_wr_issued_cs;
 
-    logic        job_start;
-    logic        ha_start;
-    logic        wr_pre_fire;
-    logic        wr_cmd_fire;
-    logic        rd_cmd_fire;
-    logic        fast_first_rd_fire;
-    logic        ha_read_fire;
-    logic        ha_first_read_fire;
-    logic        ha_prefetch_fire;
-    logic        ha_qkv_stream_fire;
-    logic        ha_wait_stream_start;
-    logic        ha_has_next_group;
-    logic        ha_next_group_fire;
-    logic        result_last;
-    logic        ha_final_start;
-    logic        ha_wr_fire;
-    logic [7:0]  ha_next_group_base;
-    logic [5:0]  ha_phase_last;
+    logic att_param_phase_cs;
+    logic att_rd_issued_cs;
+    logic [7:0] att_rd_word_cnt_cs;
+    logic [ADDR_W-1:0] att_read_base_cs;
+    logic [ADDR_W-1:0] att_result_base_cs;
+    logic [6:0] att_pre_result_cnt_cs;
+    logic [ADDR_W-1:0] att_pre_write_base_cs;
+    logic [6:0] att_group_result_cnt_cs;
+    logic att_wr_pending_cs;
+    logic att_pre_wr_issued_cs;
 
-    assign job_start              = (state_cs == S_IDLE) && mem_set && in_valid;
-    assign ha_start        = job_start && ((op == 2'b10) || (op == 2'b11));
-    assign result_last            = datapath_result_valid && (out_cnt_cs == 8'd255);
-    assign wr_pre_fire            = wr_pre_pipe_cs[11];
-    assign wr_cmd_fire            = (state_cs == S_FAST_RUN) && wr_pre_fire;
-    assign rd_cmd_fire            = (state_cs == S_FAST_RUN) && (rd_req_cnt_cs < 2'd2) && rd_ready;
-    assign fast_first_rd_fire     = job_start && !ha_start && rd_ready;
-    assign ha_read_fire          = (state_cs == S_HA_READ) &&
-                                    !ha_prefetch_pending_cs &&
-                                    rd_ready;
-    assign ha_first_read_fire     = (state_cs == S_HA_PARAM) && in_valid &&
-                                    ha_param_phase_cs && rd_ready;
-    assign ha_has_next_group      = (ha_group_base_cs != LAST_BASE);
-    // With x_mem removed, read data must return exactly when the next QKV stream
-    // can consume it. SHA needs the command during SV; MHA needs it during FINAL.
-    assign ha_prefetch_fire      = ha_has_next_group &&
-                                    !ha_prefetch_pending_cs &&
-                                    rd_ready &&
-                                    (((exec_op != 2'b11) &&
-                                      (state_cs == S_HA_ISSUE) &&
-                                      (ha_stage_cs == ST_SV) &&
-                                      (ha_phase_cnt_cs == HA_PF_SHA_SV_PHASE)) ||
-                                     ((exec_op == 2'b11) &&
-                                      ha_final_start));
-    // Barrier 放寬後 SV→FINAL 在 S_HA_ISSUE 內直接接，FINAL phase 0 在 ISSUE 發，
-    // 計時器即於該拍啟動（固定排程，不等待 DataPath ready bitmap）。
-    assign ha_final_start        = (state_cs == S_HA_ISSUE) &&
-                                    (ha_stage_cs == ST_FINAL) &&
-                                    (ha_phase_cnt_cs == 6'd0);
-    assign ha_next_group_fire    = ha_wr_run_cs &&
-                                    (ha_wr_cnt_cs == ((exec_op == 2'b11) ?
-                                                     HA_RESTART_MHA : HA_RESTART_SHA));
-    // group-32：write tap 對齊 FINAL output stream；restart tap 讓 FSM 先回
-    // S_HA_READ 等 prefetched rd_valid。下一組 QKV 的 Q PoT input 會落在本組
-    // FINAL ACT/PoT drain 之後，避免 lane0 PoT 撞車。
-    assign ha_wr_fire            = ha_wr_run_cs &&
-                                    (ha_wr_cnt_cs == ((exec_op == 2'b11) ?
-                                                     HA_WR_MHA : HA_WR_SHA));
-    assign ha_next_group_base    = ha_group_base_cs + GROUP_STEP;
-    assign ha_wait_stream_start  = (state_cs == S_HA_WAIT) &&
-                                    ha_has_next_group &&
-                                    ha_next_group_fire;
-    assign ha_qkv_stream_fire    = rd_valid &&
-                                    ((state_cs == S_HA_READ) ||
-                                     ha_wait_stream_start);
-    // QKV is issued directly in S_HA_READ. SHA/MHA SV score is launched
-    // internally from the Q/K PoT stream, so ST_SV is only a fixed front-drain
-    // wait before FINAL can consume score_mem.
-    assign ha_phase_last         = (ha_stage_cs == ST_SV) ?
-                                   (HA_FRONT_WAIT - 6'd1) :
-                                   /* ST_FINAL */             6'd31;
+    logic job_start;
+    logic fast_first_rd_fire;
+    logic fast_rd_fire;
+    logic fast_first_pre_result;
+    logic fast_wr_fire;
+    logic att_param_done_fire;
+    logic att_rd_fire;
+    logic att_next_rd_fire;
+    logic att_rd_data_fire;
+    logic att_result_active;
+    logic att_first_pre_result;
+    logic att_wr_fire;
+
+    assign job_start          = (state_cs == S_IDLE) && mem_set && in_valid;
+    assign fast_first_rd_fire = job_start && !op[1] && rd_ready;
+    assign fast_rd_fire       = (state_cs == S_FAST_RUN) &&
+                                (fast_rd_req_cnt_cs < 2'd2) && rd_ready;
+    assign fast_first_pre_result = (state_cs == S_FAST_RUN) &&
+                                   datapath_result_pre_valid &&
+                                   (fast_pre_result_cnt_cs == 7'd0) &&
+                                   !fast_pre_wr_issued_cs;
+    assign fast_wr_fire       = (state_cs == S_FAST_RUN) && wr_ready &&
+                                (fast_wr_pending_cs || fast_first_pre_result);
+
+    assign att_param_done_fire = (state_cs == S_ATT_PARAM) && in_valid &&
+                                 att_param_phase_cs && rd_ready;
+    assign att_rd_fire         = (state_cs == S_ATT_READ) && !att_rd_issued_cs && rd_ready;
+    assign att_next_rd_fire    = (state_cs == S_ATT_WAIT) &&
+                                 (att_read_base_cs != HALF_ADDR) &&
+                                 att_pre_wr_issued_cs && rd_ready;
+    assign att_rd_data_fire    = (state_cs == S_ATT_READ) && rd_valid &&
+                                 (att_rd_word_cnt_cs < 8'd128);
+    assign att_result_active   = (state_cs == S_ATT_READ) || (state_cs == S_ATT_WAIT);
+    assign att_first_pre_result = att_result_active &&
+                                  datapath_result_pre_valid &&
+                                  (att_pre_result_cnt_cs == 7'd0) &&
+                                  !att_pre_wr_issued_cs;
+    assign att_wr_fire         = att_result_active && wr_ready &&
+                                 (att_wr_pending_cs || att_first_pre_result);
 
     always_comb begin
-        datapath_issue_valid   = 1'b0;
-        datapath_issue_mode    = IM_NONE;
-        datapath_issue_idx     = 6'd0;
+        datapath_issue_valid = 1'b0;
+        datapath_issue_mode  = IM_NONE;
+        datapath_issue_idx   = 7'd0;
 
-        case (state_cs)
-            S_FAST_RUN: begin
-                if (rd_valid) begin
-                    datapath_issue_valid = 1'b1;
-                    datapath_issue_mode  = IM_NORM;
-                end
-            end
-
-            S_HA_READ: begin
-                if (rd_valid) begin
-                    datapath_issue_valid = 1'b1;
-                    datapath_issue_mode  = IM_QKV;
-                    datapath_issue_idx   = {1'b0, ha_rd_word_cnt_cs};
-                end
-            end
-
-            S_HA_ISSUE: begin
-                if (ha_stage_cs == ST_FINAL) begin
-                    datapath_issue_valid = 1'b1;
-                    datapath_issue_mode  = IM_FINAL;
-                    datapath_issue_idx   = ha_phase_cnt_cs;
-                end
-            end
-
-            S_HA_WAIT: begin
-                if (ha_wait_stream_start && rd_valid) begin
-                    datapath_issue_valid = 1'b1;
-                    datapath_issue_mode  = IM_QKV;
-                    datapath_issue_idx   = 6'd0;
-                end
-                // FINAL drain：不發 issue（QKV/SV/FINAL phase 0 皆在 S_HA_ISSUE 內發）。
-            end
-
-            default: begin
-            end
-        endcase
-
+        if ((state_cs == S_FAST_RUN) && rd_valid) begin
+            datapath_issue_valid = 1'b1;
+            datapath_issue_mode  = IM_NORM;
+        end
+        else if (att_rd_data_fire) begin
+            datapath_issue_valid = 1'b1;
+            datapath_issue_mode  = IM_ATT;
+            datapath_issue_idx   = att_rd_word_cnt_cs[6:0];
+        end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state_cs               <= S_IDLE;
-            ha_stage_cs            <= ST_QKV;
-            ha_param_phase_cs      <= 1'b0;
-            rd_req_cnt_cs          <= 2'd0;
-            ha_rd_word_cnt_cs      <= 5'd0;
-            wr_cmd_cnt_cs          <= 8'd0;
-            out_cnt_cs             <= 8'd0;
-            wr_pre_pipe_cs         <= 12'd0;
-            ha_group_base_cs       <= 8'd0;
-            ha_write_base_cs       <= 8'd0;
-            ha_phase_cnt_cs        <= 6'd0;
-            ha_wr_cnt_cs           <= 7'd0;
-            ha_wr_run_cs           <= 1'b0;
-            ha_prefetch_pending_cs <= 1'b0;
+            state_cs                 <= S_IDLE;
+            exec_op                  <= 2'd0;
+            exec_act                 <= 2'd0;
+            exec_param               <= 256'd0;
+            exec_weight_k            <= 256'd0;
+            exec_weight_v            <= 256'd0;
+            fast_rd_req_cnt_cs       <= 2'd0;
+            fast_group_result_cnt_cs <= 7'd0;
+            fast_write_base_cs       <= '0;
+            fast_pre_result_cnt_cs   <= 7'd0;
+            fast_pre_write_base_cs   <= '0;
+            fast_wr_pending_cs       <= 1'b0;
+            fast_pre_wr_issued_cs    <= 1'b0;
+            att_param_phase_cs       <= 1'b0;
+            att_rd_issued_cs         <= 1'b0;
+            att_rd_word_cnt_cs       <= 8'd0;
+            att_read_base_cs         <= '0;
+            att_result_base_cs       <= '0;
+            att_pre_result_cnt_cs    <= 7'd0;
+            att_pre_write_base_cs    <= '0;
+            att_group_result_cnt_cs  <= 7'd0;
+            att_wr_pending_cs        <= 1'b0;
+            att_pre_wr_issued_cs     <= 1'b0;
         end
         else begin
-            // Timer update for next-group and write taps. State-specific resets
-            // below intentionally override these defaults in this always_ff block.
-            // group-32 起 HA_WR < HA_RESTART（write 對齊量 < next-group 啟動量），
-            // 故 timer 必須跑到 ha_next_group_fire(HA_RESTART) 才停，途中先經過
-            // ha_wr_fire(HA_WR) 發出 burst write。原 group-8 兩者相等才在 wr_fire 停。
-            if (ha_final_start) begin
-                ha_wr_run_cs     <= 1'b1;
-                ha_wr_cnt_cs     <= 7'd0;
-                ha_write_base_cs <= ha_group_base_cs;
+            if (fast_first_pre_result) begin
+                fast_wr_pending_cs <= 1'b1;
             end
-            else if (ha_next_group_fire) begin
-                ha_wr_run_cs <= 1'b0;
-            end
-            else if (ha_wr_run_cs) begin
-                ha_wr_cnt_cs <= ha_wr_cnt_cs + 1'b1;
+            if (fast_wr_fire) begin
+                fast_wr_pending_cs    <= 1'b0;
+                fast_pre_wr_issued_cs <= 1'b1;
             end
 
-            if (ha_first_read_fire || ha_read_fire || ha_prefetch_fire) begin
-                ha_prefetch_pending_cs <= 1'b1;
+            if (att_first_pre_result) begin
+                att_wr_pending_cs <= 1'b1;
             end
-
-            if (ha_qkv_stream_fire && (ha_rd_word_cnt_cs == 5'd31)) begin
-                ha_prefetch_pending_cs <= 1'b0;
+            if (att_wr_fire) begin
+                att_wr_pending_cs    <= 1'b0;
+                att_pre_wr_issued_cs <= 1'b1;
             end
 
             case (state_cs)
                 S_IDLE: begin
                     if (job_start) begin
-                        exec_op   <= op;
-                        exec_act  <= act;
+                        exec_op    <= op;
+                        exec_act   <= act;
                         exec_param <= param;
 
-                        // FAST_RUN counters only; attention-specific state is
-                        // initialised in S_HA_PARAM right before S_HA_READ.
-                        rd_req_cnt_cs  <= fast_first_rd_fire ? 2'd1 : 2'd0;
-                        wr_cmd_cnt_cs  <= 8'd0;
-                        out_cnt_cs     <= 8'd0;
-                        wr_pre_pipe_cs <= 12'd0;
+                        fast_rd_req_cnt_cs       <= fast_first_rd_fire ? 2'd1 : 2'd0;
+                        fast_group_result_cnt_cs <= 7'd0;
+                        fast_write_base_cs       <= '0;
+                        fast_pre_result_cnt_cs   <= 7'd0;
+                        fast_pre_write_base_cs   <= '0;
+                        fast_wr_pending_cs       <= 1'b0;
+                        fast_pre_wr_issued_cs    <= 1'b0;
 
-                        if (ha_start) begin
-                            ha_param_phase_cs <= 1'b0;
-                            state_cs           <= S_HA_PARAM;
-                        end
-                        else begin
-                            state_cs <= S_FAST_RUN;
-                        end
+                        att_param_phase_cs       <= 1'b0;
+                        att_rd_issued_cs         <= 1'b0;
+                        att_rd_word_cnt_cs       <= 8'd0;
+                        att_read_base_cs         <= '0;
+                        att_result_base_cs       <= '0;
+                        att_pre_result_cnt_cs    <= 7'd0;
+                        att_pre_write_base_cs    <= '0;
+                        att_group_result_cnt_cs  <= 7'd0;
+                        att_wr_pending_cs        <= 1'b0;
+                        att_pre_wr_issued_cs     <= 1'b0;
+
+                        state_cs <= op[1] ? S_ATT_PARAM : S_FAST_RUN;
                     end
                 end
 
                 S_FAST_RUN: begin
-                    wr_pre_pipe_cs <= {wr_pre_pipe_cs[10:0], datapath_issue_valid};
-
-                    if (rd_cmd_fire) begin
-                        rd_req_cnt_cs <= rd_req_cnt_cs + 1'b1;
+                    if (fast_rd_fire) begin
+                        fast_rd_req_cnt_cs <= fast_rd_req_cnt_cs + 1'b1;
                     end
 
-                    // wr_en/wr_addr/wr_burst for this write are driven in the
-                    // RAM-write block; here we only advance the command counter.
-                    if (wr_cmd_fire) begin
-                        wr_cmd_cnt_cs <= wr_cmd_cnt_cs + 1'b1;
+                    if (datapath_result_pre_valid) begin
+                        if (fast_pre_result_cnt_cs == 7'd127) begin
+                            fast_pre_result_cnt_cs <= 7'd0;
+                            if (fast_pre_write_base_cs != HALF_ADDR) begin
+                                fast_pre_write_base_cs <= HALF_ADDR;
+                                fast_pre_wr_issued_cs  <= 1'b0;
+                                fast_wr_pending_cs     <= 1'b0;
+                            end
+                        end
+                        else begin
+                            fast_pre_result_cnt_cs <= fast_pre_result_cnt_cs + 1'b1;
+                        end
                     end
 
                     if (datapath_result_valid) begin
-                        if (result_last) begin
-                            state_cs <= S_IDLE;
+                        if (fast_group_result_cnt_cs == 7'd127) begin
+                            if (fast_write_base_cs == HALF_ADDR) begin
+                                state_cs <= S_IDLE;
+                            end
+                            else begin
+                                fast_write_base_cs       <= HALF_ADDR;
+                                fast_group_result_cnt_cs <= 7'd0;
+                            end
                         end
                         else begin
-                            out_cnt_cs <= out_cnt_cs + 1'b1;
+                            fast_group_result_cnt_cs <= fast_group_result_cnt_cs + 1'b1;
                         end
                     end
                 end
 
-                S_HA_PARAM: begin
+                S_ATT_PARAM: begin
                     if (in_valid) begin
-                        if (!ha_param_phase_cs) begin
-                            exec_weight_k     <= param;
-                            ha_param_phase_cs <= 1'b1;
+                        if (!att_param_phase_cs) begin
+                            exec_weight_k      <= param;
+                            att_param_phase_cs <= 1'b1;
                         end
                         else begin
-                            exec_weight_v          <= param;
-                            ha_group_base_cs       <= 8'd0;
-                            ha_write_base_cs       <= 8'd0;
-                            rd_req_cnt_cs           <= ha_first_read_fire ? 2'd1 : 2'd0;
-                            ha_rd_word_cnt_cs      <= 5'd0;
-                            out_cnt_cs              <= 8'd0;
-                            ha_wr_cnt_cs           <= 7'd0;
-                            ha_wr_run_cs           <= 1'b0;
-                            ha_prefetch_pending_cs <= ha_first_read_fire;
-                            state_cs                <= S_HA_READ;
+                            exec_weight_v            <= param;
+                            att_rd_issued_cs         <= att_param_done_fire;
+                            att_rd_word_cnt_cs       <= 8'd0;
+                            att_read_base_cs         <= '0;
+                            att_result_base_cs       <= '0;
+                            att_pre_result_cnt_cs    <= 7'd0;
+                            att_pre_write_base_cs    <= '0;
+                            att_group_result_cnt_cs  <= 7'd0;
+                            att_pre_wr_issued_cs     <= 1'b0;
+                            att_wr_pending_cs        <= 1'b0;
+                            state_cs                 <= S_ATT_READ;
                         end
                     end
                 end
 
-                S_HA_READ: begin
-                    if (ha_read_fire) begin
-                        rd_req_cnt_cs <= 2'd1;
+                S_ATT_READ: begin
+                    if (att_rd_fire) begin
+                        att_rd_issued_cs <= 1'b1;
                     end
 
-                    if (ha_qkv_stream_fire) begin
-                        if (ha_rd_word_cnt_cs == 5'd31) begin
-                            ha_rd_word_cnt_cs <= 5'd0;
-                            ha_phase_cnt_cs   <= 6'd0;
-                            ha_stage_cs       <= ST_SV;
-                            state_cs           <= S_HA_ISSUE;
+                    if (att_rd_data_fire) begin
+                        if (att_rd_word_cnt_cs == 8'd127) begin
+                            att_rd_word_cnt_cs <= 8'd0;
+                            state_cs           <= S_ATT_WAIT;
                         end
                         else begin
-                            ha_rd_word_cnt_cs <= ha_rd_word_cnt_cs + 1'b1;
+                            att_rd_word_cnt_cs <= att_rd_word_cnt_cs + 1'b1;
                         end
                     end
                 end
 
-                S_HA_ISSUE: begin
-                    if (ha_phase_cnt_cs == ha_phase_last) begin
-                        // Barrier 放寬：QKV/SV 的 issue 一發完就直接接下一 stage，
-                        //   不再進 S_HA_WAIT 等 ready bitmap。SV/FINAL 照 issue
-                        //   順序消費 q/k/v_mem、score_mem，而 PoT/score 照順序生產且
-                        //   領先 ≥5(SHA SV)/≥21(MHA SV) cycle，operand 必已就緒。
-                        //   只有 FINAL 仍進 WAIT 做 drain + 切下一組。
-                        case (ha_stage_cs)
-                            ST_QKV: begin
-                                ha_stage_cs     <= ST_SV;
-                                ha_phase_cnt_cs <= 6'd0;
-                            end
-                            ST_SV: begin
-                                ha_stage_cs     <= ST_FINAL;
-                                ha_phase_cnt_cs <= 6'd0;
-                                // 計時器在下一拍 ha_final_start(FINAL phase0) 啟動。
-                            end
-                            default: begin  // ST_FINAL
-                                state_cs <= S_HA_WAIT;
-                            end
-                        endcase
-                    end
-                    else begin
-                        ha_phase_cnt_cs <= ha_phase_cnt_cs + 1'b1;
-                    end
-                end
-
-                // Barrier 放寬後只有 FINAL 進得來（QKV/SV 在 ISSUE 內直接接）。
-                // 在此 drain 當組 FINAL 結果並（用 ha_next_group_fire）啟動下一組。
-                S_HA_WAIT: begin
-                    if (ha_has_next_group && ha_next_group_fire) begin
-                        ha_group_base_cs  <= ha_next_group_base;
-                        rd_req_cnt_cs      <= ha_prefetch_pending_cs ? 2'd1 : 2'd0;
-                        ha_rd_word_cnt_cs <= rd_valid ? 5'd1 : 5'd0;
-                        ha_phase_cnt_cs   <= 6'd0;
-                        ha_stage_cs       <= ST_QKV;
-                        state_cs          <= S_HA_READ;
-                    end
-                    else if (!ha_has_next_group && result_last) begin
-                        state_cs <= S_IDLE;
+                S_ATT_WAIT: begin
+                    if (att_next_rd_fire) begin
+                        att_read_base_cs  <= HALF_ADDR;
+                        att_rd_issued_cs  <= 1'b1;
+                        att_rd_word_cnt_cs <= 8'd0;
+                        state_cs          <= S_ATT_READ;
                     end
                 end
 
@@ -496,71 +389,95 @@ module CA_Control #(
                 end
             endcase
 
-            if (exec_op[1] && datapath_result_valid && (out_cnt_cs != 8'd255)) begin
-                out_cnt_cs <= out_cnt_cs + 1'b1;
+            if (att_result_active && datapath_result_pre_valid) begin
+                if (att_pre_result_cnt_cs == 7'd127) begin
+                    att_pre_result_cnt_cs <= 7'd0;
+                    if (att_pre_write_base_cs != HALF_ADDR) begin
+                        att_pre_write_base_cs <= HALF_ADDR;
+                        att_pre_wr_issued_cs  <= 1'b0;
+                        att_wr_pending_cs     <= 1'b0;
+                    end
+                end
+                else begin
+                    att_pre_result_cnt_cs <= att_pre_result_cnt_cs + 1'b1;
+                end
+            end
+
+            if (att_result_active && datapath_result_valid) begin
+                if (att_group_result_cnt_cs == 7'd127) begin
+                    att_group_result_cnt_cs <= 7'd0;
+                    if (att_result_base_cs == HALF_ADDR) begin
+                        state_cs <= S_IDLE;
+                    end
+                    else begin
+                        att_result_base_cs <= HALF_ADDR;
+                    end
+                end
+                else begin
+                    att_group_result_cnt_cs <= att_group_result_cnt_cs + 1'b1;
+                end
             end
         end
     end
 
-    // All RAM-read command outputs (rd_en/rd_burst/rd_addr) live here. The fire
-    // conditions are mutually exclusive (each gated on a distinct state), so
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            rd_en <= 1'b0;
+            rd_en    <= 1'b0;
+            rd_addr  <= '0;
+            rd_burst <= '0;
         end
         else begin
             rd_en    <= 1'b0;
+            rd_addr  <= '0;
             rd_burst <= '0;
+
             if (fast_first_rd_fire) begin
                 rd_en    <= 1'b1;
-                rd_burst <= BURST_128;
                 rd_addr  <= '0;
-            end
-            else if (rd_cmd_fire) begin
-                rd_en    <= 1'b1;
                 rd_burst <= BURST_128;
-                rd_addr  <= rd_req_cnt_cs[0] ? HALF_ADDR : '0;
             end
-            else if (ha_first_read_fire) begin
+            else if (fast_rd_fire) begin
                 rd_en    <= 1'b1;
-                rd_burst <= BURST_GRP;
-                rd_addr  <= '0;
+                rd_addr  <= fast_rd_req_cnt_cs[0] ? HALF_ADDR : '0;
+                rd_burst <= BURST_128;
             end
-            else if (ha_read_fire) begin
+            else if (att_param_done_fire) begin
                 rd_en    <= 1'b1;
-                rd_burst <= BURST_GRP;
-                rd_addr  <= ha_group_base_cs[ADDR_W-1:0];
+                rd_addr  <= att_read_base_cs;
+                rd_burst <= BURST_128;
             end
-            else if (ha_prefetch_fire) begin
+            else if (att_next_rd_fire) begin
                 rd_en    <= 1'b1;
-                rd_burst <= BURST_GRP;
-                rd_addr  <= ha_next_group_base[ADDR_W-1:0];
+                rd_addr  <= HALF_ADDR;
+                rd_burst <= BURST_128;
+            end
+            else if (att_rd_fire) begin
+                rd_en    <= 1'b1;
+                rd_addr  <= att_read_base_cs;
+                rd_burst <= BURST_128;
             end
         end
     end
 
-    // All RAM-write command outputs (wr_en/wr_burst/wr_addr) live here. The two
-    // write paths never overlap (attention write-back only fires in attention
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             wr_en    <= 1'b0;
+            wr_addr  <= '0;
             wr_burst <= '0;
         end
         else begin
             wr_en    <= 1'b0;
+            wr_addr  <= '0;
             wr_burst <= '0;
 
-            // Attention: one BURST_32 per group, timed by ha_wr_cnt_cs.
-            if (ha_wr_fire) begin
+            if (fast_wr_fire) begin
                 wr_en    <= 1'b1;
-                wr_addr  <= ha_write_base_cs[ADDR_W-1:0];
-                wr_burst <= BURST_GRP;
+                wr_addr  <= fast_pre_write_base_cs;
+                wr_burst <= BURST_128;
             end
-
-            // FAST_RUN: a single BURST_128 covering all 256 results.
-            if (wr_cmd_fire && (wr_cmd_cnt_cs[6:0] == 7'd0)) begin
+            else if (att_wr_fire) begin
                 wr_en    <= 1'b1;
-                wr_addr  <= wr_cmd_cnt_cs[ADDR_W-1:0];
+                wr_addr  <= att_pre_write_base_cs;
                 wr_burst <= BURST_128;
             end
         end
@@ -568,23 +485,6 @@ module CA_Control #(
 
 endmodule
 
-// ============================================================================
-// CA_DataPath
-// 角色：純路由 + 中間儲存 + 三個 compute submodule 的 dispatch / collect
-//
-// Pipeline 全圖（從 issue/capture 進來算起）：
-//   Multiple_Processor: in→[1 issue buf]→[5 mult stages]→[1 output reg] → mult_valid
-//   ACT_5Stage_Parallel: in→[1 input buf]→[4 act stages]                → act_valid
-//   PoT_5Stage_Parallel: in+abs→[1 input buf]→[3 max stages]→[1 final] → pot_valid (cycle 5)
-//
-// Sideband (tag/idx) pipeline 長度跟著走：
-//   act_*_cs[0..4]  → 5 級 (對齊 ACT 5-stage)
-//   pot_*_cs[0..4]  → 5 級 (對齊 PoT 5-stage)
-//
-// FF 分配原則：
-//   * Multiple_Processor / ACT / PoT 自己的 input buffer 已搬進各自模組
-//   * DataPath 只留：①跨 issue 的中間儲存  ②sideband pipeline  ③output buffer
-// ============================================================================
 module CA_DataPath #(
     parameter RAM_WIDTH = 256
 )(
@@ -592,258 +492,111 @@ module CA_DataPath #(
     input  logic                 rst_n,
     input  logic                 issue_valid,
     input  issue_mode_t          issue_mode,
-    input  logic [5:0]           issue_idx,
+    input  logic [6:0]           issue_idx,
     input  logic [1:0]           op,
     input  logic [1:0]           act,
     input  logic [255:0]         param,
     input  logic [255:0]         weight_k,
     input  logic [255:0]         weight_v,
     input  logic [RAM_WIDTH-1:0] rd_data,
+    input  logic                 wr_valid,
 
+    output logic                 result_pre_valid,
     output logic                 result_valid,
     output logic [RAM_WIDTH-1:0] wr_data,
     output logic                 out_valid,
     output logic [31:0]          out_data
 );
+    localparam int RESULT_PRE_PIPE = 4;
 
-    // ------------------------------------------------------------------------
-    // 區塊 1：型別 / 常數
-    // ------------------------------------------------------------------------
-    localparam logic [1:0] ACT_USER    = 2'd0;
-    localparam logic [1:0] ACT_SPECIAL = 2'd2;
 
-    // Use top-level mult_tag_t for the whole DataPath sideband; values pass
-    // through unchanged from Multiple_Processor into ACT / PoT tag pipelines.
+    localparam logic [1:0] ACT_USER = 2'd0;
 
-    // score_mem 每 lane 存預先算好的 base-16 signed-digit {d0,d1,d2}（各 s4 = 12-bit），
-    // 而非原始 11-bit score。進位拆解搬到寫入端，FINAL 讀取端只切片（critical path↓）。
-    localparam int SCORE_ELEM_W   = 12;
-    localparam int SCORE_PACK_W   = SCORE_ELEM_W * 64;
-    // combine_mha_heads 只取 head0 每 row 的 col 0-3，所以 FINAL head0 buffer
-    // 只存 32 lanes（col 4-7 計算後丟棄）。
+    typedef enum logic [1:0] {
+        DT_NONE = 2'd0,
+        DT_NORM = 2'd1,
+        DT_ATT  = 2'd2
+    } datapath_tag_t;
 
-    // ------------------------------------------------------------------------
-    // 區塊 2：跨 issue 的中間儲存（這些是 DataPath 的「狀態」，必須留在這層）
-    // ------------------------------------------------------------------------
-    // Burst-32 intermediate state. Q/K are streamed directly into the score
-    // path as soon as their PoT outputs are ready; only V and score must be
-    // retained for the later FINAL phase.
-    logic [255:0]              v_mem        [0:31];
-    logic [SCORE_PACK_W-1:0]   score_mem    [0:63];
-
-    // ------------------------------------------------------------------------
-    // 區塊 3：Submodule output 線（comb，從各 submodule 出來的訊號）
-    // ------------------------------------------------------------------------
-    logic          mult_valid;
-    logic [1023:0] mult_data;
-    mult_tag_t     mult_tag_out;
-    logic [5:0]    mult_idx_out;
-    // engine1/2：QKV 並行的 K / V（tag 恆 MT_K / MT_V）
-    logic          mult_k_valid;
-    logic [1023:0] mult_k_data;
-    logic [5:0]    mult_k_idx;
-    logic          mult_v_valid;
-    logic [1023:0] mult_v_data;
-    logic [5:0]    mult_v_idx;
-    // engine1 SV 平行 score（head1/奇數 matrix）→ 寫 score_mem（用 mult_k_data/idx）
-    logic          mult_k_score_valid;
-    logic          sv0_score_valid;
-    logic [1023:0] sv0_score_data;
-    logic [5:0]    sv0_score_idx;
-    logic          sv1_score_valid;
-    logic [1023:0] sv1_score_data;
-    logic [5:0]    sv1_score_idx;
-
-    logic          act_valid;
-    logic [1023:0] act_data;
-
-    // 3 路 PoT：lane0 = engine0 的 Q / NORM / FINAL（經 ACT）；lane1/2 = K / V。
-    logic          pot_valid;
-    logic [255:0]  pot_data;
-    logic          pot_k_valid;
-    logic [255:0]  pot_k_data;
-    logic          pot_v_valid;
-    logic [255:0]  pot_v_data;
-
-    // ------------------------------------------------------------------------
-    // 區塊 4：Issue / capture 入口 buffer
-    //   * issue path 給 Multiple_Processor，先打一拍切短上游 mux
-    //   * rd_data_cs 同時服務 capture (寫 x_mem) 和 IM_NORM (送進 MP)，
-    //     兩者互斥，所以共享一個 register 不衝突
-    // ------------------------------------------------------------------------
     logic                 issue_valid_cs;
     issue_mode_t          issue_mode_cs;
-    logic [5:0]           issue_idx_cs;
+    logic [6:0]           issue_idx_cs;
     logic [RAM_WIDTH-1:0] rd_data_cs;
 
-    // ------------------------------------------------------------------------
-    // 區塊 5：Dispatch comb 線（mult → ACT / PoT 的分流）
-    // ------------------------------------------------------------------------
-    logic          act_in_valid;
-    logic [1:0]    act_in_mode;
+    logic norm_in_valid;
+    logic norm_mult_valid;
+    logic [1023:0] norm_mult_data;
+
+    logic att_in_valid;
+    logic att_core_valid;
+    logic [1023:0] att_core_data;
+
+    logic act_in_valid;
     logic [1023:0] act_in_data;
-    mult_tag_t     act_in_tag;
-    logic [5:0]    act_in_idx;
+    datapath_tag_t act_in_tag;
+    logic act_valid;
+    logic [1023:0] act_data;
 
-    logic          pot_in_valid;
+    logic pot_in_valid;
     logic [1023:0] pot_in_data;
-    mult_tag_t     pot_in_tag;
-    logic [5:0]    pot_in_idx;
+    datapath_tag_t pot_in_tag;
+    logic pot_valid;
+    logic [255:0] pot_data;
 
-    // K/V PoT lane 入口（純 bypass：直接拿 mult engine1/2 輸出）
-    logic          pot_k_in_valid;
-    logic          pot_v_in_valid;
-    logic [5:0]    pot_v_in_idx;
+    datapath_tag_t act_tag_cs [0:4];
+    datapath_tag_t pot_tag_cs [0:4];
 
-    logic          qk_stream_valid;
+    logic         result_pre_pipe_cs [0:RESULT_PRE_PIPE-1];
+    logic [255:0] wr_data_skid_cs;
+    logic         wr_data_skid_valid_cs;
 
-    logic          use_act_for_pot;
+    assign norm_in_valid = issue_valid_cs && (issue_mode_cs == IM_NORM);
+    assign att_in_valid  = issue_valid_cs && (issue_mode_cs == IM_ATT);
 
-    // ------------------------------------------------------------------------
-    // 區塊 6：Sideband pipeline (跟 ACT/PoT 的延遲對齊)
-    //   act_*_cs: 5 級 (input buf + 4 stages)
-    //   pot_*_cs: 5 級 (input buf + Matrix_Max 3 stages + final 1 stage)
-    // ------------------------------------------------------------------------
-    mult_tag_t     act_tag_cs [0:4];  // ACT 5-stage (input_buf + pair + psum + thr + apply)
-    logic [5:0]    act_idx_cs [0:4];
-    mult_tag_t     pot_tag_cs [0:4];
-    logic [5:0]    pot_idx_cs [0:4];
-    // K/V PoT lane idx sideband（tag 恆 K/V，valid 直接用 PoT out_valid）。對齊 5-stage。
-    logic [5:0]    pot_v_idx_cs   [0:4];
+    assign act_in_valid = norm_mult_valid || att_core_valid;
+    assign act_in_data  = att_core_valid ? att_core_data : norm_mult_data;
+    assign act_in_tag   = att_core_valid ? DT_ATT :
+                          (norm_mult_valid ? DT_NORM : DT_NONE);
 
-    // ========================================================================
-    // 函式：MHA head 合併 / score 壓縮 / mha_out0 壓縮解壓
-    // ========================================================================
-    // 把 attention activation (x<0 → x>>2) 跟 16→11 bit truncation 都搬到這裡
-    // combinational 做掉，SCORE 直接從 mult_data 寫進 score_mem，不過 ACT pipeline。
-    function automatic logic [SCORE_PACK_W-1:0] pack_attention_score(input logic [1023:0] src);
-        logic signed [15:0] elem;
-        logic signed [15:0] activated;
-        logic [10:0]        ls;     // 11-bit truncated score
-        logic [4:0]         raw1;   // ls[7:4] + carry-in，最大 16
-        logic               c1;
-        logic [3:0]         d0, d1, d2;
-        begin
-            for (int i = 0; i < 64; i++) begin
-                elem      = $signed(src[1023 - (i * 16) -: 16]);
-                activated = (elem < 0) ? (elem >>> 2) : elem;
-                ls        = activated[10:0];
-                // base-16 signed-digit 拆解（與舊 read-side 同式，搬到寫入端）：
-                //   score = d0 + 16·d1 + 256·d2，每個 dk ∈ [-8,7]。進位互相抵銷。
-                // c1 = (ls[7:4]+ls[3]) ≥ 8 直接寫成布林式，d2 不必等 raw1 完整加法器
-                //   → 縮短 ls→c1→d2 的 carry 鏈（寫入端 critical path↓）。
-                raw1 = {1'b0, ls[7:4]} + {4'b0, ls[3]};
-                c1   = ls[7] | (ls[6] & ls[5] & ls[4] & ls[3]);
-                d0   = ls[3:0];
-                d1   = raw1[3:0];
-                d2   = {ls[10], ls[10:8]} + c1;
-                pack_attention_score[SCORE_PACK_W-1 - (i * SCORE_ELEM_W) -: SCORE_ELEM_W] =
-                    {d0, d1, d2};
-            end
-        end
-    endfunction
+    assign pot_in_valid = act_valid && (act_tag_cs[4] != DT_NONE);
+    assign pot_in_data  = act_data;
+    assign pot_in_tag   = act_tag_cs[4];
 
-    // ========================================================================
-    // 區塊 7：result_valid 給 Control 看的回報訊號
-    // ========================================================================
-    // Fixed attention scheduling guarantees QKV/SV availability; no ready
-    // bitmap feedback is needed after the stream-in rewrite.
-    assign result_valid = pot_valid &&
-                          ((pot_tag_cs[4] == MT_NORM) ||
-                           (pot_tag_cs[4] == MT_FINAL));
+    assign result_valid = pot_valid && (pot_tag_cs[4] != DT_NONE);
+    assign result_pre_valid = result_pre_pipe_cs[RESULT_PRE_PIPE-1];
+    assign wr_data      = wr_data_skid_valid_cs ? wr_data_skid_cs : pot_data;
 
-    // ========================================================================
-    // 區塊 8：Mult-output dispatch (mult → ACT / PoT / score_mem / V storage)
-    //
-    //   MT_NORM            → ACT (tag=MT_NORM)
-    //   MT_SCORE           → score_mem 直接（comb pack_attention_score，省 4 cycles）
-    //   MT_FINAL           → ACT (SHA direct; MHA already head-combined)
-    //   MT_Q/K/V           → PoT (直接，不過 ACT)
-    // ========================================================================
-    // SCORE 直接走 mult → score_mem 不過 ACT，因此 ACT 入口只剩 NORM / FINAL。
-    assign act_in_valid = mult_valid &&
-                          ((mult_tag_out == MT_NORM) ||
-                           (mult_tag_out == MT_FINAL));
-    assign act_in_data  = mult_data;
-    assign act_in_idx   = (mult_tag_out == MT_FINAL) ? mult_idx_out : 6'd0;
+    Mult_5Stage_Parallel u_norm_mult (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .op          (op),
+        .b_transpose (1'b0),
+        .in_valid    (norm_in_valid),
+        .in_data_A   (rd_data_cs),
+        .in_data_B   (param),
+        .out_valid   (norm_mult_valid),
+        .out_data    (norm_mult_data)
+    );
 
-    always_comb begin
-        // ACT 永遠 USER mode（SCORE 的 SPECIAL act 已內嵌進 pack_attention_score）。
-        act_in_mode = ACT_USER;
-        act_in_tag  = mult_tag_out;
-    end
-
-    // ========================================================================
-    // 區塊 9：ACT-output / Mult-Q/K/V dispatch (→ PoT)
-    //
-    //   MT_NORM/MT_FINAL (after ACT) → PoT (走 ACT→PoT 路徑)
-    //   MT_Q/K/V (from mult, bypass ACT) → PoT 直接
-    //   (MT_SCORE 已不走 ACT，直接從 mult 寫 score_mem——見區塊 11)
-    // ========================================================================
-    assign use_act_for_pot = act_valid &&
-                             ((act_tag_cs[4] == MT_NORM) || (act_tag_cs[4] == MT_FINAL));
-
-    // lane0：ACT 輸出 (NORM/FINAL) 或 engine0 的 Q（K/V 改走 lane1/2）。
-    assign pot_in_valid = use_act_for_pot ||
-                          (mult_valid && (mult_tag_out == MT_Q));
-    assign pot_in_data  = use_act_for_pot ? act_data       : mult_data;
-    assign pot_in_idx   = use_act_for_pot ? act_idx_cs[4]  : mult_idx_out;
-    assign pot_in_tag   = use_act_for_pot ? act_tag_cs[4]  : mult_tag_out;
-
-    // lane1 (K) / lane2 (V)：直接 bypass engine1/2 輸出（tag 恆 K/V）。
-    assign pot_k_in_valid = mult_k_valid;
-    assign pot_v_in_valid = mult_v_valid;
-    assign pot_v_in_idx   = mult_v_idx;
-
-    assign qk_stream_valid = pot_valid &&
-                             pot_k_valid &&
-                             (pot_tag_cs[4] == MT_Q);
-
-    // ========================================================================
-    // 區塊 10：Submodule 例化（純連線，沒有額外邏輯）
-    // ========================================================================
-    Multiple_Processor u_mult_proc (
-        .clk          (clk),
-        .rst_n        (rst_n),
-        .issue_valid  (issue_valid_cs),
-        .issue_mode   (issue_mode_cs),
-        .issue_idx    (issue_idx_cs),
-        .op           (op),
-        .param        (param),
-        .weight_k     (weight_k),
-        .weight_v     (weight_v),
-        .rd_data      (rd_data_cs),
-        .q_stream_valid (qk_stream_valid),
-        .q_stream_idx   (pot_idx_cs[4]),
-        .q_stream_data  (pot_data),
-        .k_stream_data  (pot_k_data),
-        .v_mem        (v_mem),
-        .score_mem    (score_mem),
-        .mult_valid   (mult_valid),
-        .mult_data    (mult_data),
-        .mult_tag_out (mult_tag_out),
-        .mult_idx_out (mult_idx_out),
-        .mult_k_valid (mult_k_valid),
-        .mult_k_data  (mult_k_data),
-        .mult_k_idx   (mult_k_idx),
-        .mult_v_valid (mult_v_valid),
-        .mult_v_data  (mult_v_data),
-        .mult_v_idx   (mult_v_idx),
-        .mult_k_score_valid (mult_k_score_valid),
-        .sv0_score_valid (sv0_score_valid),
-        .sv0_score_data  (sv0_score_data),
-        .sv0_score_idx   (sv0_score_idx),
-        .sv1_score_valid (sv1_score_valid),
-        .sv1_score_data  (sv1_score_data),
-        .sv1_score_idx   (sv1_score_idx)
+    ATT_Stream_Core u_att_stream_core (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (att_in_valid),
+        .is_mha    (op[0]),
+        .src_data  (rd_data_cs),
+        .wq_data   (param),
+        .wk_data   (weight_k),
+        .wv_data   (weight_v),
+        .out_valid (att_core_valid),
+        .out_data  (att_core_data)
     );
 
     ACT_5Stage_Parallel u_act (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (act_in_valid),   // comb 直接進，input buffer 在 ACT 內
+        .in_valid  (act_in_valid),
         .act       (act),
-        .act_mode  (act_in_mode),
+        .act_mode  (ACT_USER),
         .in_data   (act_in_data),
         .out_valid (act_valid),
         .out_data  (act_data)
@@ -852,120 +605,70 @@ module CA_DataPath #(
     PoT_5Stage_Parallel u_pot (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (pot_in_valid),   // comb 直接進，input buffer 在 PoT 內
+        .in_valid  (pot_in_valid),
         .in_data   (pot_in_data),
         .out_valid (pot_valid),
         .out_data  (pot_data)
     );
 
-    // lane1 (K) / lane2 (V)：QKV 並行三路的後兩路。輸入直接拿 mult engine1/2。
-    PoT_5Stage_Parallel u_pot_k (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .in_valid  (pot_k_in_valid),
-        .in_data   (mult_k_data),
-        .out_valid (pot_k_valid),
-        .out_data  (pot_k_data)
-    );
-
-    PoT_5Stage_Parallel u_pot_v (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .in_valid  (pot_v_in_valid),
-        .in_data   (mult_v_data),
-        .out_valid (pot_v_valid),
-        .out_data  (pot_v_data)
-    );
-
-    // ========================================================================
-    // 區塊 11：所有狀態更新 (always_ff)
-    //   1. Issue 入口 buffer
-    //   2. Sideband pipeline (act_*_cs / pot_*_cs)
-    //   3. Memory writes (q/k/v/score)
-    //   4. Output buffer (wr_data / out_valid / out_data)
-    // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            // (1) issue buffer
             issue_valid_cs   <= 1'b0;
             issue_mode_cs    <= IM_NONE;
-            issue_idx_cs     <= 6'd0;
+            issue_idx_cs     <= 7'd0;
             rd_data_cs       <= '0;
-
-            // (2) sideband
-            for (int i = 0; i < 5; i++) begin
-                act_tag_cs[i] <= MT_NONE;
-                act_idx_cs[i] <= 6'd0;
+            out_valid        <= 1'b0;
+            out_data         <= 32'd0;
+            wr_data_skid_cs       <= 256'd0;
+            wr_data_skid_valid_cs <= 1'b0;
+            for (int i = 0; i < RESULT_PRE_PIPE; i++) begin
+                result_pre_pipe_cs[i] <= 1'b0;
             end
             for (int i = 0; i < 5; i++) begin
-                pot_tag_cs[i] <= MT_NONE;
-                pot_idx_cs[i] <= 6'd0;
+                act_tag_cs[i] <= DT_NONE;
+                pot_tag_cs[i] <= DT_NONE;
             end
-            for (int i = 0; i < 5; i++) begin
-                pot_v_idx_cs[i] <= 6'd0;
-            end
-
-            // (4) output buffer
-            out_valid <= 1'b0;
-            out_data  <= 32'd0;
         end
         else begin
-            // ---------------- (1) Issue buffer ------------------------------
-            issue_valid_cs   <= issue_valid;
-            issue_mode_cs    <= issue_valid ? issue_mode : IM_NONE;
-            issue_idx_cs     <= issue_valid ? issue_idx  : 6'd0;
-            rd_data_cs       <= rd_data;
+            issue_valid_cs <= issue_valid;
+            issue_mode_cs  <= issue_valid ? issue_mode : IM_NONE;
+            issue_idx_cs   <= issue_valid ? issue_idx : 7'd0;
+            rd_data_cs     <= rd_data;
 
-            // ---------------- (2) Sideband pipeline -------------------------
-            // ACT path: 5 級 (input buf + pair + psum + thr + apply)
-            act_tag_cs[0] <= act_in_valid ? act_in_tag : MT_NONE;
-            act_idx_cs[0] <= act_in_idx;
+            act_tag_cs[0] <= act_in_valid ? act_in_tag : DT_NONE;
             for (int i = 1; i < 5; i++) begin
                 act_tag_cs[i] <= act_tag_cs[i - 1];
-                act_idx_cs[i] <= act_idx_cs[i - 1];
             end
 
-            // PoT path: 5 級 (input buf + 3 max + 1 final)
-            pot_tag_cs[0] <= pot_in_valid ? pot_in_tag : MT_NONE;
-            pot_idx_cs[0] <= pot_in_idx;
+            pot_tag_cs[0] <= pot_in_valid ? pot_in_tag : DT_NONE;
             for (int i = 1; i < 5; i++) begin
                 pot_tag_cs[i] <= pot_tag_cs[i - 1];
-                pot_idx_cs[i] <= pot_idx_cs[i - 1];
             end
 
-            // K/V lane idx sideband（對齊 PoT 5-stage）
-            pot_v_idx_cs[0] <= pot_v_in_idx;
-            for (int i = 1; i < 5; i++) begin
-                pot_v_idx_cs[i] <= pot_v_idx_cs[i - 1];
+            result_pre_pipe_cs[0] <= act_in_valid;
+            for (int i = 1; i < RESULT_PRE_PIPE; i++) begin
+                result_pre_pipe_cs[i] <= result_pre_pipe_cs[i - 1];
             end
 
-            // ---------------- (3) Memory writes -----------------------------
-            // score_mem ← Mult (MT_SCORE) — attention activation 內嵌於 pack_attention_score
-            // 省掉 ACT pipeline 4 cycles（SCORE 是 SV→FINAL 的 critical path）。
-            if (mult_valid && (mult_tag_out == MT_SCORE)) begin
-                score_mem[mult_idx_out]      <= pack_attention_score(mult_data);
+            if (wr_data_skid_valid_cs) begin
+                if (wr_valid) begin
+                    if (result_valid) begin
+                        wr_data_skid_cs <= pot_data;
+                    end
+                    else begin
+                        wr_data_skid_valid_cs <= 1'b0;
+                    end
+                end
             end
-            // engine1 平行 score（SV head1/奇數 matrix）→ 與 engine0 同拍寫不同 slot
-            if (mult_k_score_valid) begin
-                score_mem[mult_k_idx]      <= pack_attention_score(mult_k_data);
-            end
-            if (sv0_score_valid) begin
-                score_mem[sv0_score_idx] <= pack_attention_score(sv0_score_data);
-            end
-            if (sv1_score_valid) begin
-                score_mem[sv1_score_idx] <= pack_attention_score(sv1_score_data);
-            end
-
-            // Q/K stream directly into score computation; only V is retained
-            // for FINAL score*V.
-            if (pot_v_valid) begin
-                v_mem[pot_v_idx_cs[4][4:0]]      <= pot_v_data;
+            else begin
+                if (result_valid && !wr_valid) begin
+                    wr_data_skid_cs       <= pot_data;
+                    wr_data_skid_valid_cs <= 1'b1;
+                end
             end
 
-            // ---------------- (4) Output buffer -----------------------------
             out_valid <= result_valid;
             if (result_valid) begin
-                wr_data  <= pot_data;
                 out_data <= pot_data[31:0];
             end
         end
@@ -973,882 +676,636 @@ module CA_DataPath #(
 
 endmodule
 
-module Multiple_Processor (
-    input  logic           clk,
-    input  logic           rst_n,
-
-    input  logic           issue_valid,
-    input  issue_mode_t    issue_mode,
-    input  logic [5:0]     issue_idx,
-
-    input  logic [1:0]     op,
-    input  logic [255:0]   param,
-    input  logic [255:0]   weight_k,
-    input  logic [255:0]   weight_v,
-    input  logic [255:0]   rd_data,
-
-    input  logic           q_stream_valid,
-    input  logic [5:0]     q_stream_idx,
-    input  logic [255:0]   q_stream_data,
-    input  logic [255:0]   k_stream_data,
-
-    input  logic [255:0]   v_mem       [0:31],
-    input  logic [767:0]   score_mem   [0:63], // 12-bit signed-digit {d0,d1,d2} × 64 lanes
-
-    // engine0：QKV 的 Q / SCORE / FINAL / NORM（保留全部原機制，含 nibble 累加）
-    output logic           mult_valid,
-    output logic [1023:0]  mult_data,
-    output mult_tag_t      mult_tag_out,
-    output logic [5:0]     mult_idx_out,
-    // engine1 / engine2：QKV 並行的 K / V（純 matmul，bypass ACT/nibble）。
-    //   tag 恆為 MT_K / MT_V，所以只輸出 valid/data/idx。latency 與 engine0 對齊
-    //   (mult 5 stage + output reg 1 = 6)，故 Q/K/V 同拍抵達下游 3 路 PoT。
-    output logic           mult_k_valid,
-    output logic [1023:0]  mult_k_data,
-    output logic [5:0]     mult_k_idx,
-    output logic           mult_v_valid,
-    output logic [1023:0]  mult_v_data,
-    output logic [5:0]     mult_v_idx,
-    // SV 階段 engine1 平行算 head1(MHA) / 奇數 matrix(SHA) 的 score：
-    //   結果走 mult_k_data/mult_k_idx，但用此 valid 通知 DataPath 寫 score_mem
-    //   （而非 QKV 的 PoT 路徑）。engine0 的 head0/偶數 score 仍走 MT_SCORE。
-    output logic           mult_k_score_valid,
-    output logic           sv0_score_valid,
-    output logic [1023:0]  sv0_score_data,
-    output logic [5:0]     sv0_score_idx,
-    output logic           sv1_score_valid,
-    output logic [1023:0]  sv1_score_data,
-    output logic [5:0]     sv1_score_idx
+module ATT_Stream_Core #(
+    parameter int ACC_W = 16,
+    parameter int MAT_SIZE = 64,
+    parameter int SCORE_ELEM_W = 11
+)(
+    input  logic                 clk,
+    input  logic                 rst_n,
+    input  logic                 in_valid,
+    input  logic                 is_mha,
+    input  logic [255:0]         src_data,
+    input  logic [255:0]         wq_data,
+    input  logic [255:0]         wk_data,
+    input  logic [255:0]         wv_data,
+    output logic                 out_valid,
+    output logic [(MAT_SIZE*ACC_W)-1:0] out_data
 );
 
-    // Matches Mult internal pipeline depth
-    //   (input buf + operand + prod + partial + sum = 5 stages，
-    //    operand reg 把 op-MUX 從 multiplier 的 input cone 移走)。
-    localparam int MULT_STAGES = 5;
-
-    logic          mult_issue_valid;
-    logic          mult_issue_b_transpose;
-    logic [255:0]  mult_issue_A;           // signed 4-bit packed A for the multiplier
-    logic [255:0]  mult_issue_B;
-    mult_tag_t     mult_issue_tag;
-    logic [5:0]    mult_issue_idx;
-
-    // engine1 / engine2 issue operands（QKV 的 K/V、FINAL 的 d1/d2、或 SV 的 head1 score）。
-    logic          mult_k_issue_valid;
-    logic [255:0]  mult_k_issue_A;
-    logic [255:0]  mult_k_issue_B;
-    logic          mult_k_issue_btr;  // engine1 b_transpose（SV head1 score = 1）
-    logic          mult_v_issue_valid;
-    logic [255:0]  mult_v_issue_A;
-    logic [255:0]  mult_v_issue_B;
-    logic [5:0]    mult_kv_issue_idx;
-    logic          mult_kv_is_qkv;    // 1 = QKV(K/V→PoT)
-    logic          mult_kv_is_score;  // 1 = SV head1/奇數 score(engine1→score_mem)
-
-    logic          aux0_issue_valid;
-    logic          aux0_issue_btr;
-    logic [255:0]  aux0_issue_A;
-    logic [255:0]  aux0_issue_B;
-    logic [5:0]    aux0_issue_idx;
-    logic          aux0_issue_score;
-
-    logic          aux1_issue_valid;
-    logic          aux1_issue_btr;
-    logic [255:0]  aux1_issue_A;
-    logic [255:0]  aux1_issue_B;
-    logic [5:0]    aux1_issue_idx;
-    logic          aux1_issue_score;
-
-    logic          aux2_issue_valid;
-    logic [255:0]  aux2_issue_A;
-    logic [255:0]  aux2_issue_B;
-
-    mult_tag_t  mult_tag_cs    [0:MULT_STAGES-1];
-    logic [5:0] mult_idx_cs    [0:MULT_STAGES-1];
-
-    // engine1/2 用途 pipeline（跟 idx 一起傳，stage4 用來 gate 下游）：
-    //   role_cs  : 1 = QKV(K/V→PoT)，0 = FINAL(d1/d2 internal) 或 SV(由 score_cs 區分)
-    //   score_cs : 1 = SV engine1 score(→score_mem)
-    logic       mult_kv_role_cs  [0:MULT_STAGES-1];
-    logic       mult_kv_score_cs [0:MULT_STAGES-1];
-    logic [5:0] aux0_idx_cs      [0:MULT_STAGES-1];
-    logic [5:0] aux1_idx_cs      [0:MULT_STAGES-1];
-    logic       aux0_score_cs    [0:MULT_STAGES-1];
-    logic       aux1_score_cs    [0:MULT_STAGES-1];
-
-    // FINAL counters：head(outer) > mat(inner)。3 路並行做 d0/d1/d2，無 nibble 維度。
-    //   SHA: 32 mat = 32 phase；MHA: 2 head × 32 mat = 64 phase。
-    logic [4:0] fin_mat_cs;    // matrix within group 0..31 (inner)
-    logic       fin_head_cs;   // MHA head 0/1 (outer; SHA stays 0)
-
-    // Extract one phase's signed-digit vector as 4-bit packed A.
-    //
-    // score_mem 已於寫入時 (pack_attention_score) 預先算好 base-16 signed-digit，
-    // 每 lane 存 {d0[11:8], d1[7:4], d2[3:0]}（各 s4）。讀取端只做 phase 切片，
-    // 不再有進位加法 —— 原本掛在 issue→in_data_A 的 XOR carry 移除。
-    function automatic logic [255:0] extract_score_nibble_s4(
-        input logic [767:0] src,
-        input logic [1:0]   phase
-    );
-        logic [11:0] ld;
-        logic [3:0]  d;
-        begin
-            for (int s = 0; s < 64; s++) begin
-                ld = src[767 - (s * 12) -: 12];
-                case (phase)
-                    2'd0:    d = ld[11:8];   // d0
-                    2'd1:    d = ld[7:4];    // d1
-                    default: d = ld[3:0];    // d2
-                endcase
-                extract_score_nibble_s4[255 - (s * 4) -: 4] = d;
-            end
-        end
-    endfunction
-
-    // FINAL 的 score_mem 索引（engine0 d0 與 engine1/2 d1/d2 共用）。
-    function automatic logic [255:0] mask_mha_head0(input logic [255:0] src);
-        begin
-            mask_mha_head0 = src;
-            for (int r = 0; r < 8; r++) begin
-                mask_mha_head0[239 - 32*r -: 16] = 16'd0;
-            end
-        end
-    endfunction
-
-    function automatic logic [255:0] mask_mha_head1(input logic [255:0] src);
-        begin
-            mask_mha_head1 = src;
-            for (int r = 0; r < 8; r++) begin
-                mask_mha_head1[255 - 32*r -: 16] = 16'd0;
-            end
-        end
-    endfunction
-
-    function automatic logic [1023:0] combine_mha_heads_full(
-        input logic [1023:0] head0,
-        input logic [1023:0] head1
-    );
-        begin
-            combine_mha_heads_full = 1024'd0;
-            for (int r = 0; r < 8; r++) begin
-                combine_mha_heads_full[1023 -  r*128       -: 64] =
-                    head0[1023 -  r*128       -: 64];
-                combine_mha_heads_full[1023 - (r*128 + 64) -: 64] =
-                    head1[1023 - (r*128 + 64) -: 64];
-            end
-        end
-    endfunction
-
-    logic [5:0] fin_score_idx;
-    assign fin_score_idx = (op == 2'b11) ? {fin_head_cs, fin_mat_cs}
-                                         : {1'b0, fin_mat_cs};
-
-    always_comb begin
-        mult_issue_valid       = 1'b0;
-        mult_issue_b_transpose = 1'b0;
-        mult_issue_A           = 256'd0;
-        mult_issue_B           = 256'd0;
-        mult_issue_tag         = MT_NONE;
-        mult_issue_idx         = 6'd0;
-
-        if (issue_valid) begin
-            mult_issue_valid = 1'b1;
-
-            case (issue_mode)
-                IM_NORM: begin
-                    mult_issue_A   = rd_data;
-                    mult_issue_B   = param;
-                    mult_issue_tag = MT_NORM;
-                end
-
-                IM_QKV: begin
-                    // 3 路並行：32 phase = 32 matrix。engine0 算 Q，engine1/2 算 K/V
-                    // （見下方 mult_kv_issue_*）。同 x、3 個權重 → Q/K/V 同拍出。
-                    mult_issue_idx = {1'b0, issue_idx[4:0]};
-                    mult_issue_A   = rd_data;
-                    mult_issue_B   = param;       // W_Q
-                    mult_issue_tag = MT_Q;
-                end
-
-                IM_SV: begin
-                    // 2-way SV：engine0 算 head0(MHA) / 偶數 matrix(SHA) 的 score，
-                    //   engine1 同 phase 算 head1 / 奇數 matrix（見下方 mult_kv_issue）。
-                    //   phase 數因此 MHA 64→32、SHA 32→16。
-                    //   head_mask：每 row 32-bit，high16=tap0..3、low16=tap4..7。
-                    if (op == 2'b11) begin
-                        // MHA：phase = matrix；engine0 = head0（保留 tap0..3，清 low16）
-                        mult_issue_A   = 256'd0;
-                        mult_issue_B   = 256'd0;
-                        for (int r = 0; r < 8; r++) begin
-                            mult_issue_A[239 - 32*r -: 16] = 16'd0;
-                            mult_issue_B[239 - 32*r -: 16] = 16'd0;
-                        end
-                        mult_issue_idx = {1'b0, issue_idx[4:0]};      // score_mem[matrix]
-                    end
-                    else begin
-                        // SHA：engine0 = 偶數 matrix 2·phase（無 head split）
-                        mult_issue_A   = 256'd0;
-                        mult_issue_B   = 256'd0;
-                        mult_issue_idx = {issue_idx[3:0], 1'b0};      // score_mem[2·phase]
-                    end
-                    mult_issue_b_transpose = 1'b1;
-                    mult_issue_tag         = MT_SCORE;
-                    mult_issue_valid       = 1'b0;
-                end
-
-                IM_FINAL: begin
-                    // engine0 = nibble d0；engine1/2 = d1/d2（見下方 mult_kv issue）。
-                    // 3 路同 phase 算 score×V 的三個 base-16 digit，輸出端一拍重組
-                    //   result = P0 + (P1<<4) + (P2<<8)（= 原 3-pass nibble 累加）。
-                    mult_issue_idx = fin_score_idx;
-                    mult_issue_A   = extract_score_nibble_s4(
-                                         score_mem[fin_score_idx], 2'd0);  // d0
-                    mult_issue_B   = v_mem[fin_mat_cs];
-                    // No head_mask in FINAL: MHA does a full 8-tap score×V dot;
-                    // the per-head column split happens later in 6-way combine.
-                    mult_issue_tag = MT_FINAL;
-                end
-
-                default: begin
-                    mult_issue_valid = 1'b0;
-                end
-            endcase
-        end
-    end
-
-    // engine1 / engine2 operand：
-    //   QKV  → engine1=K, engine2=V（downstream→PoT，is_qkv=1）
-    //   SV   → engine1=head1/奇數 score（downstream→score_mem，is_score=1）；engine2 閒置
-    //   FINAL→ engine1=d1, engine2=d2（internal→engine0 輸出端重組，gate off）
-    always_comb begin
-        mult_k_issue_valid = 1'b0;
-        mult_v_issue_valid = 1'b0;
-        mult_k_issue_A     = 256'd0;
-        mult_k_issue_B     = 256'd0;
-        mult_k_issue_btr   = 1'b0;
-        mult_v_issue_A     = 256'd0;
-        mult_v_issue_B     = 256'd0;
-        mult_kv_issue_idx  = {1'b0, issue_idx[4:0]};
-        mult_kv_is_qkv     = 1'b0;
-        mult_kv_is_score   = 1'b0;
-
-        if (issue_valid) begin
-            case (issue_mode)
-                IM_QKV: begin
-                    mult_k_issue_valid = 1'b1;
-                    mult_v_issue_valid = 1'b1;
-                    mult_k_issue_A     = rd_data;
-                    mult_k_issue_B     = weight_k;
-                    mult_v_issue_A     = rd_data;
-                    mult_v_issue_B     = weight_v;
-                    mult_kv_issue_idx  = {1'b0, issue_idx[4:0]};
-                    mult_kv_is_qkv     = 1'b1;
-                end
-                IM_SV: begin
-                    // 2-way SV：engine1 與 engine0 同 phase，算另一半 score。
-                    //   b_transpose=1（Q×K^T）；結果→score_mem（is_score=1）。engine2 閒置。
-                    mult_k_issue_valid = 1'b1;
-                    mult_k_issue_btr   = 1'b1;
-                    mult_kv_is_score   = 1'b1;
-                    if (op == 2'b11) begin
-                        // MHA：同 matrix，engine1 = head1（保留 tap4..7，清 high16）
-                        mult_k_issue_A = 256'd0;
-                        mult_k_issue_B = 256'd0;
-                        for (int r = 0; r < 8; r++) begin
-                            mult_k_issue_A[255 - 32*r -: 16] = 16'd0;
-                            mult_k_issue_B[255 - 32*r -: 16] = 16'd0;
-                        end
-                        mult_kv_issue_idx = {1'b1, issue_idx[4:0]};   // score_mem[32+matrix]
-                    end
-                    else begin
-                        // SHA：engine1 = 奇數 matrix 2·phase+1（無 head split）
-                        mult_k_issue_A    = 256'd0;
-                        mult_k_issue_B    = 256'd0;
-                        mult_kv_issue_idx = {issue_idx[3:0], 1'b1};   // score_mem[2·phase+1]
-                    end
-                    mult_k_issue_valid = 1'b0;
-                    mult_kv_is_score   = 1'b0;
-                end
-                IM_FINAL: begin
-                    mult_k_issue_valid = 1'b1;
-                    mult_v_issue_valid = 1'b1;
-                    mult_k_issue_A     = extract_score_nibble_s4(
-                                             score_mem[fin_score_idx], 2'd1);  // d1
-                    mult_k_issue_B     = v_mem[fin_mat_cs];
-                    mult_v_issue_A     = extract_score_nibble_s4(
-                                             score_mem[fin_score_idx], 2'd2);  // d2
-                    mult_v_issue_B     = v_mem[fin_mat_cs];
-                    mult_kv_is_qkv     = 1'b0;  // internal partial, gated off downstream
-                end
-                default: begin end
-            endcase
-        end
-    end
-
-    always_comb begin
-        aux0_issue_valid = 1'b0;
-        aux0_issue_btr   = 1'b0;
-        aux0_issue_A     = 256'd0;
-        aux0_issue_B     = 256'd0;
-        aux0_issue_idx   = 6'd0;
-        aux0_issue_score = 1'b0;
-
-        aux1_issue_valid = 1'b0;
-        aux1_issue_btr   = 1'b0;
-        aux1_issue_A     = 256'd0;
-        aux1_issue_B     = 256'd0;
-        aux1_issue_idx   = 6'd0;
-        aux1_issue_score = 1'b0;
-
-        aux2_issue_valid = 1'b0;
-        aux2_issue_A     = 256'd0;
-        aux2_issue_B     = 256'd0;
-
-        if (issue_valid && (issue_mode == IM_FINAL) && (op == 2'b11)) begin
-            aux0_issue_valid = 1'b1;
-            aux1_issue_valid = 1'b1;
-            aux2_issue_valid = 1'b1;
-            aux0_issue_A     = extract_score_nibble_s4(
-                                   score_mem[{1'b1, fin_mat_cs}], 2'd0);
-            aux0_issue_B     = v_mem[fin_mat_cs];
-            aux1_issue_A     = extract_score_nibble_s4(
-                                   score_mem[{1'b1, fin_mat_cs}], 2'd1);
-            aux1_issue_B     = v_mem[fin_mat_cs];
-            aux2_issue_A     = extract_score_nibble_s4(
-                                   score_mem[{1'b1, fin_mat_cs}], 2'd2);
-            aux2_issue_B     = v_mem[fin_mat_cs];
-        end
-        else if (q_stream_valid) begin
-            aux0_issue_valid = 1'b1;
-            aux0_issue_btr   = 1'b1;
-            aux0_issue_A     = (op == 2'b11) ? mask_mha_head0(q_stream_data)
-                                             : q_stream_data;
-            aux0_issue_B     = (op == 2'b11) ? mask_mha_head0(k_stream_data)
-                                             : k_stream_data;
-            aux0_issue_idx   = {1'b0, q_stream_idx[4:0]};
-            aux0_issue_score = 1'b1;
-
-            if (op == 2'b11) begin
-                aux1_issue_valid = 1'b1;
-                aux1_issue_btr   = 1'b1;
-                aux1_issue_A     = mask_mha_head1(q_stream_data);
-                aux1_issue_B     = mask_mha_head1(k_stream_data);
-                aux1_issue_idx   = {1'b1, q_stream_idx[4:0]};
-                aux1_issue_score = 1'b1;
-            end
-        end
-    end
-
-    // ---- FINAL matrix counter ----
-    //   SHA uses the original three engines for one matrix per phase.
-    //   MHA uses all six engines: head0 d0/d1/d2 and head1 d0/d1/d2 in the
-    //   same matrix phase, then combines the heads before ACT.
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            fin_mat_cs  <= 3'd0;
-            fin_head_cs <= 1'b0;
-        end
-        else if (issue_valid) begin
-            if (issue_mode == IM_FINAL) begin
-                if (fin_mat_cs == 5'd31) begin
-                    fin_mat_cs  <= 5'd0;
-                    fin_head_cs <= fin_head_cs + 1'b1; // MHA: head0→head1
-                end else begin
-                    fin_mat_cs <= fin_mat_cs + 1'b1;
-                end
-            end else begin
-                // Reset at start of any non-FINAL issue (QKV / SV)
-                fin_mat_cs  <= 5'd0;
-                fin_head_cs <= 1'b0;
-            end
-        end
-    end
-
-    // Raw multiplier outputs (before nibble accumulation)
-    logic          mult_raw_valid;
-    logic [1023:0] mult_raw_data;
-    logic          mult_k_raw_valid;
-    logic [1023:0] mult_k_raw_data;
-    logic          mult_v_raw_valid;
-    logic [1023:0] mult_v_raw_data;
-    logic          aux0_raw_valid;
-    logic [1023:0] aux0_raw_data;
-    logic          aux1_raw_valid;
-    logic [1023:0] aux1_raw_data;
-    logic          aux2_raw_valid;
-    logic [1023:0] aux2_raw_data;
-    logic [5:0]    mult_k_idx_cs [0:MULT_STAGES-1];
-    logic [5:0]    mult_v_idx_cs [0:MULT_STAGES-1];
-
-    Mult3_5Stage_Parallel u_mult3_main (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .op          (op),
-        .lane0_b_transpose (mult_issue_b_transpose),
-        .lane0_in_valid    (mult_issue_valid),
-        .lane0_in_data_A   (mult_issue_A),
-        .lane0_in_data_B   (mult_issue_B),
-        .lane0_out_valid   (mult_raw_valid),
-        .lane0_out_data    (mult_raw_data),
-        .lane1_b_transpose (mult_k_issue_btr),
-        .lane1_in_valid    (mult_k_issue_valid),
-        .lane1_in_data_A   (mult_k_issue_A),
-        .lane1_in_data_B   (mult_k_issue_B),
-        .lane1_out_valid   (mult_k_raw_valid),
-        .lane1_out_data    (mult_k_raw_data),
-        .lane2_b_transpose (1'b0),
-        .lane2_in_valid    (mult_v_issue_valid),
-        .lane2_in_data_A   (mult_v_issue_A),
-        .lane2_in_data_B   (mult_v_issue_B),
-        .lane2_out_valid   (mult_v_raw_valid),
-        .lane2_out_data    (mult_v_raw_data)
-    );
-
-    // engine1：QKV 算 K、SV 算 head1/奇數 score（transpose）、FINAL 算 d1。
-    // engine2：QKV 算 V、FINAL 算 d2。無 transpose。
-    Mult3_Attn8_5Stage_Parallel u_mult3_aux (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .lane0_b_transpose (aux0_issue_btr),
-        .lane0_in_valid    (aux0_issue_valid),
-        .lane0_in_data_A   (aux0_issue_A),
-        .lane0_in_data_B   (aux0_issue_B),
-        .lane0_out_valid   (aux0_raw_valid),
-        .lane0_out_data    (aux0_raw_data),
-        .lane1_b_transpose (aux1_issue_btr),
-        .lane1_in_valid    (aux1_issue_valid),
-        .lane1_in_data_A   (aux1_issue_A),
-        .lane1_in_data_B   (aux1_issue_B),
-        .lane1_out_valid   (aux1_raw_valid),
-        .lane1_out_data    (aux1_raw_data),
-        .lane2_b_transpose (1'b0),
-        .lane2_in_valid    (aux2_issue_valid),
-        .lane2_in_data_A   (aux2_issue_A),
-        .lane2_in_data_B   (aux2_issue_B),
-        .lane2_out_valid   (aux2_raw_valid),
-        .lane2_out_data    (aux2_raw_data)
-    );
-
-    // K/V idx + role + score pipeline（對齊 mult 5-stage）。
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 0; i < MULT_STAGES; i++) begin
-                mult_k_idx_cs[i]    <= 6'd0;
-                mult_v_idx_cs[i]    <= 6'd0;
-                mult_kv_role_cs[i]  <= 1'b0;
-                mult_kv_score_cs[i] <= 1'b0;
-                aux0_idx_cs[i]      <= 6'd0;
-                aux1_idx_cs[i]      <= 6'd0;
-                aux0_score_cs[i]    <= 1'b0;
-                aux1_score_cs[i]    <= 1'b0;
-            end
-        end
-        else begin
-            mult_k_idx_cs[0]    <= mult_kv_issue_idx;
-            mult_v_idx_cs[0]    <= mult_kv_issue_idx;
-            mult_kv_role_cs[0]  <= mult_kv_is_qkv;
-            mult_kv_score_cs[0] <= mult_kv_is_score;
-            aux0_idx_cs[0]      <= aux0_issue_idx;
-            aux1_idx_cs[0]      <= aux1_issue_idx;
-            aux0_score_cs[0]    <= aux0_issue_score;
-            aux1_score_cs[0]    <= aux1_issue_score;
-            for (int i = 1; i < MULT_STAGES; i++) begin
-                mult_k_idx_cs[i]    <= mult_k_idx_cs[i - 1];
-                mult_v_idx_cs[i]    <= mult_v_idx_cs[i - 1];
-                mult_kv_role_cs[i]  <= mult_kv_role_cs[i - 1];
-                mult_kv_score_cs[i] <= mult_kv_score_cs[i - 1];
-                aux0_idx_cs[i]      <= aux0_idx_cs[i - 1];
-                aux1_idx_cs[i]      <= aux1_idx_cs[i - 1];
-                aux0_score_cs[i]    <= aux0_score_cs[i - 1];
-                aux1_score_cs[i]    <= aux1_score_cs[i - 1];
-            end
-        end
-    end
-
-    // Tag / idx pipeline (mirrors Mult internal pipeline depth)
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 0; i < MULT_STAGES; i++) begin
-                mult_tag_cs[i] <= MT_NONE;
-                mult_idx_cs[i] <= 6'd0;
-            end
-        end
-        else begin
-            mult_tag_cs[0] <= mult_issue_valid ? mult_issue_tag : MT_NONE;
-            mult_idx_cs[0] <= mult_issue_idx;
-            for (int i = 1; i < MULT_STAGES; i++) begin
-                mult_tag_cs[i] <= mult_tag_cs[i - 1];
-                mult_idx_cs[i] <= mult_idx_cs[i - 1];
-            end
-        end
-    end
-
-    // ---- FINAL nibble 一拍重組（取代舊 3-pass nibb_acc）---------------------
-    // 3 路引擎同 phase 算出 score 的 3 個 base-16 digit × V：
-    //   engine0 = d0×V (P0)、engine1 = d1×V (P1)、engine2 = d2×V (P2)
-    // 重組 result = P0 + (P1<<4) + (P2<<8)（per-lane 16-bit 截斷，與舊
-    // lane_shift_add 同語義；score = d0 + 16·d1 + 256·d2 → score×V 等值）。
-    logic [1023:0] nibb_combine;
-    logic [1023:0] nibb_combine_h1;
-    always_comb begin
-        nibb_combine = 1024'd0;
-        nibb_combine_h1 = 1024'd0;
-        for (int i = 0; i < 64; i++) begin
-            logic signed [15:0] p0;
-            logic signed [15:0] p1;
-            logic signed [15:0] p2;
-            logic signed [15:0] h1_p0;
-            logic signed [15:0] h1_p1;
-            logic signed [15:0] h1_p2;
-            p0 = mult_raw_data  [1023 - (i * 16) -: 16];
-            p1 = mult_k_raw_data[1023 - (i * 16) -: 16];
-            p2 = mult_v_raw_data[1023 - (i * 16) -: 16];
-            h1_p0 = aux0_raw_data[1023 - (i * 16) -: 16];
-            h1_p1 = aux1_raw_data[1023 - (i * 16) -: 16];
-            h1_p2 = aux2_raw_data[1023 - (i * 16) -: 16];
-            nibb_combine[1023 - (i * 16) -: 16] = p0 + (p1 <<< 4) + (p2 <<< 8);
-            nibb_combine_h1[1023 - (i * 16) -: 16] =
-                h1_p0 + (h1_p1 <<< 4) + (h1_p2 <<< 8);
-        end
-    end
-
-    // 內部 combinational 版本（FINAL：選 nibb_combine；其餘：raw_data 直通）
-    logic          mult_valid_comb;
-    logic [1023:0] mult_data_comb;
-    mult_tag_t     mult_tag_comb;
-    logic [5:0]    mult_idx_comb;
-    logic          mha_final_comb;
-
-    // 每個 issue 都產生一個結果（FINAL 不再有 nibble 累加的 0/1 phase）。
-    assign mult_valid_comb = mult_raw_valid;
-    assign mha_final_comb  = (mult_tag_cs[MULT_STAGES-1] == MT_FINAL) &&
-                             (op == 2'b11);
-    assign mult_data_comb  = (mult_tag_cs[MULT_STAGES-1] == MT_FINAL) ?
-                              (mha_final_comb ?
-                               combine_mha_heads_full(nibb_combine, nibb_combine_h1) :
-                               nibb_combine) :
-                              mult_raw_data;
-    assign mult_tag_comb   = mult_tag_cs[MULT_STAGES-1];
-    assign mult_idx_comb   = mha_final_comb ? {1'b0, mult_idx_cs[MULT_STAGES-1][4:0]} :
-                                             mult_idx_cs[MULT_STAGES-1];
-
-    // 輸出 register：把 FINAL MUX cone 跟下游 ACT/PoT 的 abs/MUX cone 切到兩個
-    // cycle，clk 從原本的 ~3 ns 邊界繼續往下推。+1 cycle latency。
-    // engine1/2（K/V）共用同一拍 output reg，與 engine0 latency 對齊（6 cycle）。
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            mult_valid         <= 1'b0;
-            mult_tag_out       <= MT_NONE;
-            mult_idx_out       <= 6'd0;
-            mult_k_valid       <= 1'b0;
-            mult_k_idx         <= 6'd0;
-            mult_k_score_valid <= 1'b0;
-            mult_v_valid       <= 1'b0;
-            mult_v_idx         <= 6'd0;
-            sv0_score_valid    <= 1'b0;
-            sv0_score_idx      <= 6'd0;
-            sv1_score_valid    <= 1'b0;
-            sv1_score_idx      <= 6'd0;
-        end
-        else begin
-            mult_valid   <= mult_valid_comb;
-            mult_data    <= mult_data_comb;
-            mult_tag_out <= mult_tag_comb;
-            mult_idx_out <= mult_idx_comb;
-
-            // engine1 K/V valid 只在 QKV（role=1）→ PoT；FINAL 的 d1/d2 partial
-            // 由 nibb_combine 內部消化、SV 的 score 走 score path，皆不可送 PoT。
-            mult_k_valid       <= mult_k_raw_valid && mult_kv_role_cs[MULT_STAGES-1];
-            mult_k_data        <= mult_k_raw_data;
-            mult_k_idx         <= mult_k_idx_cs[MULT_STAGES-1];
-            // SV head1/奇數 score → DataPath 寫 score_mem（用 mult_k_data/mult_k_idx）。
-            mult_k_score_valid <= mult_k_raw_valid && mult_kv_score_cs[MULT_STAGES-1];
-            mult_v_valid       <= mult_v_raw_valid && mult_kv_role_cs[MULT_STAGES-1];
-            mult_v_data        <= mult_v_raw_data;
-            mult_v_idx         <= mult_v_idx_cs[MULT_STAGES-1];
-            sv0_score_valid    <= aux0_raw_valid && aux0_score_cs[MULT_STAGES-1];
-            sv0_score_data     <= aux0_raw_data;
-            sv0_score_idx      <= aux0_idx_cs[MULT_STAGES-1];
-            sv1_score_valid    <= aux1_raw_valid && aux1_score_cs[MULT_STAGES-1];
-            sv1_score_data     <= aux1_raw_data;
-            sv1_score_idx      <= aux1_idx_cs[MULT_STAGES-1];
-        end
-    end
-
-endmodule
-
-module Mult3_5Stage_Parallel (
-    input  logic          clk,
-    input  logic          rst_n,
-    input  logic [1:0]    op,
-
-    input  logic          lane0_b_transpose,
-    input  logic          lane0_in_valid,
-    input  logic [255:0]  lane0_in_data_A,
-    input  logic [255:0]  lane0_in_data_B,
-    output logic          lane0_out_valid,
-    output logic [1023:0] lane0_out_data,
-
-    input  logic          lane1_b_transpose,
-    input  logic          lane1_in_valid,
-    input  logic [255:0]  lane1_in_data_A,
-    input  logic [255:0]  lane1_in_data_B,
-    output logic          lane1_out_valid,
-    output logic [1023:0] lane1_out_data,
-
-    input  logic          lane2_b_transpose,
-    input  logic          lane2_in_valid,
-    input  logic [255:0]  lane2_in_data_A,
-    input  logic [255:0]  lane2_in_data_B,
-    output logic          lane2_out_valid,
-    output logic [1023:0] lane2_out_data
-);
-
-    Mult_5Stage_Parallel u_lane0 (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .op          (op),
-        .b_transpose (lane0_b_transpose),
-        .in_valid    (lane0_in_valid),
-        .in_data_A   (lane0_in_data_A),
-        .in_data_B   (lane0_in_data_B),
-        .out_valid   (lane0_out_valid),
-        .out_data    (lane0_out_data)
-    );
-
-    Mult_Attn8_5Stage_Parallel u_lane1 (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .b_transpose (lane1_b_transpose),
-        .in_valid    (lane1_in_valid),
-        .in_data_A   (lane1_in_data_A),
-        .in_data_B   (lane1_in_data_B),
-        .out_valid   (lane1_out_valid),
-        .out_data    (lane1_out_data)
-    );
-
-    Mult_Attn8_5Stage_Parallel u_lane2 (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .b_transpose (lane2_b_transpose),
-        .in_valid    (lane2_in_valid),
-        .in_data_A   (lane2_in_data_A),
-        .in_data_B   (lane2_in_data_B),
-        .out_valid   (lane2_out_valid),
-        .out_data    (lane2_out_data)
-    );
-
-endmodule
-
-module Mult3_Attn8_5Stage_Parallel (
-    input  logic          clk,
-    input  logic          rst_n,
-
-    input  logic          lane0_b_transpose,
-    input  logic          lane0_in_valid,
-    input  logic [255:0]  lane0_in_data_A,
-    input  logic [255:0]  lane0_in_data_B,
-    output logic          lane0_out_valid,
-    output logic [1023:0] lane0_out_data,
-
-    input  logic          lane1_b_transpose,
-    input  logic          lane1_in_valid,
-    input  logic [255:0]  lane1_in_data_A,
-    input  logic [255:0]  lane1_in_data_B,
-    output logic          lane1_out_valid,
-    output logic [1023:0] lane1_out_data,
-
-    input  logic          lane2_b_transpose,
-    input  logic          lane2_in_valid,
-    input  logic [255:0]  lane2_in_data_A,
-    input  logic [255:0]  lane2_in_data_B,
-    output logic          lane2_out_valid,
-    output logic [1023:0] lane2_out_data
-);
-
-    Mult_Attn8_5Stage_Parallel u_lane0 (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .b_transpose (lane0_b_transpose),
-        .in_valid    (lane0_in_valid),
-        .in_data_A   (lane0_in_data_A),
-        .in_data_B   (lane0_in_data_B),
-        .out_valid   (lane0_out_valid),
-        .out_data    (lane0_out_data)
-    );
-
-    Mult_Attn8_5Stage_Parallel u_lane1 (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .b_transpose (lane1_b_transpose),
-        .in_valid    (lane1_in_valid),
-        .in_data_A   (lane1_in_data_A),
-        .in_data_B   (lane1_in_data_B),
-        .out_valid   (lane1_out_valid),
-        .out_data    (lane1_out_data)
-    );
-
-    Mult_Attn8_5Stage_Parallel u_lane2 (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .b_transpose (lane2_b_transpose),
-        .in_valid    (lane2_in_valid),
-        .in_data_A   (lane2_in_data_A),
-        .in_data_B   (lane2_in_data_B),
-        .out_valid   (lane2_out_valid),
-        .out_data    (lane2_out_data)
-    );
-
-endmodule
-
-module Mult_Attn8_5Stage_Parallel (
-    input  logic          clk,
-    input  logic          rst_n,
-    input  logic          b_transpose,
-    input  logic          in_valid,
-    input  logic [255:0]  in_data_A,
-    input  logic [255:0]  in_data_B,
-    output logic          out_valid,
-    output logic [1023:0] out_data
-);
-
-    localparam int ROW_ELEM = 8;
-    localparam int MAT_SIZE = 64;
-    localparam int DOT_SIZE = 8;
+    localparam int ROW_ELEM  = 8;
+    localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
+    localparam int SHIFT_W   = $clog2(ACC_W);
+    localparam logic [SHIFT_W-1:0] SHIFT_TWO = 2;
 
     typedef logic signed [3:0]  s4_t;
-    typedef logic signed [7:0]  s8_t;
-    typedef logic signed [11:0] s12_t;
-    typedef logic signed [15:0] s16_t;
+    typedef logic signed [7:0]  prod_t;
+    typedef logic signed [ACC_W-1:0] acc_t;
+    typedef logic [ACC_W-1:0] mag_t;
+    typedef logic signed [SCORE_ELEM_W-1:0] score_t;
+    typedef logic [ACC_VEC_W-1:0] acc_vec_t;
+    localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
 
-    logic         in_valid_cs;
-    logic         b_transpose_cs;
-    logic [255:0] in_data_A_cs;
-    logic [255:0] in_data_B_cs;
+    logic qkv_valid_cs;
+    logic qkv_mha_cs;
+    acc_vec_t q_comp_cs;
+    acc_vec_t k_comp_cs;
+    acc_vec_t v_comp_cs;
 
-    logic stage1_valid_cs;
-    logic stage2_valid_cs;
-    logic stage3_valid_cs;
-    logic stage4_valid_cs;
-    s4_t  operand_a_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s4_t  operand_b_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s8_t  prod_cs      [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s12_t partial_cs   [0:MAT_SIZE-1][0:1];
-    s16_t sum_cs       [0:MAT_SIZE-1];
+    logic quant_valid_cs;
+    logic quant_mha_cs;
+    logic [255:0] q_word_cs;
+    logic [255:0] k_word_cs;
+    logic [255:0] v_word_cs;
 
-    s4_t  operand_a_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s4_t  operand_b_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s8_t  prod_next      [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s12_t partial_next   [0:MAT_SIZE-1][0:1];
-    s16_t sum_next       [0:MAT_SIZE-1];
+    logic score_pipe_valid;
+    logic score_pipe_mha;
+    logic [255:0] score_pipe_v;
+    logic [SCORE_BUS_W-1:0] score0_data;
+    logic [SCORE_BUS_W-1:0] score1_data;
+    logic final_valid;
+    acc_vec_t final_data;
+
+    acc_vec_t q_comp_ns;
+    acc_vec_t k_comp_ns;
+    acc_vec_t v_comp_ns;
+    logic [255:0] q_word_ns;
+    logic [255:0] k_word_ns;
+    logic [255:0] v_word_ns;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
     endfunction
 
-    function automatic s4_t sel_a(
-        input logic [255:0] mat_A,
-        input integer       row_idx,
-        input integer       tap
-    );
-        sel_a = get_s4(mat_A, (row_idx * ROW_ELEM) + tap);
+    function automatic acc_t get_acc(input acc_vec_t vec, input integer idx);
+        get_acc = $signed(vec[ACC_VEC_W - 1 - (idx * ACC_W) -: ACC_W]);
     endfunction
 
-    function automatic s4_t sel_b(
-        input logic [255:0] mat_B,
-        input logic         b_transpose_sel,
-        input integer       lane,
-        input integer       tap
-    );
+    function automatic mag_t abs_acc(input acc_t value);
+        abs_acc = value[ACC_W - 1] ? mag_t'(-value) : mag_t'(value);
+    endfunction
+
+    function automatic logic [SHIFT_W-1:0] pot_shift(input mag_t max_abs);
+        logic [SHIFT_W-1:0] msb;
         begin
-            if (b_transpose_sel)
-                sel_b = get_s4(mat_B, (lane * ROW_ELEM) + tap);
-            else
-                sel_b = get_s4(mat_B, (tap * ROW_ELEM) + lane);
+            msb = '0;
+            for (int b = 0; b < ACC_W; b++) begin
+                if (max_abs[b]) begin
+                    msb = b[SHIFT_W-1:0];
+                end
+            end
+            pot_shift = (msb > SHIFT_TWO) ? (msb - SHIFT_TWO) : '0;
         end
     endfunction
+
+    function automatic s4_t clamp_s4(input acc_t value);
+        begin
+            if (value > acc_t'(7)) begin
+                clamp_s4 = 4'sd7;
+            end
+            else if (value < acc_t'(-8)) begin
+                clamp_s4 = -4'sd8;
+            end
+            else begin
+                clamp_s4 = value[3:0];
+            end
+        end
+    endfunction
+
+    function automatic logic [255:0] quant_all(input acc_vec_t src);
+        mag_t max_bits;
+        logic [SHIFT_W-1:0] shift;
+        acc_t scaled;
+        begin
+            max_bits = '0;
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                max_bits |= abs_acc(get_acc(src, i));
+            end
+            shift = pot_shift(max_bits);
+            quant_all = 256'd0;
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                scaled = get_acc(src, i) >>> shift;
+                quant_all[255 - (i * 4) -: 4] = clamp_s4(scaled);
+            end
+        end
+    endfunction
+
+    function automatic acc_t calc_matmul_lane(
+        input logic [255:0] a_mat,
+        input logic [255:0] b_mat,
+        input integer       row,
+        input integer       lane
+    );
+        prod_t prod;
+        acc_t acc;
+        begin
+            acc = '0;
+            for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                prod = prod_t'($signed(get_s4(a_mat, (row * ROW_ELEM) + tap)) *
+                               $signed(get_s4(b_mat, (tap * ROW_ELEM) + lane)));
+                acc = acc_t'(acc + acc_t'(prod));
+            end
+            calc_matmul_lane = acc;
+        end
+    endfunction
+
+    ATT_Score_8Tap #(
+        .MAT_SIZE     (MAT_SIZE),
+        .SCORE_ELEM_W (SCORE_ELEM_W)
+    ) u_att_score_8tap (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .in_valid    (quant_valid_cs),
+        .is_mha      (quant_mha_cs),
+        .q_data      (q_word_cs),
+        .k_data      (k_word_cs),
+        .v_data      (v_word_cs),
+        .out_valid   (score_pipe_valid),
+        .out_mha     (score_pipe_mha),
+        .out_v_data  (score_pipe_v),
+        .score0_data (score0_data),
+        .score1_data (score1_data)
+    );
+
+    ATT_Final_Nibble_Acc #(
+        .ACC_W        (ACC_W),
+        .MAT_SIZE     (MAT_SIZE),
+        .SCORE_ELEM_W (SCORE_ELEM_W)
+    ) u_att_final_nibble_acc (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .in_valid    (score_pipe_valid),
+        .is_mha      (score_pipe_mha),
+        .score0_data (score0_data),
+        .score1_data (score1_data),
+        .v_data      (score_pipe_v),
+        .out_valid   (final_valid),
+        .out_data    (final_data)
+    );
+
+    assign out_valid = final_valid;
+    assign out_data  = final_data;
 
     always_comb begin
         for (int row = 0; row < ROW_ELEM; row++) begin
             for (int lane = 0; lane < ROW_ELEM; lane++) begin
-                for (int tap = 0; tap < DOT_SIZE; tap++) begin
-                    operand_a_next[(row * ROW_ELEM) + lane][tap] =
-                        sel_a(in_data_A_cs, row, tap);
-                    operand_b_next[(row * ROW_ELEM) + lane][tap] =
-                        sel_b(in_data_B_cs, b_transpose_cs, lane, tap);
-                end
+                q_comp_ns[ACC_VEC_W - 1 - (((row * ROW_ELEM) + lane) * ACC_W) -: ACC_W] =
+                    calc_matmul_lane(src_data, wq_data, row, lane);
+                k_comp_ns[ACC_VEC_W - 1 - (((row * ROW_ELEM) + lane) * ACC_W) -: ACC_W] =
+                    calc_matmul_lane(src_data, wk_data, row, lane);
+                v_comp_ns[ACC_VEC_W - 1 - (((row * ROW_ELEM) + lane) * ACC_W) -: ACC_W] =
+                    calc_matmul_lane(src_data, wv_data, row, lane);
+            end
+        end
+
+        q_word_ns = quant_all(q_comp_cs);
+        k_word_ns = quant_all(k_comp_cs);
+        v_word_ns = quant_all(v_comp_cs);
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            qkv_valid_cs   <= 1'b0;
+            quant_valid_cs <= 1'b0;
+        end
+        else begin
+            qkv_valid_cs   <= in_valid;
+            quant_valid_cs <= qkv_valid_cs;
+
+            if (in_valid) begin
+                qkv_mha_cs <= is_mha;
+                q_comp_cs  <= q_comp_ns;
+                k_comp_cs  <= k_comp_ns;
+                v_comp_cs  <= v_comp_ns;
+            end
+
+            if (qkv_valid_cs) begin
+                quant_mha_cs <= qkv_mha_cs;
+                q_word_cs    <= q_word_ns;
+                k_word_cs    <= k_word_ns;
+                v_word_cs    <= v_word_ns;
             end
         end
     end
 
-    always_comb begin
-        for (int i = 0; i < MAT_SIZE; i++) begin
-            for (int t = 0; t < DOT_SIZE; t++) begin
-                prod_next[i][t] = s8_t'(
-                    $signed(operand_a_cs[i][t]) * $signed(operand_b_cs[i][t]));
+endmodule
+
+
+module ATT_Score_8Tap #(
+    parameter int MAT_SIZE = 64,
+    parameter int SCORE_ELEM_W = 11
+)(
+    input  logic                                clk,
+    input  logic                                rst_n,
+    input  logic                                in_valid,
+    input  logic                                is_mha,
+    input  logic [255:0]                        q_data,
+    input  logic [255:0]                        k_data,
+    input  logic [255:0]                        v_data,
+    output logic                                out_valid,
+    output logic                                out_mha,
+    output logic [255:0]                        out_v_data,
+    output logic [(MAT_SIZE*SCORE_ELEM_W)-1:0] score0_data,
+    output logic [(MAT_SIZE*SCORE_ELEM_W)-1:0] score1_data
+);
+
+    localparam int ROW_ELEM   = 8;
+    localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
+
+    logic valid_s1_cs;
+    logic mha_s1_cs;
+    logic [255:0] v_s1_cs;
+    logic lane_valid [0:MAT_SIZE-1];
+    logic signed [SCORE_ELEM_W-1:0] lane_score0 [0:MAT_SIZE-1];
+    logic signed [SCORE_ELEM_W-1:0] lane_score1 [0:MAT_SIZE-1];
+
+    genvar row_idx;
+    genvar lane_idx;
+    generate
+        for (row_idx = 0; row_idx < ROW_ELEM; row_idx++) begin : gen_score_row
+            for (lane_idx = 0; lane_idx < ROW_ELEM; lane_idx++) begin : gen_score_lane
+                localparam int OUT_IDX = (row_idx * ROW_ELEM) + lane_idx;
+
+                ATT_Score_Lane_8Tap #(
+                    .ROW_ELEM     (ROW_ELEM),
+                    .SCORE_ELEM_W (SCORE_ELEM_W),
+                    .ROW_IDX      (row_idx),
+                    .LANE_IDX     (lane_idx)
+                ) u_score_lane (
+                    .clk        (clk),
+                    .rst_n      (rst_n),
+                    .in_valid   (in_valid),
+                    .is_mha     (is_mha),
+                    .q_data     (q_data),
+                    .k_data     (k_data),
+                    .out_valid  (lane_valid[OUT_IDX]),
+                    .score0_out (lane_score0[OUT_IDX]),
+                    .score1_out (lane_score1[OUT_IDX])
+                );
             end
         end
-    end
+    endgenerate
+
+    assign out_valid = lane_valid[0];
 
     always_comb begin
+        score0_data = '0;
+        score1_data = '0;
         for (int i = 0; i < MAT_SIZE; i++) begin
-            partial_next[i][0] = s12_t'(prod_cs[i][0]) + s12_t'(prod_cs[i][1]) +
-                                 s12_t'(prod_cs[i][2]) + s12_t'(prod_cs[i][3]);
-            partial_next[i][1] = s12_t'(prod_cs[i][4]) + s12_t'(prod_cs[i][5]) +
-                                 s12_t'(prod_cs[i][6]) + s12_t'(prod_cs[i][7]);
-        end
-    end
-
-    always_comb begin
-        for (int i = 0; i < MAT_SIZE; i++) begin
-            sum_next[i] = s16_t'(partial_cs[i][0]) + s16_t'(partial_cs[i][1]);
+            score0_data[SCORE_BUS_W - 1 - (i * SCORE_ELEM_W) -:
+                        SCORE_ELEM_W] = lane_score0[i];
+            score1_data[SCORE_BUS_W - 1 - (i * SCORE_ELEM_W) -:
+                        SCORE_ELEM_W] = lane_score1[i];
         end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            in_valid_cs     <= 1'b0;
-            stage1_valid_cs <= 1'b0;
-            stage2_valid_cs <= 1'b0;
-            stage3_valid_cs <= 1'b0;
-            stage4_valid_cs <= 1'b0;
+            valid_s1_cs <= 1'b0;
+            mha_s1_cs   <= 1'b0;
+            v_s1_cs     <= 256'd0;
+            out_mha     <= 1'b0;
+            out_v_data  <= 256'd0;
         end
         else begin
-            in_valid_cs     <= in_valid;
-            b_transpose_cs  <= b_transpose;
-            in_data_A_cs    <= in_data_A;
-            in_data_B_cs    <= in_data_B;
+            valid_s1_cs <= in_valid;
 
-            stage1_valid_cs <= in_valid_cs;
-            stage2_valid_cs <= stage1_valid_cs;
-            stage3_valid_cs <= stage2_valid_cs;
-            stage4_valid_cs <= stage3_valid_cs;
-            for (int i = 0; i < MAT_SIZE; i++)
-                for (int t = 0; t < DOT_SIZE; t++) begin
-                    operand_a_cs[i][t] <= operand_a_next[i][t];
-                    operand_b_cs[i][t] <= operand_b_next[i][t];
-                end
-            for (int i = 0; i < MAT_SIZE; i++)
-                for (int t = 0; t < DOT_SIZE; t++)
-                    prod_cs[i][t] <= prod_next[i][t];
-            for (int i = 0; i < MAT_SIZE; i++) begin
-                partial_cs[i][0] <= partial_next[i][0];
-                partial_cs[i][1] <= partial_next[i][1];
+            if (in_valid) begin
+                mha_s1_cs <= is_mha;
+                v_s1_cs   <= v_data;
             end
-            for (int i = 0; i < MAT_SIZE; i++)
-                sum_cs[i] <= sum_next[i];
+
+            if (valid_s1_cs) begin
+                out_mha    <= mha_s1_cs;
+                out_v_data <= v_s1_cs;
+            end
         end
-    end
-
-    assign out_valid = stage4_valid_cs;
-
-    always_comb begin
-        out_data = 1024'd0;
-        for (int i = 0; i < MAT_SIZE; i++)
-            out_data[1023 - (i * 16) -: 16] = sum_cs[i];
     end
 
 endmodule
+
+
+module ATT_Score_Lane_8Tap #(
+    parameter int ROW_ELEM = 8,
+    parameter int SCORE_ELEM_W = 11,
+    parameter int ROW_IDX = 0,
+    parameter int LANE_IDX = 0
+)(
+    input  logic                          clk,
+    input  logic                          rst_n,
+    input  logic                          in_valid,
+    input  logic                          is_mha,
+    input  logic [255:0]                  q_data,
+    input  logic [255:0]                  k_data,
+    output logic                          out_valid,
+    output logic signed [SCORE_ELEM_W-1:0] score0_out,
+    output logic signed [SCORE_ELEM_W-1:0] score1_out
+);
+
+    localparam int PROD_W = 8;
+    localparam int SUM_W  = 16;
+
+    typedef logic signed [3:0] s4_t;
+    typedef logic signed [PROD_W-1:0] prod_t;
+    typedef logic signed [SUM_W-1:0]  sum_t;
+    typedef logic signed [SCORE_ELEM_W-1:0] score_t;
+
+    logic valid_s1_cs;
+    logic is_mha_s1_cs;
+    sum_t pair_cs [0:3];
+    sum_t pair_ns [0:3];
+    prod_t prod_ns [0:ROW_ELEM-1];
+    sum_t head0_sum_ns;
+    sum_t head1_sum_ns;
+    sum_t full_sum_ns;
+    sum_t score0_raw_ns;
+    sum_t score1_raw_ns;
+    sum_t score0_act_ns;
+    sum_t score1_act_ns;
+
+    function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
+        get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
+    endfunction
+
+    always_comb begin
+        for (int tap = 0; tap < ROW_ELEM; tap++) begin
+            prod_ns[tap] = prod_t'(
+                $signed(get_s4(q_data, (ROW_IDX * ROW_ELEM) + tap)) *
+                $signed(get_s4(k_data, (LANE_IDX * ROW_ELEM) + tap)));
+        end
+
+        for (int pair_idx = 0; pair_idx < 4; pair_idx++) begin
+            pair_ns[pair_idx] =
+                sum_t'(prod_ns[pair_idx * 2]) +
+                sum_t'(prod_ns[(pair_idx * 2) + 1]);
+        end
+
+        head0_sum_ns = pair_cs[0] + pair_cs[1];
+        head1_sum_ns = pair_cs[2] + pair_cs[3];
+        full_sum_ns  = head0_sum_ns + head1_sum_ns;
+
+        score0_raw_ns = is_mha_s1_cs ? head0_sum_ns : full_sum_ns;
+        score1_raw_ns = head1_sum_ns;
+        score0_act_ns = (score0_raw_ns < 0) ? (score0_raw_ns >>> 2) : score0_raw_ns;
+        score1_act_ns = (score1_raw_ns < 0) ? (score1_raw_ns >>> 2) : score1_raw_ns;
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid_s1_cs  <= 1'b0;
+            is_mha_s1_cs <= 1'b0;
+            out_valid    <= 1'b0;
+            score0_out   <= '0;
+            score1_out   <= '0;
+            for (int i = 0; i < 4; i++) begin
+                pair_cs[i] <= '0;
+            end
+        end
+        else begin
+            valid_s1_cs <= in_valid;
+            out_valid   <= valid_s1_cs;
+
+            if (in_valid) begin
+                is_mha_s1_cs <= is_mha;
+                for (int i = 0; i < 4; i++) begin
+                    pair_cs[i] <= pair_ns[i];
+                end
+            end
+
+            if (valid_s1_cs) begin
+                score0_out <= score_t'(score0_act_ns);
+                score1_out <= score_t'(score1_act_ns);
+            end
+        end
+    end
+
+endmodule
+
+
+module ATT_Final_Nibble_Acc #(
+    parameter int ACC_W = 16,
+    parameter int MAT_SIZE = 64,
+    parameter int SCORE_ELEM_W = 11
+)(
+    input  logic                                 clk,
+    input  logic                                 rst_n,
+    input  logic                                 in_valid,
+    input  logic                                 is_mha,
+    input  logic [(MAT_SIZE*SCORE_ELEM_W)-1:0]  score0_data,
+    input  logic [(MAT_SIZE*SCORE_ELEM_W)-1:0]  score1_data,
+    input  logic [255:0]                         v_data,
+    output logic                                 out_valid,
+    output logic [(MAT_SIZE*ACC_W)-1:0]          out_data
+);
+
+    localparam int ROW_ELEM   = 8;
+    localparam int ACC_VEC_W  = MAT_SIZE * ACC_W;
+    localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
+    localparam int SCORE_ROW_W = ROW_ELEM * SCORE_ELEM_W;
+
+    typedef logic signed [ACC_W-1:0] acc_t;
+
+    logic [SCORE_ROW_W-1:0] lane_score_data [0:MAT_SIZE-1];
+    logic                   lane_valid      [0:MAT_SIZE-1];
+    acc_t                   lane_data       [0:MAT_SIZE-1];
+
+    genvar row_idx;
+    genvar lane_idx;
+    genvar tap_idx;
+    generate
+        for (row_idx = 0; row_idx < ROW_ELEM; row_idx++) begin : gen_final_row
+            for (lane_idx = 0; lane_idx < ROW_ELEM; lane_idx++) begin : gen_final_lane
+                localparam int OUT_IDX = (row_idx * ROW_ELEM) + lane_idx;
+                localparam int LANE_SEL = lane_idx;
+
+                for (tap_idx = 0; tap_idx < ROW_ELEM; tap_idx++) begin : gen_score_tap
+                    localparam int SCORE_IDX = (row_idx * ROW_ELEM) + tap_idx;
+
+                    assign lane_score_data[OUT_IDX][SCORE_ROW_W - 1 -
+                                                     (tap_idx * SCORE_ELEM_W) -:
+                                                     SCORE_ELEM_W] =
+                        (is_mha && (LANE_SEL >= 4)) ?
+                        score1_data[SCORE_BUS_W - 1 -
+                                    (SCORE_IDX * SCORE_ELEM_W) -:
+                                    SCORE_ELEM_W] :
+                        score0_data[SCORE_BUS_W - 1 -
+                                    (SCORE_IDX * SCORE_ELEM_W) -:
+                                    SCORE_ELEM_W];
+                end
+
+                ATT_Final_Lane_Nibble_Acc #(
+                    .ACC_W        (ACC_W),
+                    .ROW_ELEM     (ROW_ELEM),
+                    .SCORE_ELEM_W (SCORE_ELEM_W),
+                    .LANE_IDX     (LANE_SEL)
+                ) u_lane_nibble_acc (
+                    .clk        (clk),
+                    .rst_n      (rst_n),
+                    .in_valid   (in_valid),
+                    .score_data (lane_score_data[OUT_IDX]),
+                    .v_data     (v_data),
+                    .out_valid  (lane_valid[OUT_IDX]),
+                    .out_data   (lane_data[OUT_IDX])
+                );
+            end
+        end
+    endgenerate
+
+    assign out_valid = lane_valid[0];
+
+    always_comb begin
+        out_data = '0;
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            out_data[ACC_VEC_W - 1 - (i * ACC_W) -: ACC_W] = lane_data[i];
+        end
+    end
+
+endmodule
+
+
+module ATT_Final_Lane_Nibble_Acc #(
+    parameter int ACC_W = 16,
+    parameter int ROW_ELEM = 8,
+    parameter int SCORE_ELEM_W = 11,
+    parameter int LANE_IDX = 0
+)(
+    input  logic                                 clk,
+    input  logic                                 rst_n,
+    input  logic                                 in_valid,
+    input  logic [(ROW_ELEM*SCORE_ELEM_W)-1:0]  score_data,
+    input  logic [255:0]                         v_data,
+    output logic                                 out_valid,
+    output logic signed [ACC_W-1:0]              out_data
+);
+
+    localparam int SCORE_ROW_W = ROW_ELEM * SCORE_ELEM_W;
+    localparam int SCORE_EXT_W = 12;
+    localparam int PROD_W      = 9;
+    localparam int PART_W      = 13;
+    localparam int COMB_W      = 24;
+
+    typedef logic signed [3:0]             s4_t;
+    typedef logic signed [4:0]             digit_pos_t;
+    typedef logic signed [PROD_W-1:0]      prod_t;
+    typedef logic signed [PART_W-1:0]      part_t;
+    typedef logic signed [COMB_W-1:0]      comb_t;
+    typedef logic signed [ACC_W-1:0]       acc_t;
+    typedef logic signed [SCORE_EXT_W-1:0] score_ext_t;
+
+    logic valid_s1_cs;
+    logic valid_s2_cs;
+
+    part_t d0_pair_cs [0:3];
+    part_t d1_pair_cs [0:3];
+    part_t d2_pair_cs [0:3];
+    part_t d0_sum_cs;
+    part_t d1_sum_cs;
+    part_t d2_sum_cs;
+
+    part_t d0_pair_ns [0:3];
+    part_t d1_pair_ns [0:3];
+    part_t d2_pair_ns [0:3];
+    prod_t prod0_ns   [0:ROW_ELEM-1];
+    prod_t prod1_ns   [0:ROW_ELEM-1];
+    prod_t prod2_ns   [0:ROW_ELEM-1];
+    part_t d0_sum_ns;
+    part_t d1_sum_ns;
+    part_t d2_sum_ns;
+    acc_t  result_ns;
+
+    function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
+        get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
+    endfunction
+
+    always_comb begin
+        for (int tap = 0; tap < ROW_ELEM; tap++) begin
+            logic [SCORE_ELEM_W-1:0] score_raw;
+            score_ext_t score_ext;
+            digit_pos_t d0;
+            digit_pos_t d1;
+            s4_t d2;
+            s4_t v_lane;
+
+            score_raw = score_data[SCORE_ROW_W - 1 -
+                                   (tap * SCORE_ELEM_W) -:
+                                   SCORE_ELEM_W];
+            score_ext = score_ext_t'($signed(score_raw));
+            d0 = digit_pos_t'({1'b0, score_ext[3:0]});
+            d1 = digit_pos_t'({1'b0, score_ext[7:4]});
+            d2 = score_ext[11:8];
+            v_lane = get_s4(v_data, (tap * ROW_ELEM) + LANE_IDX);
+
+            prod0_ns[tap] = prod_t'($signed(d0) * $signed(v_lane));
+            prod1_ns[tap] = prod_t'($signed(d1) * $signed(v_lane));
+            prod2_ns[tap] = prod_t'($signed(d2) * $signed(v_lane));
+        end
+
+        for (int pair_idx = 0; pair_idx < 4; pair_idx++) begin
+            d0_pair_ns[pair_idx] =
+                part_t'(prod0_ns[pair_idx * 2]) +
+                part_t'(prod0_ns[(pair_idx * 2) + 1]);
+            d1_pair_ns[pair_idx] =
+                part_t'(prod1_ns[pair_idx * 2]) +
+                part_t'(prod1_ns[(pair_idx * 2) + 1]);
+            d2_pair_ns[pair_idx] =
+                part_t'(prod2_ns[pair_idx * 2]) +
+                part_t'(prod2_ns[(pair_idx * 2) + 1]);
+        end
+
+        d0_sum_ns = d0_pair_cs[0] + d0_pair_cs[1] +
+                    d0_pair_cs[2] + d0_pair_cs[3];
+        d1_sum_ns = d1_pair_cs[0] + d1_pair_cs[1] +
+                    d1_pair_cs[2] + d1_pair_cs[3];
+        d2_sum_ns = d2_pair_cs[0] + d2_pair_cs[1] +
+                    d2_pair_cs[2] + d2_pair_cs[3];
+
+        result_ns = acc_t'(comb_t'(d0_sum_cs) +
+                           (comb_t'(d1_sum_cs) <<< 4) +
+                           (comb_t'(d2_sum_cs) <<< 8));
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid_s1_cs <= 1'b0;
+            valid_s2_cs <= 1'b0;
+            out_valid   <= 1'b0;
+            out_data    <= '0;
+            d0_sum_cs   <= '0;
+            d1_sum_cs   <= '0;
+            d2_sum_cs   <= '0;
+            for (int i = 0; i < 4; i++) begin
+                d0_pair_cs[i] <= '0;
+                d1_pair_cs[i] <= '0;
+                d2_pair_cs[i] <= '0;
+            end
+        end
+        else begin
+            valid_s1_cs <= in_valid;
+            valid_s2_cs <= valid_s1_cs;
+            out_valid   <= valid_s2_cs;
+
+            if (in_valid) begin
+                for (int i = 0; i < 4; i++) begin
+                    d0_pair_cs[i] <= d0_pair_ns[i];
+                    d1_pair_cs[i] <= d1_pair_ns[i];
+                    d2_pair_cs[i] <= d2_pair_ns[i];
+                end
+            end
+
+            if (valid_s1_cs) begin
+                d0_sum_cs <= d0_sum_ns;
+                d1_sum_cs <= d1_sum_ns;
+                d2_sum_cs <= d2_sum_ns;
+            end
+
+            if (valid_s2_cs) begin
+                out_data <= result_ns;
+            end
+        end
+    end
+
+endmodule
+
 
 module Mult_5Stage_Parallel (
     input  logic         clk,
