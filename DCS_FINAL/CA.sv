@@ -686,8 +686,11 @@ module ATT_Stream_Core #(
 );
 
     localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
+    localparam int PROJ_W = 11;
+    localparam int PROJ_VEC_W = MAT_SIZE * PROJ_W;
 
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
+    typedef logic [PROJ_VEC_W-1:0] proj_vec_t;
     localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
 
     logic qkv_valid_s0_cs;
@@ -702,9 +705,9 @@ module ATT_Stream_Core #(
     logic k_matmul_valid;
     logic v_matmul_valid;
     logic matmul_valid;
-    acc_vec_t q_comp_data;
-    acc_vec_t k_comp_data;
-    acc_vec_t v_comp_data;
+    proj_vec_t q_comp_data;
+    proj_vec_t k_comp_data;
+    proj_vec_t v_comp_data;
 
     logic quant_valid_cs;
     logic quant_mha_cs;
@@ -723,8 +726,8 @@ module ATT_Stream_Core #(
     logic final_valid;
     acc_vec_t final_data;
 
-    ATT_Matmul_8Tap_2Stage #(
-        .ACC_W    (ACC_W),
+    ATT_QKV_Matmul_2Stage #(
+        .PROJ_W   (PROJ_W),
         .MAT_SIZE (MAT_SIZE)
     ) u_att_q_matmul (
         .clk       (clk),
@@ -736,8 +739,8 @@ module ATT_Stream_Core #(
         .out_data  (q_comp_data)
     );
 
-    ATT_Matmul_8Tap_2Stage #(
-        .ACC_W    (ACC_W),
+    ATT_QKV_Matmul_2Stage #(
+        .PROJ_W   (PROJ_W),
         .MAT_SIZE (MAT_SIZE)
     ) u_att_k_matmul (
         .clk       (clk),
@@ -749,8 +752,8 @@ module ATT_Stream_Core #(
         .out_data  (k_comp_data)
     );
 
-    ATT_Matmul_8Tap_2Stage #(
-        .ACC_W    (ACC_W),
+    ATT_QKV_Matmul_2Stage #(
+        .PROJ_W   (PROJ_W),
         .MAT_SIZE (MAT_SIZE)
     ) u_att_v_matmul (
         .clk       (clk),
@@ -763,7 +766,7 @@ module ATT_Stream_Core #(
     );
 
     ATT_Quant_3Stage #(
-        .ACC_W    (ACC_W),
+        .ACC_W    (PROJ_W),
         .MAT_SIZE (MAT_SIZE)
     ) u_att_q_quant (
         .clk       (clk),
@@ -775,7 +778,7 @@ module ATT_Stream_Core #(
     );
 
     ATT_Quant_3Stage #(
-        .ACC_W    (ACC_W),
+        .ACC_W    (PROJ_W),
         .MAT_SIZE (MAT_SIZE)
     ) u_att_k_quant (
         .clk       (clk),
@@ -787,7 +790,7 @@ module ATT_Stream_Core #(
     );
 
     ATT_Quant_3Stage #(
-        .ACC_W    (ACC_W),
+        .ACC_W    (PROJ_W),
         .MAT_SIZE (MAT_SIZE)
     ) u_att_v_quant (
         .clk       (clk),
@@ -816,11 +819,11 @@ module ATT_Stream_Core #(
         .score1_data (score1_data)
     );
 
-    ATT_Final_Nibble_Acc #(
+    ATT_Final_Booth_Acc #(
         .ACC_W        (ACC_W),
         .MAT_SIZE     (MAT_SIZE),
         .SCORE_ELEM_W (SCORE_ELEM_W)
-    ) u_att_final_nibble_acc (
+    ) u_att_final_booth_acc (
         .clk         (clk),
         .rst_n       (rst_n),
         .in_valid    (score_pipe_valid),
@@ -861,6 +864,110 @@ module ATT_Stream_Core #(
             quant_mha_s0_cs <= matmul_valid ? qkv_mha_s2_cs : 1'b0;
             quant_mha_s1_cs <= quant_mha_s0_cs;
             quant_mha_s2_cs <= quant_mha_s1_cs;
+        end
+    end
+
+endmodule
+
+
+module ATT_QKV_Matmul_2Stage #(
+    parameter int PROJ_W = 11,
+    parameter int MAT_SIZE = 64
+)(
+    input  logic                           clk,
+    input  logic                           rst_n,
+    input  logic                           in_valid,
+    input  logic [255:0]                   in_data_A,
+    input  logic [255:0]                   in_data_B,
+    output logic                           out_valid,
+    output logic [(MAT_SIZE*PROJ_W)-1:0]   out_data
+);
+
+    localparam int ROW_ELEM = 8;
+    localparam int NUM_PAIR = 4;
+    localparam int PROJ_VEC_W = MAT_SIZE * PROJ_W;
+
+    typedef logic signed [3:0]          s4_t;
+    typedef logic signed [7:0]          prod_t;
+    typedef logic signed [8:0]          pair_t;
+    typedef logic signed [PROJ_W-1:0]   proj_t;
+
+    logic valid_s1_cs;
+    logic valid_s2_cs;
+    prod_t prod_cs [0:MAT_SIZE-1][0:ROW_ELEM-1];
+    prod_t prod_ns [0:MAT_SIZE-1][0:ROW_ELEM-1];
+    pair_t pair_cs [0:MAT_SIZE-1][0:NUM_PAIR-1];
+    pair_t pair_ns [0:MAT_SIZE-1][0:NUM_PAIR-1];
+    proj_t sum_ns  [0:MAT_SIZE-1];
+
+    function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
+        get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
+    endfunction
+
+    always_comb begin
+        for (int row = 0; row < ROW_ELEM; row++) begin
+            for (int lane = 0; lane < ROW_ELEM; lane++) begin
+                int out_idx;
+                out_idx = (row * ROW_ELEM) + lane;
+
+                for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                    prod_ns[out_idx][tap] =
+                        prod_t'($signed(get_s4(in_data_A, (row * ROW_ELEM) + tap)) *
+                                $signed(get_s4(in_data_B, (tap * ROW_ELEM) + lane)));
+                end
+
+                for (int pair_idx = 0; pair_idx < NUM_PAIR; pair_idx++) begin
+                    int tap0;
+                    int tap1;
+
+                    tap0 = pair_idx * 2;
+                    tap1 = tap0 + 1;
+                    pair_ns[out_idx][pair_idx] =
+                        pair_t'(prod_cs[out_idx][tap0]) +
+                        pair_t'(prod_cs[out_idx][tap1]);
+                end
+            end
+        end
+
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            sum_ns[i] =
+                proj_t'(proj_t'(pair_cs[i][0]) + proj_t'(pair_cs[i][1])) +
+                proj_t'(proj_t'(pair_cs[i][2]) + proj_t'(pair_cs[i][3]));
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid_s1_cs <= 1'b0;
+            valid_s2_cs <= 1'b0;
+            out_valid   <= 1'b0;
+        end
+        else begin
+            valid_s1_cs <= in_valid;
+            valid_s2_cs <= valid_s1_cs;
+            out_valid   <= valid_s2_cs;
+
+            if (in_valid) begin
+                for (int i = 0; i < MAT_SIZE; i++) begin
+                    for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                        prod_cs[i][tap] <= prod_ns[i][tap];
+                    end
+                end
+            end
+
+            if (valid_s1_cs) begin
+                for (int i = 0; i < MAT_SIZE; i++) begin
+                    for (int pair_idx = 0; pair_idx < NUM_PAIR; pair_idx++) begin
+                        pair_cs[i][pair_idx] <= pair_ns[i][pair_idx];
+                    end
+                end
+            end
+
+            if (valid_s2_cs) begin
+                for (int i = 0; i < MAT_SIZE; i++) begin
+                    out_data[PROJ_VEC_W - 1 - (i * PROJ_W) -: PROJ_W] <= sum_ns[i];
+                end
+            end
         end
     end
 
@@ -1252,16 +1359,14 @@ module ATT_Score_Lane_8Tap #(
 );
 
     localparam int PROD_W = 8;
-    localparam int SUM_W  = 16;
-    localparam int HEAD_LO_W = 8;
-    localparam int HEAD_HI_W = SUM_W - HEAD_LO_W;
+    localparam int PAIR_W = 9;
+    localparam int HALF_W = 10;
 
     typedef logic signed [3:0] s4_t;
     typedef logic signed [PROD_W-1:0] prod_t;
-    typedef logic signed [SUM_W-1:0]  sum_t;
+    typedef logic signed [PAIR_W-1:0] score_pair_t;
+    typedef logic signed [HALF_W-1:0] score_half_t;
     typedef logic signed [SCORE_ELEM_W-1:0] score_t;
-    typedef logic [HEAD_LO_W-1:0] head_lo_t;
-    typedef logic [HEAD_HI_W-1:0] head_hi_t;
 
     logic valid_s1_cs;
     logic valid_s2_cs;
@@ -1272,38 +1377,21 @@ module ATT_Score_Lane_8Tap #(
     logic is_mha_s3_cs;
     logic is_mha_s4_cs;
     prod_t prod_cs [0:ROW_ELEM-1];
-    sum_t pair_cs [0:3];
-    sum_t pair_ns [0:3];
+    score_pair_t pair_cs [0:3];
+    score_pair_t pair_ns [0:3];
     prod_t prod_ns [0:ROW_ELEM-1];
-    head_lo_t head0_lo_cs;
-    head_lo_t head1_lo_cs;
-    head_lo_t head0_lo_ns;
-    head_lo_t head1_lo_ns;
-    head_hi_t head0_a_hi_cs;
-    head_hi_t head0_b_hi_cs;
-    head_hi_t head1_a_hi_cs;
-    head_hi_t head1_b_hi_cs;
-    head_hi_t head0_a_hi_ns;
-    head_hi_t head0_b_hi_ns;
-    head_hi_t head1_a_hi_ns;
-    head_hi_t head1_b_hi_ns;
-    logic head0_carry_cs;
-    logic head1_carry_cs;
-    logic head0_carry_ns;
-    logic head1_carry_ns;
-    logic [HEAD_LO_W:0] head0_lo_add_ns;
-    logic [HEAD_LO_W:0] head1_lo_add_ns;
-    logic [HEAD_HI_W:0] head0_hi_add_ns;
-    logic [HEAD_HI_W:0] head1_hi_add_ns;
-    sum_t head0_sum_cs;
-    sum_t head1_sum_cs;
-    sum_t head0_sum_ns;
-    sum_t head1_sum_ns;
-    sum_t full_sum_ns;
-    sum_t score0_raw_ns;
-    sum_t score1_raw_ns;
-    sum_t score0_act_ns;
-    sum_t score1_act_ns;
+    score_half_t head0_sum_cs;
+    score_half_t head1_sum_cs;
+    score_half_t head0_sum_ns;
+    score_half_t head1_sum_ns;
+    score_t head0_score_cs;
+    score_t head1_score_cs;
+    score_t full_sum_cs;
+    score_t full_sum_ns;
+    score_t score0_raw_ns;
+    score_t score1_raw_ns;
+    score_t score0_act_ns;
+    score_t score1_act_ns;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
@@ -1318,35 +1406,19 @@ module ATT_Score_Lane_8Tap #(
 
         for (int pair_idx = 0; pair_idx < 4; pair_idx++) begin
             pair_ns[pair_idx] =
-                sum_t'(prod_cs[pair_idx * 2]) +
-                sum_t'(prod_cs[(pair_idx * 2) + 1]);
+                score_pair_t'(prod_cs[pair_idx * 2]) +
+                score_pair_t'(prod_cs[(pair_idx * 2) + 1]);
         end
 
-        head0_lo_add_ns = {1'b0, pair_cs[0][HEAD_LO_W-1:0]} +
-                          {1'b0, pair_cs[1][HEAD_LO_W-1:0]};
-        head1_lo_add_ns = {1'b0, pair_cs[2][HEAD_LO_W-1:0]} +
-                          {1'b0, pair_cs[3][HEAD_LO_W-1:0]};
-        head0_lo_ns     = head0_lo_add_ns[HEAD_LO_W-1:0];
-        head1_lo_ns     = head1_lo_add_ns[HEAD_LO_W-1:0];
-        head0_carry_ns  = head0_lo_add_ns[HEAD_LO_W];
-        head1_carry_ns  = head1_lo_add_ns[HEAD_LO_W];
-        head0_a_hi_ns   = pair_cs[0][SUM_W-1:HEAD_LO_W];
-        head0_b_hi_ns   = pair_cs[1][SUM_W-1:HEAD_LO_W];
-        head1_a_hi_ns   = pair_cs[2][SUM_W-1:HEAD_LO_W];
-        head1_b_hi_ns   = pair_cs[3][SUM_W-1:HEAD_LO_W];
+        head0_sum_ns =
+            score_half_t'(pair_cs[0]) + score_half_t'(pair_cs[1]);
+        head1_sum_ns =
+            score_half_t'(pair_cs[2]) + score_half_t'(pair_cs[3]);
+        full_sum_ns =
+            score_t'(head0_sum_cs) + score_t'(head1_sum_cs);
 
-        head0_hi_add_ns = {1'b0, head0_a_hi_cs} +
-                          {1'b0, head0_b_hi_cs} +
-                          {{HEAD_HI_W{1'b0}}, head0_carry_cs};
-        head1_hi_add_ns = {1'b0, head1_a_hi_cs} +
-                          {1'b0, head1_b_hi_cs} +
-                          {{HEAD_HI_W{1'b0}}, head1_carry_cs};
-        head0_sum_ns = sum_t'({head0_hi_add_ns[HEAD_HI_W-1:0], head0_lo_cs});
-        head1_sum_ns = sum_t'({head1_hi_add_ns[HEAD_HI_W-1:0], head1_lo_cs});
-        full_sum_ns  = head0_sum_cs + head1_sum_cs;
-
-        score0_raw_ns = is_mha_s4_cs ? head0_sum_cs : full_sum_ns;
-        score1_raw_ns = head1_sum_cs;
+        score0_raw_ns = is_mha_s4_cs ? head0_score_cs : full_sum_cs;
+        score1_raw_ns = head1_score_cs;
         score0_act_ns = (score0_raw_ns < 0) ? (score0_raw_ns >>> 2) : score0_raw_ns;
         score1_act_ns = (score1_raw_ns < 0) ? (score1_raw_ns >>> 2) : score1_raw_ns;
     end
@@ -1364,16 +1436,11 @@ module ATT_Score_Lane_8Tap #(
             out_valid    <= 1'b0;
             score0_out   <= '0;
             score1_out   <= '0;
-            head0_lo_cs  <= '0;
-            head1_lo_cs  <= '0;
-            head0_a_hi_cs <= '0;
-            head0_b_hi_cs <= '0;
-            head1_a_hi_cs <= '0;
-            head1_b_hi_cs <= '0;
-            head0_carry_cs <= 1'b0;
-            head1_carry_cs <= 1'b0;
-            head0_sum_cs <= '0;
-            head1_sum_cs <= '0;
+            head0_sum_cs   <= '0;
+            head1_sum_cs   <= '0;
+            head0_score_cs <= '0;
+            head1_score_cs <= '0;
+            full_sum_cs    <= '0;
             for (int i = 0; i < 4; i++) begin
                 pair_cs[i] <= '0;
             end
@@ -1404,20 +1471,15 @@ module ATT_Score_Lane_8Tap #(
 
             if (valid_s2_cs) begin
                 is_mha_s3_cs <= is_mha_s2_cs;
-                head0_lo_cs  <= head0_lo_ns;
-                head1_lo_cs  <= head1_lo_ns;
-                head0_a_hi_cs <= head0_a_hi_ns;
-                head0_b_hi_cs <= head0_b_hi_ns;
-                head1_a_hi_cs <= head1_a_hi_ns;
-                head1_b_hi_cs <= head1_b_hi_ns;
-                head0_carry_cs <= head0_carry_ns;
-                head1_carry_cs <= head1_carry_ns;
+                head0_sum_cs <= head0_sum_ns;
+                head1_sum_cs <= head1_sum_ns;
             end
 
             if (valid_s3_cs) begin
-                is_mha_s4_cs <= is_mha_s3_cs;
-                head0_sum_cs <= head0_sum_ns;
-                head1_sum_cs <= head1_sum_ns;
+                is_mha_s4_cs  <= is_mha_s3_cs;
+                head0_score_cs <= score_t'(head0_sum_cs);
+                head1_score_cs <= score_t'(head1_sum_cs);
+                full_sum_cs    <= full_sum_ns;
             end
 
             if (valid_s4_cs) begin
@@ -1430,7 +1492,7 @@ module ATT_Score_Lane_8Tap #(
 endmodule
 
 
-module ATT_Final_Nibble_Acc #(
+module ATT_Final_Booth_Acc #(
     parameter int ACC_W = 16,
     parameter int MAT_SIZE = 64,
     parameter int SCORE_ELEM_W = 11
@@ -1468,12 +1530,12 @@ module ATT_Final_Nibble_Acc #(
                 localparam int OUT_IDX = (row_idx * ROW_ELEM) + lane_idx;
                 localparam int LANE_SEL = lane_idx;
 
-                ATT_Final_Lane_Nibble_Acc #(
+                ATT_Final_Lane_Booth_Acc #(
                     .ACC_W        (ACC_W),
                     .ROW_ELEM     (ROW_ELEM),
                     .SCORE_ELEM_W (SCORE_ELEM_W),
                     .LANE_IDX     (LANE_SEL)
-                ) u_lane_nibble_acc (
+                ) u_lane_booth_acc (
                     .clk        (clk),
                     .rst_n      (rst_n),
                     .in_valid   (valid_s0_cs),
@@ -1541,7 +1603,34 @@ module ATT_Final_Nibble_Acc #(
 endmodule
 
 
-module ATT_Final_Lane_Nibble_Acc #(
+module ATT_Booth_PP #(
+    parameter int SCORE_ELEM_W = 11,
+    parameter int PROD_W = 13
+)(
+    input  logic signed [SCORE_ELEM_W-1:0] score,
+    input  logic [2:0]                     booth,
+    output logic signed [PROD_W-1:0]       pp
+);
+
+    logic signed [PROD_W-1:0] score_ext;
+
+    always_comb begin
+        score_ext = score;
+        unique case (booth)
+            3'b001,
+            3'b010: pp = score_ext;
+            3'b011: pp = score_ext <<< 1;
+            3'b100: pp = -(score_ext <<< 1);
+            3'b101,
+            3'b110: pp = -score_ext;
+            default: pp = '0;
+        endcase
+    end
+
+endmodule
+
+
+module ATT_Final_Lane_Booth_Acc #(
     parameter int ACC_W = 16,
     parameter int ROW_ELEM = 8,
     parameter int SCORE_ELEM_W = 11,
@@ -1557,104 +1646,93 @@ module ATT_Final_Lane_Nibble_Acc #(
 );
 
     localparam int SCORE_ROW_W = ROW_ELEM * SCORE_ELEM_W;
-    localparam int SCORE_EXT_W = 12;
-    localparam int PROD_W      = 9;
-    localparam int PART_W      = 13;
-    localparam int COMB_W      = 24;
+    localparam int PROD_W      = SCORE_ELEM_W + 4;
+    localparam int PART_W      = PROD_W + 3;
 
     typedef logic signed [3:0]             s4_t;
-    typedef logic signed [4:0]             digit_pos_t;
+    typedef logic signed [SCORE_ELEM_W-1:0] score_t;
     typedef logic signed [PROD_W-1:0]      prod_t;
     typedef logic signed [PART_W-1:0]      part_t;
-    typedef logic signed [COMB_W-1:0]      comb_t;
     typedef logic signed [ACC_W-1:0]       acc_t;
-    typedef logic signed [SCORE_EXT_W-1:0] score_ext_t;
 
     logic valid_s1_cs;
     logic valid_s2_cs;
     logic valid_s3_cs;
     logic valid_s4_cs;
+    logic valid_s5_cs;
+    logic valid_s6_cs;
 
-    prod_t prod0_cs [0:ROW_ELEM-1];
-    prod_t prod1_cs [0:ROW_ELEM-1];
-    prod_t prod2_cs [0:ROW_ELEM-1];
-    part_t d0_pair_cs [0:3];
-    part_t d1_pair_cs [0:3];
-    part_t d2_pair_cs [0:3];
-    part_t d0_half_cs [0:1];
-    part_t d1_half_cs [0:1];
-    part_t d2_half_cs [0:1];
-    part_t d0_sum_cs;
-    part_t d1_sum_cs;
-    part_t d2_sum_cs;
-
-    part_t d0_pair_ns [0:3];
-    part_t d1_pair_ns [0:3];
-    part_t d2_pair_ns [0:3];
-    prod_t prod0_ns   [0:ROW_ELEM-1];
-    prod_t prod1_ns   [0:ROW_ELEM-1];
-    prod_t prod2_ns   [0:ROW_ELEM-1];
-    part_t d0_half_ns [0:1];
-    part_t d1_half_ns [0:1];
-    part_t d2_half_ns [0:1];
-    part_t d0_sum_ns;
-    part_t d1_sum_ns;
-    part_t d2_sum_ns;
+    score_t score_tap [0:ROW_ELEM-1];
+    score_t score_tap_cs [0:ROW_ELEM-1];
+    s4_t    v_tap     [0:ROW_ELEM-1];
+    s4_t    v_tap_cs  [0:ROW_ELEM-1];
+    logic [2:0] booth_lo [0:ROW_ELEM-1];
+    logic [2:0] booth_hi [0:ROW_ELEM-1];
+    prod_t pp_lo [0:ROW_ELEM-1];
+    prod_t pp_hi [0:ROW_ELEM-1];
+    prod_t pp_lo_cs [0:ROW_ELEM-1];
+    prod_t pp_hi_cs [0:ROW_ELEM-1];
+    prod_t prod_cs [0:ROW_ELEM-1];
+    prod_t prod_ns [0:ROW_ELEM-1];
+    part_t pair_cs [0:3];
+    part_t pair_ns [0:3];
+    part_t half_cs [0:1];
+    part_t half_ns [0:1];
+    acc_t  result_cs;
     acc_t  result_ns;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
     endfunction
 
+    genvar tap_idx;
+    generate
+        for (tap_idx = 0; tap_idx < ROW_ELEM; tap_idx++) begin : gen_final_booth_pp
+            assign score_tap[tap_idx] =
+                $signed(score_data[SCORE_ROW_W - 1 -
+                                   (tap_idx * SCORE_ELEM_W) -:
+                                   SCORE_ELEM_W]);
+            assign v_tap[tap_idx] =
+                get_s4(v_data, (tap_idx * ROW_ELEM) + LANE_IDX);
+            assign booth_lo[tap_idx] =
+                {v_tap_cs[tap_idx][1], v_tap_cs[tap_idx][0], 1'b0};
+            assign booth_hi[tap_idx] =
+                {v_tap_cs[tap_idx][3], v_tap_cs[tap_idx][2],
+                 v_tap_cs[tap_idx][1]};
+
+            ATT_Booth_PP #(
+                .SCORE_ELEM_W (SCORE_ELEM_W),
+                .PROD_W       (PROD_W)
+            ) u_booth_lo (
+                .score (score_tap_cs[tap_idx]),
+                .booth (booth_lo[tap_idx]),
+                .pp    (pp_lo[tap_idx])
+            );
+
+            ATT_Booth_PP #(
+                .SCORE_ELEM_W (SCORE_ELEM_W),
+                .PROD_W       (PROD_W)
+            ) u_booth_hi (
+                .score (score_tap_cs[tap_idx]),
+                .booth (booth_hi[tap_idx]),
+                .pp    (pp_hi[tap_idx])
+            );
+
+            assign prod_ns[tap_idx] =
+                prod_t'(pp_lo_cs[tap_idx] + prod_t'(pp_hi_cs[tap_idx] <<< 2));
+        end
+    endgenerate
+
     always_comb begin
-        for (int tap = 0; tap < ROW_ELEM; tap++) begin
-            logic [SCORE_ELEM_W-1:0] score_raw;
-            score_ext_t score_ext;
-            digit_pos_t d0;
-            digit_pos_t d1;
-            s4_t d2;
-            s4_t v_lane;
-
-            score_raw = score_data[SCORE_ROW_W - 1 -
-                                   (tap * SCORE_ELEM_W) -:
-                                   SCORE_ELEM_W];
-            score_ext = score_ext_t'($signed(score_raw));
-            d0 = digit_pos_t'({1'b0, score_ext[3:0]});
-            d1 = digit_pos_t'({1'b0, score_ext[7:4]});
-            d2 = score_ext[11:8];
-            v_lane = get_s4(v_data, (tap * ROW_ELEM) + LANE_IDX);
-
-            prod0_ns[tap] = prod_t'($signed(d0) * $signed(v_lane));
-            prod1_ns[tap] = prod_t'($signed(d1) * $signed(v_lane));
-            prod2_ns[tap] = prod_t'($signed(d2) * $signed(v_lane));
-        end
-
         for (int pair_idx = 0; pair_idx < 4; pair_idx++) begin
-            d0_pair_ns[pair_idx] =
-                part_t'(prod0_cs[pair_idx * 2]) +
-                part_t'(prod0_cs[(pair_idx * 2) + 1]);
-            d1_pair_ns[pair_idx] =
-                part_t'(prod1_cs[pair_idx * 2]) +
-                part_t'(prod1_cs[(pair_idx * 2) + 1]);
-            d2_pair_ns[pair_idx] =
-                part_t'(prod2_cs[pair_idx * 2]) +
-                part_t'(prod2_cs[(pair_idx * 2) + 1]);
+            pair_ns[pair_idx] =
+                part_t'(prod_cs[pair_idx * 2]) +
+                part_t'(prod_cs[(pair_idx * 2) + 1]);
         end
 
-        d0_half_ns[0] = d0_pair_cs[0] + d0_pair_cs[1];
-        d0_half_ns[1] = d0_pair_cs[2] + d0_pair_cs[3];
-        d1_half_ns[0] = d1_pair_cs[0] + d1_pair_cs[1];
-        d1_half_ns[1] = d1_pair_cs[2] + d1_pair_cs[3];
-        d2_half_ns[0] = d2_pair_cs[0] + d2_pair_cs[1];
-        d2_half_ns[1] = d2_pair_cs[2] + d2_pair_cs[3];
-
-        d0_sum_ns = d0_half_cs[0] + d0_half_cs[1];
-        d1_sum_ns = d1_half_cs[0] + d1_half_cs[1];
-        d2_sum_ns = d2_half_cs[0] + d2_half_cs[1];
-
-        result_ns = acc_t'(comb_t'(d0_sum_cs) +
-                           (comb_t'(d1_sum_cs) <<< 4) +
-                           (comb_t'(d2_sum_cs) <<< 8));
+        half_ns[0] = pair_cs[0] + pair_cs[1];
+        half_ns[1] = pair_cs[2] + pair_cs[3];
+        result_ns = acc_t'(half_cs[0]) + acc_t'(half_cs[1]);
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -1663,25 +1741,23 @@ module ATT_Final_Lane_Nibble_Acc #(
             valid_s2_cs <= 1'b0;
             valid_s3_cs <= 1'b0;
             valid_s4_cs <= 1'b0;
+            valid_s5_cs <= 1'b0;
+            valid_s6_cs <= 1'b0;
             out_valid   <= 1'b0;
             out_data    <= '0;
-            d0_sum_cs   <= '0;
-            d1_sum_cs   <= '0;
-            d2_sum_cs   <= '0;
+            result_cs   <= '0;
             for (int i = 0; i < 2; i++) begin
-                d0_half_cs[i] <= '0;
-                d1_half_cs[i] <= '0;
-                d2_half_cs[i] <= '0;
+                half_cs[i] <= '0;
             end
             for (int i = 0; i < 4; i++) begin
-                d0_pair_cs[i] <= '0;
-                d1_pair_cs[i] <= '0;
-                d2_pair_cs[i] <= '0;
+                pair_cs[i] <= '0;
             end
             for (int i = 0; i < ROW_ELEM; i++) begin
-                prod0_cs[i] <= '0;
-                prod1_cs[i] <= '0;
-                prod2_cs[i] <= '0;
+                prod_cs[i] <= '0;
+                score_tap_cs[i] <= '0;
+                v_tap_cs[i] <= '0;
+                pp_lo_cs[i] <= '0;
+                pp_hi_cs[i] <= '0;
             end
         end
         else begin
@@ -1689,40 +1765,48 @@ module ATT_Final_Lane_Nibble_Acc #(
             valid_s2_cs <= valid_s1_cs;
             valid_s3_cs <= valid_s2_cs;
             valid_s4_cs <= valid_s3_cs;
-            out_valid   <= valid_s4_cs;
+            valid_s5_cs <= valid_s4_cs;
+            valid_s6_cs <= valid_s5_cs;
+            out_valid   <= valid_s6_cs;
 
             if (in_valid) begin
                 for (int i = 0; i < ROW_ELEM; i++) begin
-                    prod0_cs[i] <= prod0_ns[i];
-                    prod1_cs[i] <= prod1_ns[i];
-                    prod2_cs[i] <= prod2_ns[i];
+                    score_tap_cs[i] <= score_tap[i];
+                    v_tap_cs[i] <= v_tap[i];
                 end
             end
 
             if (valid_s1_cs) begin
-                for (int i = 0; i < 4; i++) begin
-                    d0_pair_cs[i] <= d0_pair_ns[i];
-                    d1_pair_cs[i] <= d1_pair_ns[i];
-                    d2_pair_cs[i] <= d2_pair_ns[i];
+                for (int i = 0; i < ROW_ELEM; i++) begin
+                    pp_lo_cs[i] <= pp_lo[i];
+                    pp_hi_cs[i] <= pp_hi[i];
                 end
             end
 
             if (valid_s2_cs) begin
-                for (int i = 0; i < 2; i++) begin
-                    d0_half_cs[i] <= d0_half_ns[i];
-                    d1_half_cs[i] <= d1_half_ns[i];
-                    d2_half_cs[i] <= d2_half_ns[i];
+                for (int i = 0; i < ROW_ELEM; i++) begin
+                    prod_cs[i] <= prod_ns[i];
                 end
             end
 
             if (valid_s3_cs) begin
-                d0_sum_cs <= d0_sum_ns;
-                d1_sum_cs <= d1_sum_ns;
-                d2_sum_cs <= d2_sum_ns;
+                for (int i = 0; i < 4; i++) begin
+                    pair_cs[i] <= pair_ns[i];
+                end
             end
 
             if (valid_s4_cs) begin
-                out_data <= result_ns;
+                for (int i = 0; i < 2; i++) begin
+                    half_cs[i] <= half_ns[i];
+                end
+            end
+
+            if (valid_s5_cs) begin
+                result_cs <= result_ns;
+            end
+
+            if (valid_s6_cs) begin
+                out_data <= result_cs;
             end
         end
     end
@@ -1752,7 +1836,7 @@ module Mult_5Stage_Parallel (
     //   A 從 s5 降到 s4：乘法器由 s5×s4 (5 PP rows) → s4×s4 (4 PP rows)，
     //   partial-product reduction 少一級，並省 operand_a 576 flops。
     typedef logic signed [7:0]  s8_t;   // product: s4 × s4 → s8 (max +64 fits)
-    typedef logic signed [11:0] s12_t;  // partial sum: 5×s8 fits s12
+    typedef logic signed [9:0]  part_t; // partial sum: 5×s8 fits 10 bits
     typedef logic signed [15:0] s16_t;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
@@ -1821,7 +1905,7 @@ module Mult_5Stage_Parallel (
     // Stage 1: 576 個 (s4_a, s4_b) operand pair：op-dependent sel_a/sel_b 在這級 register，
     //          下一級的 prod_next cone 就跟 op 解耦了。
     // Stage 2: 576 partial products s4×s4 → s8 (max +64)。
-    // Stage 3: split 9-input sum 5+4 → 2 partial sums (s12)，加法樹深度切半。
+    // Stage 3: split 9-input sum 5+4 → 2 partial sums，加法樹深度切半。
     // Stage 4: 2-input add → s16 sum。
     // (從 4-stage 變 5-stage：把 op[1:0] 從 multiplier 的 input cone 移出去，clk 大幅縮短。)
     logic         in_valid_cs;
@@ -1837,13 +1921,13 @@ module Mult_5Stage_Parallel (
     s4_t  operand_a_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s4_t  operand_b_cs [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s8_t  prod_cs      [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s12_t partial_cs   [0:MAT_SIZE-1][0:1];
+    part_t partial_cs  [0:MAT_SIZE-1][0:1];
     s16_t sum_cs       [0:MAT_SIZE-1];
 
     s4_t  operand_a_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s4_t  operand_b_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
     s8_t  prod_next      [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s12_t partial_next   [0:MAT_SIZE-1][0:1];
+    part_t partial_next  [0:MAT_SIZE-1][0:1];
     s16_t sum_next       [0:MAT_SIZE-1];
 
     // Stage 1: op-dependent operand selection (Conv vs FFN/SHA/MHA 位址)
@@ -1870,14 +1954,14 @@ module Mult_5Stage_Parallel (
         end
     end
 
-    // Stage 3: 5 + 4 partial sums (each in s12)
+    // Stage 3: 5 + 4 partial sums
     always_comb begin
         for (int i = 0; i < MAT_SIZE; i++) begin
-            partial_next[i][0] = s12_t'(prod_cs[i][0]) + s12_t'(prod_cs[i][1]) +
-                                 s12_t'(prod_cs[i][2]) + s12_t'(prod_cs[i][3]) +
-                                 s12_t'(prod_cs[i][4]);
-            partial_next[i][1] = s12_t'(prod_cs[i][5]) + s12_t'(prod_cs[i][6]) +
-                                 s12_t'(prod_cs[i][7]) + s12_t'(prod_cs[i][8]);
+            partial_next[i][0] = part_t'(prod_cs[i][0]) + part_t'(prod_cs[i][1]) +
+                                 part_t'(prod_cs[i][2]) + part_t'(prod_cs[i][3]) +
+                                 part_t'(prod_cs[i][4]);
+            partial_next[i][1] = part_t'(prod_cs[i][5]) + part_t'(prod_cs[i][6]) +
+                                 part_t'(prod_cs[i][7]) + part_t'(prod_cs[i][8]);
         end
     end
 
