@@ -1474,36 +1474,20 @@ module ATT_Final_Nibble_Acc #(
 
     typedef logic signed [ACC_W-1:0] acc_t;
 
-    logic [SCORE_ROW_W-1:0] lane_score_data_ns [0:MAT_SIZE-1];
-    logic [SCORE_ROW_W-1:0] lane_score_data_cs [0:MAT_SIZE-1];
-    logic                   lane_valid      [0:MAT_SIZE-1];
-    acc_t                   lane_data       [0:MAT_SIZE-1];
+    logic [SCORE_ROW_W-1:0] score_low_row_cs  [0:ROW_ELEM-1];
+    logic [SCORE_ROW_W-1:0] score_high_row_cs [0:ROW_ELEM-1];
+    logic                   lane_valid    [0:MAT_SIZE-1];
+    acc_t                   lane_data     [0:MAT_SIZE-1];
     logic                   valid_s0_cs;
     logic [255:0]           v_data_cs;
 
     genvar row_idx;
     genvar lane_idx;
-    genvar tap_idx;
     generate
         for (row_idx = 0; row_idx < ROW_ELEM; row_idx++) begin : gen_final_row
             for (lane_idx = 0; lane_idx < ROW_ELEM; lane_idx++) begin : gen_final_lane
                 localparam int OUT_IDX = (row_idx * ROW_ELEM) + lane_idx;
                 localparam int LANE_SEL = lane_idx;
-
-                for (tap_idx = 0; tap_idx < ROW_ELEM; tap_idx++) begin : gen_score_tap
-                    localparam int SCORE_IDX = (row_idx * ROW_ELEM) + tap_idx;
-
-                    assign lane_score_data_ns[OUT_IDX][SCORE_ROW_W - 1 -
-                                                        (tap_idx * SCORE_ELEM_W) -:
-                                                        SCORE_ELEM_W] =
-                        (is_mha && (LANE_SEL >= 4)) ?
-                        score1_data[SCORE_BUS_W - 1 -
-                                    (SCORE_IDX * SCORE_ELEM_W) -:
-                                    SCORE_ELEM_W] :
-                        score0_data[SCORE_BUS_W - 1 -
-                                    (SCORE_IDX * SCORE_ELEM_W) -:
-                                    SCORE_ELEM_W];
-                end
 
                 ATT_Final_Lane_Nibble_Acc #(
                     .ACC_W        (ACC_W),
@@ -1514,7 +1498,9 @@ module ATT_Final_Nibble_Acc #(
                     .clk        (clk),
                     .rst_n      (rst_n),
                     .in_valid   (valid_s0_cs),
-                    .score_data (lane_score_data_cs[OUT_IDX]),
+                    .score_data ((LANE_SEL >= 4) ?
+                                 score_high_row_cs[row_idx] :
+                                 score_low_row_cs[row_idx]),
                     .v_data     (v_data_cs),
                     .out_valid  (lane_valid[OUT_IDX]),
                     .out_data   (lane_data[OUT_IDX])
@@ -1529,8 +1515,9 @@ module ATT_Final_Nibble_Acc #(
         if (!rst_n) begin
             valid_s0_cs <= 1'b0;
             v_data_cs   <= 256'd0;
-            for (int i = 0; i < MAT_SIZE; i++) begin
-                lane_score_data_cs[i] <= '0;
+            for (int i = 0; i < ROW_ELEM; i++) begin
+                score_low_row_cs[i]  <= '0;
+                score_high_row_cs[i] <= '0;
             end
         end
         else begin
@@ -1538,8 +1525,28 @@ module ATT_Final_Nibble_Acc #(
 
             if (in_valid) begin
                 v_data_cs <= v_data;
-                for (int i = 0; i < MAT_SIZE; i++) begin
-                    lane_score_data_cs[i] <= lane_score_data_ns[i];
+                for (int row = 0; row < ROW_ELEM; row++) begin
+                    for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                        score_low_row_cs[row][SCORE_ROW_W - 1 -
+                                              (tap * SCORE_ELEM_W) -:
+                                              SCORE_ELEM_W] <=
+                            score0_data[SCORE_BUS_W - 1 -
+                                        (((row * ROW_ELEM) + tap) *
+                                         SCORE_ELEM_W) -:
+                                        SCORE_ELEM_W];
+                        score_high_row_cs[row][SCORE_ROW_W - 1 -
+                                               (tap * SCORE_ELEM_W) -:
+                                               SCORE_ELEM_W] <=
+                            is_mha ?
+                            score1_data[SCORE_BUS_W - 1 -
+                                        (((row * ROW_ELEM) + tap) *
+                                         SCORE_ELEM_W) -:
+                                        SCORE_ELEM_W] :
+                            score0_data[SCORE_BUS_W - 1 -
+                                        (((row * ROW_ELEM) + tap) *
+                                         SCORE_ELEM_W) -:
+                                        SCORE_ELEM_W];
+                    end
                 end
             end
         end
