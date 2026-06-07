@@ -1,10 +1,7 @@
-typedef enum logic [2:0] {
-    IM_NONE  = 3'd0,
-    IM_NORM  = 3'd1,
-    IM_ATT   = 3'd2,
-    IM_QKV   = 3'd3,
-    IM_SV    = 3'd4,
-    IM_FINAL = 3'd5
+typedef enum logic [1:0] {
+    IM_NONE = 2'd0,
+    IM_NORM = 2'd1,
+    IM_ATT  = 2'd2
 } issue_mode_t;
 
 module CA #(
@@ -46,7 +43,6 @@ module CA #(
 
     logic          datapath_issue_valid;
     issue_mode_t   datapath_issue_mode;
-    logic [6:0]    datapath_issue_idx;
     logic          datapath_result_pre_valid;
     logic          datapath_result_valid;
 
@@ -73,7 +69,6 @@ module CA #(
         .exec_weight_v          (exec_weight_v),
         .datapath_issue_valid   (datapath_issue_valid),
         .datapath_issue_mode    (datapath_issue_mode),
-        .datapath_issue_idx     (datapath_issue_idx),
         .rd_en                  (rd_en),
         .rd_addr                (rd_addr),
         .rd_burst               (rd_burst),
@@ -89,7 +84,6 @@ module CA #(
         .rst_n                  (rst_n),
         .issue_valid            (datapath_issue_valid),
         .issue_mode             (datapath_issue_mode),
-        .issue_idx              (datapath_issue_idx),
         .op                     (exec_op),
         .act                    (exec_act),
         .param                  (exec_param),
@@ -130,7 +124,6 @@ module CA_Control #(
     output logic [255:0]                    exec_weight_v,
     output logic                            datapath_issue_valid,
     output issue_mode_t                     datapath_issue_mode,
-    output logic [6:0]                      datapath_issue_idx,
 
     output logic                            rd_en,
     output logic [$clog2(RAM_DEPTH)-1:0]    rd_addr,
@@ -165,7 +158,7 @@ module CA_Control #(
     logic att_param_phase_cs;
     logic att_rd_issued_cs;
     logic [7:0] att_rd_word_cnt_cs;
-    logic [ADDR_W-1:0] att_read_base_cs;
+    logic att_read_half_cs;
     logic att_result_half_cs;
     logic [6:0] att_pre_result_cnt_cs;
     logic att_pre_write_half_cs;
@@ -220,10 +213,10 @@ module CA_Control #(
                                  att_param_phase_cs;
     assign att_read_rd_req     = (state_cs == S_ATT_READ) && !att_rd_issued_cs;
     assign att_half_rd_req     = (state_cs == S_ATT_WAIT) &&
-                                 (att_read_base_cs != HALF_ADDR) &&
+                                 !att_read_half_cs &&
                                  att_pre_wr_issued_cs;
     assign att_rd_req          = att_first_rd_req || att_read_rd_req || att_half_rd_req;
-    assign att_rd_addr         = att_half_rd_req ? HALF_ADDR : att_read_base_cs;
+    assign att_rd_addr         = (att_half_rd_req || att_read_half_cs) ? HALF_ADDR : '0;
     assign att_rd_fire         = att_rd_req && rd_ready;
     assign att_rd_data_fire    = (state_cs == S_ATT_READ) && rd_valid &&
                                  (att_rd_word_cnt_cs < 8'd128);
@@ -246,7 +239,6 @@ module CA_Control #(
     always_comb begin
         datapath_issue_valid = 1'b0;
         datapath_issue_mode  = IM_NONE;
-        datapath_issue_idx   = 7'd0;
 
         if ((state_cs == S_FAST_RUN) && rd_valid) begin
             datapath_issue_valid = 1'b1;
@@ -255,7 +247,6 @@ module CA_Control #(
         else if (att_rd_data_fire) begin
             datapath_issue_valid = 1'b1;
             datapath_issue_mode  = IM_ATT;
-            datapath_issue_idx   = att_rd_word_cnt_cs[6:0];
         end
     end
 
@@ -277,7 +268,7 @@ module CA_Control #(
             att_param_phase_cs       <= 1'b0;
             att_rd_issued_cs         <= 1'b0;
             att_rd_word_cnt_cs       <= 8'd0;
-            att_read_base_cs         <= '0;
+            att_read_half_cs         <= 1'b0;
             att_result_half_cs       <= 1'b0;
             att_pre_result_cnt_cs    <= 7'd0;
             att_pre_write_half_cs    <= 1'b0;
@@ -320,7 +311,7 @@ module CA_Control #(
                         att_param_phase_cs       <= 1'b0;
                         att_rd_issued_cs         <= 1'b0;
                         att_rd_word_cnt_cs       <= 8'd0;
-                        att_read_base_cs         <= '0;
+                        att_read_half_cs         <= 1'b0;
                         att_result_half_cs       <= 1'b0;
                         att_pre_result_cnt_cs    <= 7'd0;
                         att_pre_write_half_cs    <= 1'b0;
@@ -377,7 +368,7 @@ module CA_Control #(
                             exec_weight_v            <= param;
                             att_rd_issued_cs         <= att_rd_fire;
                             att_rd_word_cnt_cs       <= 8'd0;
-                            att_read_base_cs         <= '0;
+                            att_read_half_cs         <= 1'b0;
                             att_result_half_cs       <= 1'b0;
                             att_pre_result_cnt_cs    <= 7'd0;
                             att_pre_write_half_cs    <= 1'b0;
@@ -407,7 +398,7 @@ module CA_Control #(
 
                 S_ATT_WAIT: begin
                     if (att_rd_fire) begin
-                        att_read_base_cs  <= HALF_ADDR;
+                        att_read_half_cs  <= 1'b1;
                         att_rd_issued_cs  <= 1'b1;
                         att_rd_word_cnt_cs <= 8'd0;
                         state_cs          <= S_ATT_READ;
@@ -497,7 +488,6 @@ module CA_DataPath #(
     input  logic                 rst_n,
     input  logic                 issue_valid,
     input  issue_mode_t          issue_mode,
-    input  logic [6:0]           issue_idx,
     input  logic [1:0]           op,
     input  logic [1:0]           act,
     input  logic [255:0]         param,
@@ -525,7 +515,6 @@ module CA_DataPath #(
 
     logic                 issue_valid_cs;
     issue_mode_t          issue_mode_cs;
-    logic [6:0]           issue_idx_cs;
     logic [RAM_WIDTH-1:0] rd_data_cs;
 
     logic norm_in_valid;
@@ -620,7 +609,6 @@ module CA_DataPath #(
         if (!rst_n) begin
             issue_valid_cs   <= 1'b0;
             issue_mode_cs    <= IM_NONE;
-            issue_idx_cs     <= 7'd0;
             rd_data_cs       <= '0;
             out_valid        <= 1'b0;
             out_data         <= 32'd0;
@@ -637,7 +625,6 @@ module CA_DataPath #(
         else begin
             issue_valid_cs <= issue_valid;
             issue_mode_cs  <= issue_valid ? issue_mode : IM_NONE;
-            issue_idx_cs   <= issue_valid ? issue_idx : 7'd0;
             rd_data_cs     <= rd_data;
 
             act_tag_cs[0] <= act_in_valid ? act_in_tag : DT_NONE;
@@ -698,18 +685,12 @@ module ATT_Stream_Core #(
     output logic [(MAT_SIZE*ACC_W)-1:0] out_data
 );
 
-    localparam int ROW_ELEM  = 8;
     localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
 
-    typedef logic signed [3:0]  s4_t;
-    typedef logic signed [7:0]  prod_t;
-    typedef logic signed [ACC_W-1:0] acc_t;
-    typedef logic signed [SCORE_ELEM_W-1:0] score_t;
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
     localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
 
     logic qkv_valid_s0_cs;
-    logic qkv_mha_in_cs;
     logic [255:0] qkv_src_s0_cs;
     logic qkv_mha_s0_cs;
     logic qkv_mha_s1_cs;
@@ -860,7 +841,6 @@ module ATT_Stream_Core #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             qkv_valid_s0_cs <= 1'b0;
-            qkv_mha_in_cs   <= 1'b0;
             qkv_src_s0_cs   <= 256'd0;
             qkv_mha_s0_cs  <= 1'b0;
             qkv_mha_s1_cs  <= 1'b0;
@@ -872,11 +852,10 @@ module ATT_Stream_Core #(
         else begin
             qkv_valid_s0_cs <= in_valid;
             if (in_valid) begin
-                qkv_mha_in_cs <= is_mha;
                 qkv_src_s0_cs <= src_data;
             end
 
-            qkv_mha_s0_cs   <= qkv_valid_s0_cs ? qkv_mha_in_cs : 1'b0;
+            qkv_mha_s0_cs   <= qkv_valid_s0_cs ? is_mha : 1'b0;
             qkv_mha_s1_cs   <= qkv_mha_s0_cs;
             qkv_mha_s2_cs   <= qkv_mha_s1_cs;
             quant_mha_s0_cs <= matmul_valid ? qkv_mha_s2_cs : 1'b0;
