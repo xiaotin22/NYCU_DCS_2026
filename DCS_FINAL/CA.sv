@@ -708,8 +708,12 @@ module ATT_Stream_Core #(
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
     localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
 
+    logic qkv_valid_s0_cs;
+    logic qkv_mha_in_cs;
+    logic [255:0] qkv_src_s0_cs;
     logic qkv_mha_s0_cs;
     logic qkv_mha_s1_cs;
+    logic qkv_mha_s2_cs;
     logic quant_mha_s0_cs;
     logic quant_mha_s1_cs;
     logic quant_mha_s2_cs;
@@ -744,8 +748,8 @@ module ATT_Stream_Core #(
     ) u_att_q_matmul (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (in_valid),
-        .in_data_A (src_data),
+        .in_valid  (qkv_valid_s0_cs),
+        .in_data_A (qkv_src_s0_cs),
         .in_data_B (wq_data),
         .out_valid (q_matmul_valid),
         .out_data  (q_comp_data)
@@ -757,8 +761,8 @@ module ATT_Stream_Core #(
     ) u_att_k_matmul (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (in_valid),
-        .in_data_A (src_data),
+        .in_valid  (qkv_valid_s0_cs),
+        .in_data_A (qkv_src_s0_cs),
         .in_data_B (wk_data),
         .out_valid (k_matmul_valid),
         .out_data  (k_comp_data)
@@ -770,8 +774,8 @@ module ATT_Stream_Core #(
     ) u_att_v_matmul (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (in_valid),
-        .in_data_A (src_data),
+        .in_valid  (qkv_valid_s0_cs),
+        .in_data_A (qkv_src_s0_cs),
         .in_data_B (wv_data),
         .out_valid (v_matmul_valid),
         .out_data  (v_comp_data)
@@ -855,16 +859,27 @@ module ATT_Stream_Core #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            qkv_valid_s0_cs <= 1'b0;
+            qkv_mha_in_cs   <= 1'b0;
+            qkv_src_s0_cs   <= 256'd0;
             qkv_mha_s0_cs  <= 1'b0;
             qkv_mha_s1_cs  <= 1'b0;
+            qkv_mha_s2_cs  <= 1'b0;
             quant_mha_s0_cs <= 1'b0;
             quant_mha_s1_cs <= 1'b0;
             quant_mha_s2_cs <= 1'b0;
         end
         else begin
-            qkv_mha_s0_cs   <= in_valid ? is_mha : 1'b0;
+            qkv_valid_s0_cs <= in_valid;
+            if (in_valid) begin
+                qkv_mha_in_cs <= is_mha;
+                qkv_src_s0_cs <= src_data;
+            end
+
+            qkv_mha_s0_cs   <= qkv_valid_s0_cs ? qkv_mha_in_cs : 1'b0;
             qkv_mha_s1_cs   <= qkv_mha_s0_cs;
-            quant_mha_s0_cs <= matmul_valid ? qkv_mha_s1_cs : 1'b0;
+            qkv_mha_s2_cs   <= qkv_mha_s1_cs;
+            quant_mha_s0_cs <= matmul_valid ? qkv_mha_s2_cs : 1'b0;
             quant_mha_s1_cs <= quant_mha_s0_cs;
             quant_mha_s2_cs <= quant_mha_s1_cs;
         end
@@ -896,6 +911,9 @@ module ATT_Matmul_8Tap_2Stage #(
     typedef logic signed [ACC_W-1:0]    acc_t;
 
     logic valid_s1_cs;
+    logic valid_s2_cs;
+    prod_t prod_cs [0:MAT_SIZE-1][0:ROW_ELEM-1];
+    prod_t prod_ns [0:MAT_SIZE-1][0:ROW_ELEM-1];
     pair_t pair_cs [0:MAT_SIZE-1][0:NUM_PAIR-1];
     pair_t pair_ns [0:MAT_SIZE-1][0:NUM_PAIR-1];
     acc_t  sum_ns  [0:MAT_SIZE-1];
@@ -910,19 +928,21 @@ module ATT_Matmul_8Tap_2Stage #(
                 int out_idx;
                 out_idx = (row * ROW_ELEM) + lane;
 
+                for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                    prod_ns[out_idx][tap] =
+                        prod_t'($signed(get_s4(in_data_A, (row * ROW_ELEM) + tap)) *
+                                $signed(get_s4(in_data_B, (tap * ROW_ELEM) + lane)));
+                end
+
                 for (int pair_idx = 0; pair_idx < NUM_PAIR; pair_idx++) begin
                     int tap0;
                     int tap1;
-                    prod_t prod0;
-                    prod_t prod1;
 
                     tap0 = pair_idx * 2;
                     tap1 = tap0 + 1;
-                    prod0 = prod_t'($signed(get_s4(in_data_A, (row * ROW_ELEM) + tap0)) *
-                                    $signed(get_s4(in_data_B, (tap0 * ROW_ELEM) + lane)));
-                    prod1 = prod_t'($signed(get_s4(in_data_A, (row * ROW_ELEM) + tap1)) *
-                                    $signed(get_s4(in_data_B, (tap1 * ROW_ELEM) + lane)));
-                    pair_ns[out_idx][pair_idx] = pair_t'(prod0) + pair_t'(prod1);
+                    pair_ns[out_idx][pair_idx] =
+                        pair_t'(prod_cs[out_idx][tap0]) +
+                        pair_t'(prod_cs[out_idx][tap1]);
                 end
             end
         end
@@ -937,13 +957,23 @@ module ATT_Matmul_8Tap_2Stage #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             valid_s1_cs <= 1'b0;
+            valid_s2_cs <= 1'b0;
             out_valid   <= 1'b0;
         end
         else begin
             valid_s1_cs <= in_valid;
-            out_valid   <= valid_s1_cs;
+            valid_s2_cs <= valid_s1_cs;
+            out_valid   <= valid_s2_cs;
 
             if (in_valid) begin
+                for (int i = 0; i < MAT_SIZE; i++) begin
+                    for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                        prod_cs[i][tap] <= prod_ns[i][tap];
+                    end
+                end
+            end
+
+            if (valid_s1_cs) begin
                 for (int i = 0; i < MAT_SIZE; i++) begin
                     for (int pair_idx = 0; pair_idx < NUM_PAIR; pair_idx++) begin
                         pair_cs[i][pair_idx] <= pair_ns[i][pair_idx];
@@ -951,7 +981,7 @@ module ATT_Matmul_8Tap_2Stage #(
                 end
             end
 
-            if (valid_s1_cs) begin
+            if (valid_s2_cs) begin
                 for (int i = 0; i < MAT_SIZE; i++) begin
                     out_data[ACC_VEC_W - 1 - (i * ACC_W) -: ACC_W] <= sum_ns[i];
                 end
@@ -1098,9 +1128,23 @@ module ATT_Score_8Tap #(
     localparam int ROW_ELEM   = 8;
     localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
 
+    logic valid_s0_cs;
     logic valid_s1_cs;
+    logic valid_s2_cs;
+    logic valid_s3_cs;
+    logic valid_s4_cs;
+    logic mha_s0_cs;
     logic mha_s1_cs;
+    logic mha_s2_cs;
+    logic mha_s3_cs;
+    logic mha_s4_cs;
+    logic [255:0] q_s0_cs;
+    logic [255:0] k_s0_cs;
+    logic [255:0] v_s0_cs;
     logic [255:0] v_s1_cs;
+    logic [255:0] v_s2_cs;
+    logic [255:0] v_s3_cs;
+    logic [255:0] v_s4_cs;
     logic lane_valid [0:MAT_SIZE-1];
     logic signed [SCORE_ELEM_W-1:0] lane_score0 [0:MAT_SIZE-1];
     logic signed [SCORE_ELEM_W-1:0] lane_score1 [0:MAT_SIZE-1];
@@ -1120,10 +1164,10 @@ module ATT_Score_8Tap #(
                 ) u_score_lane (
                     .clk        (clk),
                     .rst_n      (rst_n),
-                    .in_valid   (in_valid),
-                    .is_mha     (is_mha),
-                    .q_data     (q_data),
-                    .k_data     (k_data),
+                    .in_valid   (valid_s0_cs),
+                    .is_mha     (mha_s0_cs),
+                    .q_data     (q_s0_cs),
+                    .k_data     (k_s0_cs),
                     .out_valid  (lane_valid[OUT_IDX]),
                     .score0_out (lane_score0[OUT_IDX]),
                     .score1_out (lane_score1[OUT_IDX])
@@ -1147,23 +1191,63 @@ module ATT_Score_8Tap #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            valid_s0_cs <= 1'b0;
             valid_s1_cs <= 1'b0;
+            valid_s2_cs <= 1'b0;
+            valid_s3_cs <= 1'b0;
+            valid_s4_cs <= 1'b0;
+            mha_s0_cs   <= 1'b0;
             mha_s1_cs   <= 1'b0;
+            mha_s2_cs   <= 1'b0;
+            mha_s3_cs   <= 1'b0;
+            mha_s4_cs   <= 1'b0;
+            q_s0_cs     <= 256'd0;
+            k_s0_cs     <= 256'd0;
+            v_s0_cs     <= 256'd0;
             v_s1_cs     <= 256'd0;
+            v_s2_cs     <= 256'd0;
+            v_s3_cs     <= 256'd0;
+            v_s4_cs     <= 256'd0;
             out_mha     <= 1'b0;
             out_v_data  <= 256'd0;
         end
         else begin
-            valid_s1_cs <= in_valid;
+            valid_s0_cs <= in_valid;
+            valid_s1_cs <= valid_s0_cs;
+            valid_s2_cs <= valid_s1_cs;
+            valid_s3_cs <= valid_s2_cs;
+            valid_s4_cs <= valid_s3_cs;
 
             if (in_valid) begin
-                mha_s1_cs <= is_mha;
-                v_s1_cs   <= v_data;
+                mha_s0_cs <= is_mha;
+                q_s0_cs   <= q_data;
+                k_s0_cs   <= k_data;
+                v_s0_cs   <= v_data;
+            end
+
+            if (valid_s0_cs) begin
+                mha_s1_cs <= mha_s0_cs;
+                v_s1_cs   <= v_s0_cs;
             end
 
             if (valid_s1_cs) begin
-                out_mha    <= mha_s1_cs;
-                out_v_data <= v_s1_cs;
+                mha_s2_cs <= mha_s1_cs;
+                v_s2_cs   <= v_s1_cs;
+            end
+
+            if (valid_s2_cs) begin
+                mha_s3_cs <= mha_s2_cs;
+                v_s3_cs   <= v_s2_cs;
+            end
+
+            if (valid_s3_cs) begin
+                mha_s4_cs <= mha_s3_cs;
+                v_s4_cs   <= v_s3_cs;
+            end
+
+            if (valid_s4_cs) begin
+                out_mha    <= mha_s4_cs;
+                out_v_data <= v_s4_cs;
             end
         end
     end
@@ -1190,17 +1274,50 @@ module ATT_Score_Lane_8Tap #(
 
     localparam int PROD_W = 8;
     localparam int SUM_W  = 16;
+    localparam int HEAD_LO_W = 8;
+    localparam int HEAD_HI_W = SUM_W - HEAD_LO_W;
 
     typedef logic signed [3:0] s4_t;
     typedef logic signed [PROD_W-1:0] prod_t;
     typedef logic signed [SUM_W-1:0]  sum_t;
     typedef logic signed [SCORE_ELEM_W-1:0] score_t;
+    typedef logic [HEAD_LO_W-1:0] head_lo_t;
+    typedef logic [HEAD_HI_W-1:0] head_hi_t;
 
     logic valid_s1_cs;
+    logic valid_s2_cs;
+    logic valid_s3_cs;
+    logic valid_s4_cs;
     logic is_mha_s1_cs;
+    logic is_mha_s2_cs;
+    logic is_mha_s3_cs;
+    logic is_mha_s4_cs;
+    prod_t prod_cs [0:ROW_ELEM-1];
     sum_t pair_cs [0:3];
     sum_t pair_ns [0:3];
     prod_t prod_ns [0:ROW_ELEM-1];
+    head_lo_t head0_lo_cs;
+    head_lo_t head1_lo_cs;
+    head_lo_t head0_lo_ns;
+    head_lo_t head1_lo_ns;
+    head_hi_t head0_a_hi_cs;
+    head_hi_t head0_b_hi_cs;
+    head_hi_t head1_a_hi_cs;
+    head_hi_t head1_b_hi_cs;
+    head_hi_t head0_a_hi_ns;
+    head_hi_t head0_b_hi_ns;
+    head_hi_t head1_a_hi_ns;
+    head_hi_t head1_b_hi_ns;
+    logic head0_carry_cs;
+    logic head1_carry_cs;
+    logic head0_carry_ns;
+    logic head1_carry_ns;
+    logic [HEAD_LO_W:0] head0_lo_add_ns;
+    logic [HEAD_LO_W:0] head1_lo_add_ns;
+    logic [HEAD_HI_W:0] head0_hi_add_ns;
+    logic [HEAD_HI_W:0] head1_hi_add_ns;
+    sum_t head0_sum_cs;
+    sum_t head1_sum_cs;
     sum_t head0_sum_ns;
     sum_t head1_sum_ns;
     sum_t full_sum_ns;
@@ -1222,16 +1339,35 @@ module ATT_Score_Lane_8Tap #(
 
         for (int pair_idx = 0; pair_idx < 4; pair_idx++) begin
             pair_ns[pair_idx] =
-                sum_t'(prod_ns[pair_idx * 2]) +
-                sum_t'(prod_ns[(pair_idx * 2) + 1]);
+                sum_t'(prod_cs[pair_idx * 2]) +
+                sum_t'(prod_cs[(pair_idx * 2) + 1]);
         end
 
-        head0_sum_ns = pair_cs[0] + pair_cs[1];
-        head1_sum_ns = pair_cs[2] + pair_cs[3];
-        full_sum_ns  = head0_sum_ns + head1_sum_ns;
+        head0_lo_add_ns = {1'b0, pair_cs[0][HEAD_LO_W-1:0]} +
+                          {1'b0, pair_cs[1][HEAD_LO_W-1:0]};
+        head1_lo_add_ns = {1'b0, pair_cs[2][HEAD_LO_W-1:0]} +
+                          {1'b0, pair_cs[3][HEAD_LO_W-1:0]};
+        head0_lo_ns     = head0_lo_add_ns[HEAD_LO_W-1:0];
+        head1_lo_ns     = head1_lo_add_ns[HEAD_LO_W-1:0];
+        head0_carry_ns  = head0_lo_add_ns[HEAD_LO_W];
+        head1_carry_ns  = head1_lo_add_ns[HEAD_LO_W];
+        head0_a_hi_ns   = pair_cs[0][SUM_W-1:HEAD_LO_W];
+        head0_b_hi_ns   = pair_cs[1][SUM_W-1:HEAD_LO_W];
+        head1_a_hi_ns   = pair_cs[2][SUM_W-1:HEAD_LO_W];
+        head1_b_hi_ns   = pair_cs[3][SUM_W-1:HEAD_LO_W];
 
-        score0_raw_ns = is_mha_s1_cs ? head0_sum_ns : full_sum_ns;
-        score1_raw_ns = head1_sum_ns;
+        head0_hi_add_ns = {1'b0, head0_a_hi_cs} +
+                          {1'b0, head0_b_hi_cs} +
+                          {{HEAD_HI_W{1'b0}}, head0_carry_cs};
+        head1_hi_add_ns = {1'b0, head1_a_hi_cs} +
+                          {1'b0, head1_b_hi_cs} +
+                          {{HEAD_HI_W{1'b0}}, head1_carry_cs};
+        head0_sum_ns = sum_t'({head0_hi_add_ns[HEAD_HI_W-1:0], head0_lo_cs});
+        head1_sum_ns = sum_t'({head1_hi_add_ns[HEAD_HI_W-1:0], head1_lo_cs});
+        full_sum_ns  = head0_sum_cs + head1_sum_cs;
+
+        score0_raw_ns = is_mha_s4_cs ? head0_sum_cs : full_sum_ns;
+        score1_raw_ns = head1_sum_cs;
         score0_act_ns = (score0_raw_ns < 0) ? (score0_raw_ns >>> 2) : score0_raw_ns;
         score1_act_ns = (score1_raw_ns < 0) ? (score1_raw_ns >>> 2) : score1_raw_ns;
     end
@@ -1239,26 +1375,73 @@ module ATT_Score_Lane_8Tap #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             valid_s1_cs  <= 1'b0;
+            valid_s2_cs  <= 1'b0;
+            valid_s3_cs  <= 1'b0;
+            valid_s4_cs  <= 1'b0;
             is_mha_s1_cs <= 1'b0;
+            is_mha_s2_cs <= 1'b0;
+            is_mha_s3_cs <= 1'b0;
+            is_mha_s4_cs <= 1'b0;
             out_valid    <= 1'b0;
             score0_out   <= '0;
             score1_out   <= '0;
+            head0_lo_cs  <= '0;
+            head1_lo_cs  <= '0;
+            head0_a_hi_cs <= '0;
+            head0_b_hi_cs <= '0;
+            head1_a_hi_cs <= '0;
+            head1_b_hi_cs <= '0;
+            head0_carry_cs <= 1'b0;
+            head1_carry_cs <= 1'b0;
+            head0_sum_cs <= '0;
+            head1_sum_cs <= '0;
             for (int i = 0; i < 4; i++) begin
                 pair_cs[i] <= '0;
+            end
+            for (int i = 0; i < ROW_ELEM; i++) begin
+                prod_cs[i] <= '0;
             end
         end
         else begin
             valid_s1_cs <= in_valid;
-            out_valid   <= valid_s1_cs;
+            valid_s2_cs <= valid_s1_cs;
+            valid_s3_cs <= valid_s2_cs;
+            valid_s4_cs <= valid_s3_cs;
+            out_valid   <= valid_s4_cs;
 
             if (in_valid) begin
                 is_mha_s1_cs <= is_mha;
+                for (int i = 0; i < ROW_ELEM; i++) begin
+                    prod_cs[i] <= prod_ns[i];
+                end
+            end
+
+            if (valid_s1_cs) begin
+                is_mha_s2_cs <= is_mha_s1_cs;
                 for (int i = 0; i < 4; i++) begin
                     pair_cs[i] <= pair_ns[i];
                 end
             end
 
-            if (valid_s1_cs) begin
+            if (valid_s2_cs) begin
+                is_mha_s3_cs <= is_mha_s2_cs;
+                head0_lo_cs  <= head0_lo_ns;
+                head1_lo_cs  <= head1_lo_ns;
+                head0_a_hi_cs <= head0_a_hi_ns;
+                head0_b_hi_cs <= head0_b_hi_ns;
+                head1_a_hi_cs <= head1_a_hi_ns;
+                head1_b_hi_cs <= head1_b_hi_ns;
+                head0_carry_cs <= head0_carry_ns;
+                head1_carry_cs <= head1_carry_ns;
+            end
+
+            if (valid_s3_cs) begin
+                is_mha_s4_cs <= is_mha_s3_cs;
+                head0_sum_cs <= head0_sum_ns;
+                head1_sum_cs <= head1_sum_ns;
+            end
+
+            if (valid_s4_cs) begin
                 score0_out <= score_t'(score0_act_ns);
                 score1_out <= score_t'(score1_act_ns);
             end
@@ -1291,9 +1474,12 @@ module ATT_Final_Nibble_Acc #(
 
     typedef logic signed [ACC_W-1:0] acc_t;
 
-    logic [SCORE_ROW_W-1:0] lane_score_data [0:MAT_SIZE-1];
+    logic [SCORE_ROW_W-1:0] lane_score_data_ns [0:MAT_SIZE-1];
+    logic [SCORE_ROW_W-1:0] lane_score_data_cs [0:MAT_SIZE-1];
     logic                   lane_valid      [0:MAT_SIZE-1];
     acc_t                   lane_data       [0:MAT_SIZE-1];
+    logic                   valid_s0_cs;
+    logic [255:0]           v_data_cs;
 
     genvar row_idx;
     genvar lane_idx;
@@ -1307,9 +1493,9 @@ module ATT_Final_Nibble_Acc #(
                 for (tap_idx = 0; tap_idx < ROW_ELEM; tap_idx++) begin : gen_score_tap
                     localparam int SCORE_IDX = (row_idx * ROW_ELEM) + tap_idx;
 
-                    assign lane_score_data[OUT_IDX][SCORE_ROW_W - 1 -
-                                                     (tap_idx * SCORE_ELEM_W) -:
-                                                     SCORE_ELEM_W] =
+                    assign lane_score_data_ns[OUT_IDX][SCORE_ROW_W - 1 -
+                                                        (tap_idx * SCORE_ELEM_W) -:
+                                                        SCORE_ELEM_W] =
                         (is_mha && (LANE_SEL >= 4)) ?
                         score1_data[SCORE_BUS_W - 1 -
                                     (SCORE_IDX * SCORE_ELEM_W) -:
@@ -1327,9 +1513,9 @@ module ATT_Final_Nibble_Acc #(
                 ) u_lane_nibble_acc (
                     .clk        (clk),
                     .rst_n      (rst_n),
-                    .in_valid   (in_valid),
-                    .score_data (lane_score_data[OUT_IDX]),
-                    .v_data     (v_data),
+                    .in_valid   (valid_s0_cs),
+                    .score_data (lane_score_data_cs[OUT_IDX]),
+                    .v_data     (v_data_cs),
                     .out_valid  (lane_valid[OUT_IDX]),
                     .out_data   (lane_data[OUT_IDX])
                 );
@@ -1338,6 +1524,26 @@ module ATT_Final_Nibble_Acc #(
     endgenerate
 
     assign out_valid = lane_valid[0];
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid_s0_cs <= 1'b0;
+            v_data_cs   <= 256'd0;
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                lane_score_data_cs[i] <= '0;
+            end
+        end
+        else begin
+            valid_s0_cs <= in_valid;
+
+            if (in_valid) begin
+                v_data_cs <= v_data;
+                for (int i = 0; i < MAT_SIZE; i++) begin
+                    lane_score_data_cs[i] <= lane_score_data_ns[i];
+                end
+            end
+        end
+    end
 
     always_comb begin
         out_data = '0;
@@ -1380,10 +1586,18 @@ module ATT_Final_Lane_Nibble_Acc #(
 
     logic valid_s1_cs;
     logic valid_s2_cs;
+    logic valid_s3_cs;
+    logic valid_s4_cs;
 
+    prod_t prod0_cs [0:ROW_ELEM-1];
+    prod_t prod1_cs [0:ROW_ELEM-1];
+    prod_t prod2_cs [0:ROW_ELEM-1];
     part_t d0_pair_cs [0:3];
     part_t d1_pair_cs [0:3];
     part_t d2_pair_cs [0:3];
+    part_t d0_half_cs [0:1];
+    part_t d1_half_cs [0:1];
+    part_t d2_half_cs [0:1];
     part_t d0_sum_cs;
     part_t d1_sum_cs;
     part_t d2_sum_cs;
@@ -1394,6 +1608,9 @@ module ATT_Final_Lane_Nibble_Acc #(
     prod_t prod0_ns   [0:ROW_ELEM-1];
     prod_t prod1_ns   [0:ROW_ELEM-1];
     prod_t prod2_ns   [0:ROW_ELEM-1];
+    part_t d0_half_ns [0:1];
+    part_t d1_half_ns [0:1];
+    part_t d2_half_ns [0:1];
     part_t d0_sum_ns;
     part_t d1_sum_ns;
     part_t d2_sum_ns;
@@ -1428,22 +1645,26 @@ module ATT_Final_Lane_Nibble_Acc #(
 
         for (int pair_idx = 0; pair_idx < 4; pair_idx++) begin
             d0_pair_ns[pair_idx] =
-                part_t'(prod0_ns[pair_idx * 2]) +
-                part_t'(prod0_ns[(pair_idx * 2) + 1]);
+                part_t'(prod0_cs[pair_idx * 2]) +
+                part_t'(prod0_cs[(pair_idx * 2) + 1]);
             d1_pair_ns[pair_idx] =
-                part_t'(prod1_ns[pair_idx * 2]) +
-                part_t'(prod1_ns[(pair_idx * 2) + 1]);
+                part_t'(prod1_cs[pair_idx * 2]) +
+                part_t'(prod1_cs[(pair_idx * 2) + 1]);
             d2_pair_ns[pair_idx] =
-                part_t'(prod2_ns[pair_idx * 2]) +
-                part_t'(prod2_ns[(pair_idx * 2) + 1]);
+                part_t'(prod2_cs[pair_idx * 2]) +
+                part_t'(prod2_cs[(pair_idx * 2) + 1]);
         end
 
-        d0_sum_ns = d0_pair_cs[0] + d0_pair_cs[1] +
-                    d0_pair_cs[2] + d0_pair_cs[3];
-        d1_sum_ns = d1_pair_cs[0] + d1_pair_cs[1] +
-                    d1_pair_cs[2] + d1_pair_cs[3];
-        d2_sum_ns = d2_pair_cs[0] + d2_pair_cs[1] +
-                    d2_pair_cs[2] + d2_pair_cs[3];
+        d0_half_ns[0] = d0_pair_cs[0] + d0_pair_cs[1];
+        d0_half_ns[1] = d0_pair_cs[2] + d0_pair_cs[3];
+        d1_half_ns[0] = d1_pair_cs[0] + d1_pair_cs[1];
+        d1_half_ns[1] = d1_pair_cs[2] + d1_pair_cs[3];
+        d2_half_ns[0] = d2_pair_cs[0] + d2_pair_cs[1];
+        d2_half_ns[1] = d2_pair_cs[2] + d2_pair_cs[3];
+
+        d0_sum_ns = d0_half_cs[0] + d0_half_cs[1];
+        d1_sum_ns = d1_half_cs[0] + d1_half_cs[1];
+        d2_sum_ns = d2_half_cs[0] + d2_half_cs[1];
 
         result_ns = acc_t'(comb_t'(d0_sum_cs) +
                            (comb_t'(d1_sum_cs) <<< 4) +
@@ -1454,23 +1675,45 @@ module ATT_Final_Lane_Nibble_Acc #(
         if (!rst_n) begin
             valid_s1_cs <= 1'b0;
             valid_s2_cs <= 1'b0;
+            valid_s3_cs <= 1'b0;
+            valid_s4_cs <= 1'b0;
             out_valid   <= 1'b0;
             out_data    <= '0;
             d0_sum_cs   <= '0;
             d1_sum_cs   <= '0;
             d2_sum_cs   <= '0;
+            for (int i = 0; i < 2; i++) begin
+                d0_half_cs[i] <= '0;
+                d1_half_cs[i] <= '0;
+                d2_half_cs[i] <= '0;
+            end
             for (int i = 0; i < 4; i++) begin
                 d0_pair_cs[i] <= '0;
                 d1_pair_cs[i] <= '0;
                 d2_pair_cs[i] <= '0;
             end
+            for (int i = 0; i < ROW_ELEM; i++) begin
+                prod0_cs[i] <= '0;
+                prod1_cs[i] <= '0;
+                prod2_cs[i] <= '0;
+            end
         end
         else begin
             valid_s1_cs <= in_valid;
             valid_s2_cs <= valid_s1_cs;
-            out_valid   <= valid_s2_cs;
+            valid_s3_cs <= valid_s2_cs;
+            valid_s4_cs <= valid_s3_cs;
+            out_valid   <= valid_s4_cs;
 
             if (in_valid) begin
+                for (int i = 0; i < ROW_ELEM; i++) begin
+                    prod0_cs[i] <= prod0_ns[i];
+                    prod1_cs[i] <= prod1_ns[i];
+                    prod2_cs[i] <= prod2_ns[i];
+                end
+            end
+
+            if (valid_s1_cs) begin
                 for (int i = 0; i < 4; i++) begin
                     d0_pair_cs[i] <= d0_pair_ns[i];
                     d1_pair_cs[i] <= d1_pair_ns[i];
@@ -1478,13 +1721,21 @@ module ATT_Final_Lane_Nibble_Acc #(
                 end
             end
 
-            if (valid_s1_cs) begin
+            if (valid_s2_cs) begin
+                for (int i = 0; i < 2; i++) begin
+                    d0_half_cs[i] <= d0_half_ns[i];
+                    d1_half_cs[i] <= d1_half_ns[i];
+                    d2_half_cs[i] <= d2_half_ns[i];
+                end
+            end
+
+            if (valid_s3_cs) begin
                 d0_sum_cs <= d0_sum_ns;
                 d1_sum_cs <= d1_sum_ns;
                 d2_sum_cs <= d2_sum_ns;
             end
 
-            if (valid_s2_cs) begin
+            if (valid_s4_cs) begin
                 out_data <= result_ns;
             end
         end
