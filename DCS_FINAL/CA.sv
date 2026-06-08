@@ -671,7 +671,7 @@ endmodule
 module ATT_Stream_Core #(
     parameter int ACC_W = 16,
     parameter int MAT_SIZE = 64,
-    parameter int SCORE_ELEM_W = 11
+    parameter int SCORE_ELEM_W = 10
 )(
     input  logic                 clk,
     input  logic                 rst_n,
