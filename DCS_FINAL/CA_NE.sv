@@ -40,9 +40,9 @@ module CA #(
     localparam logic [BURST_BIT-1:0] BURST_128 = 3'd7;
     localparam logic [ADDR_W-1:0]    HALF_ADDR = 8'd128;
     localparam int MAT_ELEMS = 64;
-    localparam int ACC_W = 16;
+    localparam int ACC_W = 14;
     localparam int ACC_VEC_W = MAT_ELEMS * ACC_W;
-    localparam int SCORE_ELEM_W = 11;
+    localparam int SCORE_ELEM_W = 9;
 
     typedef enum logic [2:0] {
         S_IDLE,
@@ -289,8 +289,8 @@ module CA #(
             rd_en     <= 1'b0;
             wr_en     <= 1'b0;
             out_valid <= 1'b0;
-            rd_burst  <= '0;
-            wr_burst  <= '0;
+            // Keep burst fields between commands; RAM samples them only when
+            // rd_en/wr_en is high, removing the per-cycle 3-bit clear muxes.
 
             if (wr_cmd_pending_q && wr_ready) begin
                 wr_en             <= 1'b1;
@@ -457,20 +457,18 @@ module att_full_parallel #(
 );
 
     localparam int ROW_ELEM   = 8;
-    localparam int PROJ_W     = 11;
+    localparam int PROJ_W     = 10;
     localparam int ACC_VEC_W  = MAT_SIZE * ACC_W;
 
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [7:0]  prod_t;
     typedef logic signed [8:0]  score_pair_t;
-    typedef logic signed [9:0]  score_half_t;
-    typedef logic signed [10:0] score_sum_t;
+    typedef logic signed [8:0]  score_half_t;
+    typedef logic signed [9:0]  score_sum_t;
     typedef logic signed [ACC_W-1:0] acc_t;
-    typedef logic signed [12:0] score_prod_t;
-    typedef logic signed [14:0] final_part_t;
+    typedef logic signed [10:0] score_prod_t;
+    typedef logic signed [13:0] final_part_t;
     typedef logic signed [SCORE_ELEM_W-1:0] score_t;
-    typedef logic [3:0] mag4_t;
-    typedef logic [6:0] magprod_t;
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
 
     logic                 proj_valid;
@@ -553,34 +551,6 @@ module att_full_parallel #(
         begin
             act_score = (value < 0) ? (value >>> 2) : value;
             att_score_value = score_t'(act_score);
-        end
-    endfunction
-
-    function automatic mag4_t abs_s4(input s4_t value);
-        abs_s4 = value[3] ? mag4_t'(~value + 4'd1) : mag4_t'(value);
-    endfunction
-
-    function automatic magprod_t pp_term(input mag4_t mag, input logic bit_en, input int shift);
-        magprod_t ext_mag;
-        begin
-            ext_mag = magprod_t'(mag);
-            pp_term = bit_en ? magprod_t'(ext_mag << shift) : '0;
-        end
-    endfunction
-
-    function automatic prod_t mul_s4_shift(input s4_t a, input s4_t b);
-        mag4_t    amag;
-        mag4_t    bmag;
-        magprod_t mag_prod;
-        logic [7:0] unsigned_prod;
-        begin
-            amag = abs_s4(a);
-            bmag = abs_s4(b);
-            mag_prod = (pp_term(amag, bmag[0], 0) + pp_term(amag, bmag[1], 1)) +
-                       (pp_term(amag, bmag[2], 2) + pp_term(amag, bmag[3], 3));
-            unsigned_prod = {1'b0, mag_prod};
-            mul_s4_shift = (a[3] ^ b[3]) ? prod_t'(-$signed(unsigned_prod)) :
-                                           prod_t'($signed(unsigned_prod));
         end
     endfunction
 
@@ -816,19 +786,15 @@ module att_qkv_proj_pipe #(
 
     typedef logic signed [3:0] s4_t;
     typedef logic signed [7:0] prod_t;
-    typedef logic signed [9:0] part_t;
+    typedef logic signed [8:0] part_t;
     typedef logic signed [PROJ_W-1:0] proj_t;
     typedef logic [PROJ_W-1:0] proj_mag_t;
-    typedef logic [3:0] mag4_t;
-    typedef logic [6:0] magprod_t;
 
     logic                 buf_valid_q;
-    logic                 pp_valid_q;
     logic                 prod_valid_q;
     logic                 part_valid_q;
     logic                 sum_valid_q;
     logic                 max_valid_q;
-    logic [255:0]         src_q;
     logic                 mha0_q;
     logic                 first0_q;
     logic                 mha1_q;
@@ -839,24 +805,21 @@ module att_qkv_proj_pipe #(
     logic                 first3_q;
     logic                 mha4_q;
     logic                 first4_q;
-    logic                 mha5_q;
-    logic                 first5_q;
+    logic [255:0]         wk_data_q;
 
-    s4_t   src_sel_q [0:MAT_SIZE-1][0:7];
-    s4_t   weight_sel_q [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
-    logic  prod_sign_q [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
-    magprod_t prod_lo_q [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
-    magprod_t prod_hi_q [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
+    // Store source by row/tap only: 8*8*4 = 256b instead of 64*8*4 = 2048b,
+    // saving 1792 FF bits because the source operand is lane-independent.
+    s4_t   src_row_q [0:ROW_ELEM-1][0:ROW_ELEM-1];
+    // Directly part-select stable Q/K/V matrices from the existing inputs;
+    // this removes the remaining 3*256 local weight FF bits from v01.
+    // Removed unused prod_sign/prod_lo/prod_hi partial-product registers;
+    // product registers below are the only multiplier-stage storage.
     prod_t prod_q    [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
     part_t part_q    [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:1];
     proj_t sum_q     [0:PIPE_COUNT-1][0:MAT_SIZE-1];
     proj_t max_data_q [0:PIPE_COUNT-1][0:MAT_SIZE-1];
     proj_mag_t max_mask_q [0:PIPE_COUNT-1];
-    s4_t   src_sel_next [0:MAT_SIZE-1][0:7];
-    s4_t   weight_sel_next [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
-    logic  prod_sign_next [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
-    magprod_t prod_lo_next [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
-    magprod_t prod_hi_next [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
+    s4_t   src_row_next [0:ROW_ELEM-1][0:ROW_ELEM-1];
     prod_t prod_next [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:7];
     part_t part_next [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:1];
     proj_t sum_next  [0:PIPE_COUNT-1][0:MAT_SIZE-1];
@@ -867,57 +830,6 @@ module att_qkv_proj_pipe #(
 
     function automatic proj_mag_t abs_proj(input proj_t value);
         abs_proj = value[PROJ_W - 1] ? proj_mag_t'(-value) : proj_mag_t'(value);
-    endfunction
-
-    function automatic mag4_t abs_s4(input s4_t value);
-        abs_s4 = value[3] ? mag4_t'(~value + 4'd1) : mag4_t'(value);
-    endfunction
-
-    function automatic magprod_t pp_term(input mag4_t mag, input logic bit_en, input int shift);
-        magprod_t ext_mag;
-        begin
-            ext_mag = magprod_t'(mag);
-            pp_term = bit_en ? magprod_t'(ext_mag << shift) : '0;
-        end
-    endfunction
-
-    function automatic prod_t signed_product_from_parts(
-        input logic     sign,
-        input magprod_t lo,
-        input magprod_t hi
-    );
-        logic [7:0] unsigned_prod;
-        begin
-            unsigned_prod = {1'b0, magprod_t'(lo + hi)};
-            signed_product_from_parts = sign ? prod_t'(-$signed(unsigned_prod)) :
-                                               prod_t'($signed(unsigned_prod));
-        end
-    endfunction
-
-    function automatic logic prod_sign_part(input s4_t a, input s4_t b);
-        prod_sign_part = a[3] ^ b[3];
-    endfunction
-
-    function automatic magprod_t prod_lo_part(input s4_t a, input s4_t b);
-        mag4_t amag;
-        mag4_t bmag;
-        begin
-            amag = abs_s4(a);
-            bmag = abs_s4(b);
-            prod_lo_part = pp_term(amag, bmag[0], 0) +
-                           pp_term(amag, bmag[1], 1);
-        end
-    endfunction
-
-    function automatic magprod_t prod_hi_part(input s4_t a, input s4_t b);
-        mag4_t amag;
-        mag4_t bmag;
-        begin
-            amag = abs_s4(a);
-            bmag = abs_s4(b);
-            prod_hi_part = pp_term(amag, bmag[2], 2) +
-                           pp_term(amag, bmag[3], 3);
-        end
     endfunction
 
     function automatic proj_mag_t max_abs_pipe(input integer pipe);
@@ -969,29 +881,16 @@ module att_qkv_proj_pipe #(
         end
     endfunction
 
-    function automatic prod_t calc_proj_prod(
-        input logic [255:0] src,
-        input logic [255:0] weight,
-        input integer       row,
-        input integer       lane,
-        input integer       tap
-    );
-        begin
-            calc_proj_prod = prod_t'($signed(get_s4(src, (row * ROW_ELEM) + tap)) *
-                                     $signed(get_s4(weight, (tap * ROW_ELEM) + lane)));
-        end
-    endfunction
-
     function automatic prod_t calc_proj_prod_from_s4(input s4_t src, input s4_t weight);
         calc_proj_prod_from_s4 = prod_t'($signed(src) * $signed(weight));
     endfunction
 
-    function automatic logic [255:0] proj_weight(input integer pipe);
+    function automatic s4_t weight_s4(input integer pipe, input integer lane, input integer tap);
         begin
             unique case (pipe)
-                Q_PIPE:  proj_weight = wq_data;
-                K_PIPE:  proj_weight = wk_data;
-                default: proj_weight = wv_data;
+                Q_PIPE:  weight_s4 = get_s4(wq_data, (tap * ROW_ELEM) + lane);
+                K_PIPE:  weight_s4 = get_s4(wk_data_q, (tap * ROW_ELEM) + lane);
+                default: weight_s4 = get_s4(wv_data, (tap * ROW_ELEM) + lane);
             endcase
         end
     endfunction
@@ -1004,17 +903,19 @@ module att_qkv_proj_pipe #(
     endfunction
 
     always_comb begin
+        for (int row = 0; row < ROW_ELEM; row++) begin
+            for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                src_row_next[row][tap] = get_s4(src_data, (row * ROW_ELEM) + tap);
+            end
+        end
+
         for (int pipe = 0; pipe < PIPE_COUNT; pipe++) begin
             for (int row = 0; row < ROW_ELEM; row++) begin
                 for (int lane = 0; lane < ROW_ELEM; lane++) begin
                     for (int tap = 0; tap < ROW_ELEM; tap++) begin
-                        src_sel_next[(row * ROW_ELEM) + lane][tap] =
-                            get_s4(src_data, (row * ROW_ELEM) + tap);
-                        weight_sel_next[pipe][(row * ROW_ELEM) + lane][tap] =
-                            get_s4(proj_weight(pipe), (tap * ROW_ELEM) + lane);
                         prod_next[pipe][(row * ROW_ELEM) + lane][tap] =
-                            calc_proj_prod_from_s4(src_sel_q[(row * ROW_ELEM) + lane][tap],
-                                                   weight_sel_q[pipe][(row * ROW_ELEM) + lane][tap]);
+                            calc_proj_prod_from_s4(src_row_q[row][tap],
+                                                   weight_s4(pipe, lane, tap));
                     end
                     part_next[pipe][(row * ROW_ELEM) + lane][0] =
                         (part_t'(prod_q[pipe][(row * ROW_ELEM) + lane][0]) +
@@ -1052,17 +953,14 @@ module att_qkv_proj_pipe #(
             max_valid_q  <= sum_valid_q;
             out_valid    <= max_valid_q;
 
-            src_q             <= src_data;
             mha0_q            <= is_mha;
             first0_q          <= in_first;
 
             if (in_valid) begin
-                for (int pipe = 0; pipe < PIPE_COUNT; pipe++) begin
-                    for (int i = 0; i < MAT_SIZE; i++) begin
-                        for (int tap = 0; tap < ROW_ELEM; tap++) begin
-                            src_sel_q[i][tap]          <= src_sel_next[i][tap];
-                            weight_sel_q[pipe][i][tap] <= weight_sel_next[pipe][i][tap];
-                        end
+                wk_data_q <= wk_data;
+                for (int row = 0; row < ROW_ELEM; row++) begin
+                    for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                        src_row_q[row][tap] <= src_row_next[row][tap];
                     end
                 end
             end
@@ -1151,8 +1049,6 @@ module mult_5stage_parallel #(
     typedef logic signed [7:0]  prod_t;
     typedef logic signed [9:0]  part_t;
     typedef logic signed [ACC_W-1:0] acc_t;
-    typedef logic [3:0] mag4_t;
-    typedef logic [6:0] magprod_t;
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
 
     // Pipeline:
@@ -1164,30 +1060,27 @@ module mult_5stage_parallel #(
     //   +5 lane sum registers / externally visible output
     logic         buf_valid_q;
     logic         sel_valid_q;
-    logic         pp_valid_q;
     logic         prod_valid_q;
     logic         part_valid_q;
 
     logic [1:0]   op_q;
     logic [255:0] in_data_A_q;
 
-    logic tag0_q, tag1_q, tag2_q, tag3_q, tag4_q;
-    logic first0_q, first1_q, first2_q, first3_q, first4_q;
+    logic tag0_q, tag1_q, tag2_q, tag3_q;
+    logic first0_q, first1_q, first2_q, first3_q;
 
     s4_t   a_sel_q [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s4_t   b_sel_q [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    logic  prod_sign_q [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    magprod_t prod_lo_q [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    magprod_t prod_hi_q [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    // B operand is lane/tap-dependent, not row-dependent: 8*9*4 = 288b
+    // instead of 64*9*4 = 2304b, saving 2016 FF bits without moving stages.
+    s4_t   b_sel_q [0:ROW_ELEM-1][0:DOT_SIZE-1];
+    // Removed unused prod_sign/prod_lo/prod_hi partial-product registers;
+    // direct signed products feed the existing product pipeline stage.
     prod_t prod_q [0:MAT_SIZE-1][0:DOT_SIZE-1];
     part_t part_q [0:MAT_SIZE-1][0:1];
     acc_t  sum_q  [0:MAT_SIZE-1];
 
     s4_t   a_sel_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    s4_t   b_sel_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    logic  prod_sign_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    magprod_t prod_lo_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
-    magprod_t prod_hi_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
+    s4_t   b_sel_next [0:ROW_ELEM-1][0:DOT_SIZE-1];
     prod_t prod_next [0:MAT_SIZE-1][0:DOT_SIZE-1];
     part_t part_next [0:MAT_SIZE-1][0:1];
     acc_t  sum_next  [0:MAT_SIZE-1];
@@ -1203,57 +1096,6 @@ module mult_5stage_parallel #(
         end
         else begin
             get_pad_s4 = get_s4(vec, (row * ROW_ELEM) + col);
-        end
-    endfunction
-
-    function automatic mag4_t abs_s4(input s4_t value);
-        abs_s4 = value[3] ? mag4_t'(~value + 4'd1) : mag4_t'(value);
-    endfunction
-
-    function automatic magprod_t pp_term(input mag4_t mag, input logic bit_en, input int shift);
-        magprod_t ext_mag;
-        begin
-            ext_mag = magprod_t'(mag);
-            pp_term = bit_en ? magprod_t'(ext_mag << shift) : '0;
-        end
-    endfunction
-
-    function automatic prod_t signed_product_from_parts(
-        input logic     sign,
-        input magprod_t lo,
-        input magprod_t hi
-    );
-        logic [7:0] unsigned_prod;
-        begin
-            unsigned_prod = {1'b0, magprod_t'(lo + hi)};
-            signed_product_from_parts = sign ? prod_t'(-$signed(unsigned_prod)) :
-                                               prod_t'($signed(unsigned_prod));
-        end
-    endfunction
-
-    function automatic logic prod_sign_part(input s4_t a, input s4_t b);
-        prod_sign_part = a[3] ^ b[3];
-    endfunction
-
-    function automatic magprod_t prod_lo_part(input s4_t a, input s4_t b);
-        mag4_t amag;
-        mag4_t bmag;
-        begin
-            amag = abs_s4(a);
-            bmag = abs_s4(b);
-            prod_lo_part = pp_term(amag, bmag[0], 0) +
-                           pp_term(amag, bmag[1], 1);
-        end
-    endfunction
-
-    function automatic magprod_t prod_hi_part(input s4_t a, input s4_t b);
-        mag4_t amag;
-        mag4_t bmag;
-        begin
-            amag = abs_s4(a);
-            bmag = abs_s4(b);
-            prod_hi_part = pp_term(amag, bmag[2], 2) +
-                           pp_term(amag, bmag[3], 3);
         end
     endfunction
 
@@ -1301,16 +1143,20 @@ module mult_5stage_parallel #(
     endfunction
 
     always_comb begin
+        for (int lane = 0; lane < ROW_ELEM; lane++) begin
+            for (int tap = 0; tap < DOT_SIZE; tap++) begin
+                b_sel_next[lane][tap] = sel_b4(in_data_B, op_q, lane, tap);
+            end
+        end
+
         for (int row = 0; row < ROW_ELEM; row++) begin
             for (int lane = 0; lane < ROW_ELEM; lane++) begin
                 for (int tap = 0; tap < DOT_SIZE; tap++) begin
-                    b_sel_next[(row * ROW_ELEM) + lane][tap] =
-                        sel_b4(in_data_B, op_q, lane, tap);
                     a_sel_next[(row * ROW_ELEM) + lane][tap] =
                         sel_a4(in_data_A_q, op_q, (row * ROW_ELEM) + lane, tap);
                     prod_next[(row * ROW_ELEM) + lane][tap] =
                         prod_t'($signed(a_sel_q[(row * ROW_ELEM) + lane][tap]) *
-                                $signed(b_sel_q[(row * ROW_ELEM) + lane][tap]));
+                                $signed(b_sel_q[lane][tap]));
                 end
             end
         end
@@ -1388,9 +1234,9 @@ module mult_5stage_parallel #(
                 end
             end
 
-            for (int i = 0; i < MAT_SIZE; i++) begin
+            for (int lane = 0; lane < ROW_ELEM; lane++) begin
                 for (int tap = 0; tap < DOT_SIZE; tap++) begin
-                    b_sel_q[i][tap] <= b_sel_next[i][tap];
+                    b_sel_q[lane][tap] <= b_sel_next[lane][tap];
                 end
             end
         end
@@ -1716,7 +1562,6 @@ module pot_5stage_parallel #(
     acc_vec_t      max1_data_q;
     acc_vec_t      max2_data_q;
     logic [1:0]    tag0_q, tag1_q, tag2_q, tag3_q;
-    mag_t          abs_q [0:MAT_SIZE-1];
     mag_t          max0_q [0:MAX_L0-1];
     mag_t          max1_q [0:MAX_L1-1];
     mag_t          max2_next;
@@ -1804,24 +1649,20 @@ module pot_5stage_parallel #(
             tag2_q <= tag1_q;
             tag3_q <= tag2_q;
 
-            // Stage 0: register absolute magnitudes.
+            // Stage 0: register source data; magnitudes are reduced in Stage 1.
             if (in_valid) begin
                 abs_data_q <= in_data;
-
-                for (int i = 0; i < MAT_SIZE; i++) begin
-                    abs_q[i] <= abs_acc(get_acc(in_data, i));
-                end
             end
 
-            // Stage 1: reduce each group of four magnitudes.
+            // Stage 1: compute magnitudes and reduce each group of four.
             if (abs_valid_q) begin
                 max0_data_q <= abs_data_q;
 
                 for (int g = 0; g < MAX_L0; g++) begin
-                    max0_q[g] <= mag_or4(abs_q[(g * 4) + 0],
-                                          abs_q[(g * 4) + 1],
-                                          abs_q[(g * 4) + 2],
-                                          abs_q[(g * 4) + 3]);
+                    max0_q[g] <= mag_or4(abs_acc(get_acc(abs_data_q, (g * 4) + 0)),
+                                          abs_acc(get_acc(abs_data_q, (g * 4) + 1)),
+                                          abs_acc(get_acc(abs_data_q, (g * 4) + 2)),
+                                          abs_acc(get_acc(abs_data_q, (g * 4) + 3)));
                 end
             end
 

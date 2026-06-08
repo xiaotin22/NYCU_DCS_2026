@@ -1778,19 +1778,13 @@ module ATT_Final_Lane_Booth_Acc #(
     logic valid_s2_cs;
     logic valid_s3_cs;
     logic valid_s4_cs;
-    logic valid_s5_cs;
-    logic valid_s6_cs;
 
     score_t score_tap [0:ROW_ELEM-1];
-    score_t score_tap_cs [0:ROW_ELEM-1];
     s4_t    v_tap     [0:ROW_ELEM-1];
-    s4_t    v_tap_cs  [0:ROW_ELEM-1];
     logic [2:0] booth_lo [0:ROW_ELEM-1];
     logic [2:0] booth_hi [0:ROW_ELEM-1];
     prod_t pp_lo [0:ROW_ELEM-1];
     prod_t pp_hi [0:ROW_ELEM-1];
-    prod_t pp_lo_cs [0:ROW_ELEM-1];
-    prod_t pp_hi_cs [0:ROW_ELEM-1];
     prod_t prod_cs [0:ROW_ELEM-1];
     prod_t prod_ns [0:ROW_ELEM-1];
     pair_t pair_cs [0:3];
@@ -1814,16 +1808,16 @@ module ATT_Final_Lane_Booth_Acc #(
             assign v_tap[tap_idx] =
                 get_s4(v_data, (tap_idx * ROW_ELEM) + LANE_IDX);
             assign booth_lo[tap_idx] =
-                {v_tap_cs[tap_idx][1], v_tap_cs[tap_idx][0], 1'b0};
+                {v_tap[tap_idx][1], v_tap[tap_idx][0], 1'b0};
             assign booth_hi[tap_idx] =
-                {v_tap_cs[tap_idx][3], v_tap_cs[tap_idx][2],
-                 v_tap_cs[tap_idx][1]};
+                {v_tap[tap_idx][3], v_tap[tap_idx][2],
+                 v_tap[tap_idx][1]};
 
             ATT_Booth_PP #(
                 .SCORE_ELEM_W (SCORE_ELEM_W),
                 .PROD_W       (PROD_W)
             ) u_booth_lo (
-                .score (score_tap_cs[tap_idx]),
+                .score (score_tap[tap_idx]),
                 .booth (booth_lo[tap_idx]),
                 .pp    (pp_lo[tap_idx])
             );
@@ -1832,14 +1826,14 @@ module ATT_Final_Lane_Booth_Acc #(
                 .SCORE_ELEM_W (SCORE_ELEM_W),
                 .PROD_W       (PROD_W)
             ) u_booth_hi (
-                .score (score_tap_cs[tap_idx]),
+                .score (score_tap[tap_idx]),
                 .booth (booth_hi[tap_idx]),
                 .pp    (pp_hi[tap_idx])
             );
 
             assign prod_ns[tap_idx] =
-                prod_t'(prod_calc_t'(pp_lo_cs[tap_idx]) +
-                        (prod_calc_t'(pp_hi_cs[tap_idx]) <<< 2));
+                prod_t'(prod_calc_t'(pp_lo[tap_idx]) +
+                        (prod_calc_t'(pp_hi[tap_idx]) <<< 2));
         end
     endgenerate
 
@@ -1861,8 +1855,6 @@ module ATT_Final_Lane_Booth_Acc #(
             valid_s2_cs <= 1'b0;
             valid_s3_cs <= 1'b0;
             valid_s4_cs <= 1'b0;
-            valid_s5_cs <= 1'b0;
-            valid_s6_cs <= 1'b0;
             out_valid   <= 1'b0;
         end
         else begin
@@ -1870,47 +1862,31 @@ module ATT_Final_Lane_Booth_Acc #(
             valid_s2_cs <= valid_s1_cs;
             valid_s3_cs <= valid_s2_cs;
             valid_s4_cs <= valid_s3_cs;
-            valid_s5_cs <= valid_s4_cs;
-            valid_s6_cs <= valid_s5_cs;
-            out_valid   <= valid_s6_cs;
+            out_valid   <= valid_s4_cs;
 
             if (in_valid) begin
-                for (int i = 0; i < ROW_ELEM; i++) begin
-                    score_tap_cs[i] <= score_tap[i];
-                    v_tap_cs[i] <= v_tap[i];
-                end
-            end
-
-            if (valid_s1_cs) begin
-                for (int i = 0; i < ROW_ELEM; i++) begin
-                    pp_lo_cs[i] <= pp_lo[i];
-                    pp_hi_cs[i] <= pp_hi[i];
-                end
-            end
-
-            if (valid_s2_cs) begin
                 for (int i = 0; i < ROW_ELEM; i++) begin
                     prod_cs[i] <= prod_ns[i];
                 end
             end
 
-            if (valid_s3_cs) begin
+            if (valid_s1_cs) begin
                 for (int i = 0; i < 4; i++) begin
                     pair_cs[i] <= pair_ns[i];
                 end
             end
 
-            if (valid_s4_cs) begin
+            if (valid_s2_cs) begin
                 for (int i = 0; i < 2; i++) begin
                     half_cs[i] <= half_ns[i];
                 end
             end
 
-            if (valid_s5_cs) begin
+            if (valid_s3_cs) begin
                 result_cs <= result_ns;
             end
 
-            if (valid_s6_cs) begin
+            if (valid_s4_cs) begin
                 out_data <= result_cs;
             end
         end
