@@ -1426,15 +1426,7 @@ module ATT_Score_8Tap #(
             mha_s2_cs   <= 1'b0;
             mha_s3_cs   <= 1'b0;
             mha_s4_cs   <= 1'b0;
-            q_s0_cs     <= 256'd0;
-            k_s0_cs     <= 256'd0;
-            v_s0_cs     <= 256'd0;
-            v_s1_cs     <= 256'd0;
-            v_s2_cs     <= 256'd0;
-            v_s3_cs     <= 256'd0;
-            v_s4_cs     <= 256'd0;
             out_mha     <= 1'b0;
-            out_v_data  <= 256'd0;
         end
         else begin
             valid_s0_cs <= in_valid;
@@ -1573,19 +1565,6 @@ module ATT_Score_Lane_8Tap #(
             is_mha_s3_cs <= 1'b0;
             is_mha_s4_cs <= 1'b0;
             out_valid    <= 1'b0;
-            score0_out   <= '0;
-            score1_out   <= '0;
-            head0_sum_cs   <= '0;
-            head1_sum_cs   <= '0;
-            head0_score_cs <= '0;
-            head1_score_cs <= '0;
-            full_sum_cs    <= '0;
-            for (int i = 0; i < 4; i++) begin
-                pair_cs[i] <= '0;
-            end
-            for (int i = 0; i < ROW_ELEM; i++) begin
-                prod_cs[i] <= '0;
-            end
         end
         else begin
             valid_s1_cs <= in_valid;
@@ -1694,11 +1673,6 @@ module ATT_Final_Booth_Acc #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             valid_s0_cs <= 1'b0;
-            v_data_cs   <= 256'd0;
-            for (int i = 0; i < ROW_ELEM; i++) begin
-                score_low_row_cs[i]  <= '0;
-                score_high_row_cs[i] <= '0;
-            end
         end
         else begin
             valid_s0_cs <= in_valid;
@@ -1885,21 +1859,6 @@ module ATT_Final_Lane_Booth_Acc #(
             valid_s5_cs <= 1'b0;
             valid_s6_cs <= 1'b0;
             out_valid   <= 1'b0;
-            out_data    <= '0;
-            result_cs   <= '0;
-            for (int i = 0; i < 2; i++) begin
-                half_cs[i] <= '0;
-            end
-            for (int i = 0; i < 4; i++) begin
-                pair_cs[i] <= '0;
-            end
-            for (int i = 0; i < ROW_ELEM; i++) begin
-                prod_cs[i] <= '0;
-                score_tap_cs[i] <= '0;
-                v_tap_cs[i] <= '0;
-                pp_lo_cs[i] <= '0;
-                pp_hi_cs[i] <= '0;
-            end
         end
         else begin
             valid_s1_cs <= in_valid;
