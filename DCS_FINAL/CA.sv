@@ -1759,13 +1759,17 @@ module ATT_Final_Lane_Booth_Acc #(
 );
 
     localparam int SCORE_ROW_W = ROW_ELEM * SCORE_ELEM_W;
-    localparam int PROD_W      = SCORE_ELEM_W + 3;
+    // Score is bounded by the 8-tap score activation before FINAL, so
+    // score * signed-4b V fits in s13. Keep the shifted Booth sum wider.
+    localparam int PROD_W      = SCORE_ELEM_W + 2;
+    localparam int PROD_CALC_W = PROD_W + 2;
     localparam int PAIR_W      = PROD_W + 1;
     localparam int HALF_W      = PROD_W + 2;
 
     typedef logic signed [3:0]             s4_t;
     typedef logic signed [SCORE_ELEM_W-1:0] score_t;
     typedef logic signed [PROD_W-1:0]      prod_t;
+    typedef logic signed [PROD_CALC_W-1:0] prod_calc_t;
     typedef logic signed [PAIR_W-1:0]      pair_t;
     typedef logic signed [HALF_W-1:0]      half_t;
     typedef logic signed [ACC_W-1:0]       acc_t;
@@ -1834,7 +1838,8 @@ module ATT_Final_Lane_Booth_Acc #(
             );
 
             assign prod_ns[tap_idx] =
-                prod_t'(pp_lo_cs[tap_idx] + prod_t'(pp_hi_cs[tap_idx] <<< 2));
+                prod_t'(prod_calc_t'(pp_lo_cs[tap_idx]) +
+                        (prod_calc_t'(pp_hi_cs[tap_idx]) <<< 2));
         end
     endgenerate
 
