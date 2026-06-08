@@ -560,27 +560,19 @@ module CA_DataPath #(
     assign result_pre_valid = result_pre_pipe_cs[RESULT_PRE_PIPE-1];
     assign wr_data      = wr_data_skid_valid_cs ? wr_data_skid_cs : pot_data;
 
-    Mult_5Stage_Parallel u_norm_mult (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .op          (op),
-        .b_transpose (1'b0),
-        .in_valid    (norm_in_valid),
-        .in_data_A   (rd_data_cs),
-        .in_data_B   (param),
-        .out_valid   (norm_mult_valid),
-        .out_data    (norm_mult_data)
-    );
-
     ATT_Stream_Core u_att_stream_core (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (att_in_valid),
+        .in_valid  (norm_in_valid || att_in_valid),
+        .is_att    (att_in_valid),
         .is_mha    (op[0]),
+        .op        (op),
         .src_data  (rd_data_cs),
         .wq_data   (param),
         .wk_data   (weight_k),
         .wv_data   (weight_v),
+        .norm_valid(norm_mult_valid),
+        .norm_data (norm_mult_data),
         .out_valid (att_core_valid),
         .out_data  (att_core_data)
     );
@@ -676,17 +668,21 @@ module ATT_Stream_Core #(
     input  logic                 clk,
     input  logic                 rst_n,
     input  logic                 in_valid,
+    input  logic                 is_att,
     input  logic                 is_mha,
+    input  logic [1:0]           op,
     input  logic [255:0]         src_data,
     input  logic [255:0]         wq_data,
     input  logic [255:0]         wk_data,
     input  logic [255:0]         wv_data,
+    output logic                 norm_valid,
+    output logic [(MAT_SIZE*ACC_W)-1:0] norm_data,
     output logic                 out_valid,
     output logic [(MAT_SIZE*ACC_W)-1:0] out_data
 );
 
     localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
-    localparam int PROJ_W = 11;
+    localparam int PROJ_W = 10;
 
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
     localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
@@ -712,11 +708,15 @@ module ATT_Stream_Core #(
         .clk       (clk),
         .rst_n     (rst_n),
         .in_valid  (in_valid),
+        .is_att    (is_att),
         .is_mha    (is_mha),
+        .op        (op),
         .src_data  (src_data),
         .wq_data   (wq_data),
         .wk_data   (wk_data),
         .wv_data   (wv_data),
+        .norm_valid(norm_valid),
+        .norm_data (norm_data),
         .out_valid (qkv_word_valid),
         .out_mha   (qkv_word_mha),
         .q_data    (q_word_cs),
@@ -766,16 +766,21 @@ endmodule
 
 module ATT_QKV_Proj_Quant_Parallel #(
     parameter int PROJ_W = 11,
-    parameter int MAT_SIZE = 64
+    parameter int MAT_SIZE = 64,
+    parameter int NORM_W = 16
 )(
     input  logic                 clk,
     input  logic                 rst_n,
     input  logic                 in_valid,
+    input  logic                 is_att,
     input  logic                 is_mha,
+    input  logic [1:0]           op,
     input  logic [255:0]         src_data,
     input  logic [255:0]         wq_data,
     input  logic [255:0]         wk_data,
     input  logic [255:0]         wv_data,
+    output logic                 norm_valid,
+    output logic [(MAT_SIZE*NORM_W)-1:0] norm_data,
     output logic                 out_valid,
     output logic                 out_mha,
     output logic [255:0]         q_data,
@@ -784,17 +789,20 @@ module ATT_QKV_Proj_Quant_Parallel #(
 );
 
     localparam int ROW_ELEM   = 8;
+    localparam int DOT_SIZE   = 9;
     localparam int PIPE_COUNT = 3;
     localparam int Q_PIPE     = 0;
     localparam int K_PIPE     = 1;
     localparam int V_PIPE     = 2;
     localparam int SHIFT_W    = $clog2(PROJ_W);
+    localparam int NORM_VEC_W = MAT_SIZE * NORM_W;
     localparam logic [SHIFT_W-1:0] SHIFT_TWO = 2;
 
     typedef logic signed [3:0]        s4_t;
     typedef logic signed [7:0]        prod_t;
-    typedef logic signed [9:0]        part_t;
+    typedef logic signed [10:0]       part_t;
     typedef logic signed [PROJ_W-1:0] proj_t;
+    typedef logic signed [NORM_W-1:0] norm_t;
     typedef logic [PROJ_W-1:0]        mag_t;
 
     logic valid_s0_cs;
@@ -802,29 +810,100 @@ module ATT_QKV_Proj_Quant_Parallel #(
     logic valid_s2_cs;
     logic valid_s3_cs;
     logic valid_s4_cs;
+    logic att_s0_cs;
+    logic att_s1_cs;
+    logic att_s2_cs;
+    logic att_s3_cs;
+    logic att_s4_cs;
     logic mha_s0_cs;
     logic mha_s1_cs;
     logic mha_s2_cs;
     logic mha_s3_cs;
     logic mha_s4_cs;
+    logic [ROW_ELEM-1:0] conv_s0_cs;
+    logic [255:0] wq_data_s0_cs;
+    logic [255:0] wk_data_s0_cs;
+    logic [255:0] wv_data_s0_cs;
 
     s4_t   src_row_cs  [0:ROW_ELEM-1][0:ROW_ELEM-1];
-    prod_t prod_cs     [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:ROW_ELEM-1];
+    prod_t prod_cs     [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:DOT_SIZE-1];
     part_t part_cs     [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:1];
     proj_t sum_cs      [0:PIPE_COUNT-1][0:MAT_SIZE-1];
+    norm_t norm_sum_cs [0:MAT_SIZE-1];
     proj_t max_data_cs [0:PIPE_COUNT-1][0:MAT_SIZE-1];
     mag_t  max_bits_cs [0:PIPE_COUNT-1];
 
     s4_t   src_row_ns [0:ROW_ELEM-1][0:ROW_ELEM-1];
-    prod_t prod_ns    [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:ROW_ELEM-1];
+    prod_t prod_ns    [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:DOT_SIZE-1];
     part_t part_ns    [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:1];
     proj_t sum_ns     [0:PIPE_COUNT-1][0:MAT_SIZE-1];
+    norm_t norm_sum_ns [0:MAT_SIZE-1];
     mag_t  max_bits_ns [0:PIPE_COUNT-1];
     logic [SHIFT_W-1:0] shift_ns [0:PIPE_COUNT-1];
     logic [255:0] quant_ns [0:PIPE_COUNT-1];
+    logic [NORM_VEC_W-1:0] norm_pack_ns;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
+    endfunction
+
+    function automatic s4_t get_src_s4(input integer row, input integer col);
+        if ((row < 0) || (row >= ROW_ELEM) ||
+            (col < 0) || (col >= ROW_ELEM)) begin
+            get_src_s4 = 4'sd0;
+        end
+        else begin
+            get_src_s4 = src_row_cs[row][col];
+        end
+    endfunction
+
+    function automatic s4_t select_a(
+        input integer pipe,
+        input integer row,
+        input integer lane,
+        input integer tap
+    );
+        integer out_row;
+        integer out_col;
+        begin
+            if ((pipe == Q_PIPE) && conv_s0_cs[row]) begin
+                out_row = row;
+                out_col = lane;
+                select_a = get_src_s4(out_row + (tap / 3) - 1,
+                                      out_col + (tap % 3) - 1);
+            end
+            else if (tap < ROW_ELEM) begin
+                select_a = src_row_cs[row][tap];
+            end
+            else begin
+                select_a = 4'sd0;
+            end
+        end
+    endfunction
+
+    function automatic s4_t select_b(
+        input integer pipe,
+        input integer row,
+        input integer lane,
+        input integer tap
+    );
+        begin
+            if ((pipe == Q_PIPE) && conv_s0_cs[row]) begin
+                select_b = get_s4(wq_data_s0_cs, tap);
+            end
+            else if ((pipe == Q_PIPE) && (tap < ROW_ELEM)) begin
+                select_b = get_s4(wq_data_s0_cs, (tap * ROW_ELEM) + lane);
+            end
+            else if ((pipe == K_PIPE) && (tap < ROW_ELEM)) begin
+                select_b = get_s4(wk_data_s0_cs, (tap * ROW_ELEM) + lane);
+            end
+            else if ((pipe == V_PIPE) && (tap < ROW_ELEM)) begin
+                select_b = get_s4(wv_data_s0_cs, (tap * ROW_ELEM) + lane);
+            end
+            else begin
+                select_b = 4'sd0;
+            end
+        end
     endfunction
 
     function automatic mag_t abs_proj(input proj_t value);
@@ -871,34 +950,34 @@ module ATT_QKV_Proj_Quant_Parallel #(
                     int out_idx;
                     out_idx = (row * ROW_ELEM) + lane;
 
-                    for (int tap = 0; tap < ROW_ELEM; tap++) begin
-                        s4_t weight_s4;
-
-                        unique case (pipe)
-                            Q_PIPE:  weight_s4 = get_s4(wq_data, (tap * ROW_ELEM) + lane);
-                            K_PIPE:  weight_s4 = get_s4(wk_data, (tap * ROW_ELEM) + lane);
-                            default: weight_s4 = get_s4(wv_data, (tap * ROW_ELEM) + lane);
-                        endcase
-
+                    for (int tap = 0; tap < DOT_SIZE; tap++) begin
                         prod_ns[pipe][out_idx][tap] =
-                            prod_t'($signed(src_row_cs[row][tap]) * $signed(weight_s4));
+                            prod_t'($signed(select_a(pipe, row, lane, tap)) *
+                                    $signed(select_b(pipe, row, lane, tap)));
                     end
 
                     part_ns[pipe][out_idx][0] =
                         part_t'(prod_cs[pipe][out_idx][0]) +
                         part_t'(prod_cs[pipe][out_idx][1]) +
                         part_t'(prod_cs[pipe][out_idx][2]) +
-                        part_t'(prod_cs[pipe][out_idx][3]);
+                        part_t'(prod_cs[pipe][out_idx][3]) +
+                        part_t'(prod_cs[pipe][out_idx][4]);
                     part_ns[pipe][out_idx][1] =
-                        part_t'(prod_cs[pipe][out_idx][4]) +
                         part_t'(prod_cs[pipe][out_idx][5]) +
                         part_t'(prod_cs[pipe][out_idx][6]) +
-                        part_t'(prod_cs[pipe][out_idx][7]);
+                        part_t'(prod_cs[pipe][out_idx][7]) +
+                        part_t'(prod_cs[pipe][out_idx][8]);
                     sum_ns[pipe][out_idx] =
                         proj_t'(part_cs[pipe][out_idx][0]) +
                         proj_t'(part_cs[pipe][out_idx][1]);
                 end
             end
+        end
+
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            norm_sum_ns[i] =
+                norm_t'(part_cs[Q_PIPE][i][0]) +
+                norm_t'(part_cs[Q_PIPE][i][1]);
         end
     end
 
@@ -918,6 +997,12 @@ module ATT_QKV_Proj_Quant_Parallel #(
                 quant_ns[pipe][255 - (i * 4) -: 4] = clamp_s4(scaled);
             end
         end
+
+        norm_pack_ns = '0;
+        for (int i = 0; i < MAT_SIZE; i++) begin
+            norm_pack_ns[NORM_VEC_W - 1 - (i * NORM_W) -: NORM_W] =
+                norm_sum_cs[i];
+        end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -927,7 +1012,14 @@ module ATT_QKV_Proj_Quant_Parallel #(
             valid_s2_cs <= 1'b0;
             valid_s3_cs <= 1'b0;
             valid_s4_cs <= 1'b0;
+            att_s0_cs   <= 1'b0;
+            att_s1_cs   <= 1'b0;
+            att_s2_cs   <= 1'b0;
+            att_s3_cs   <= 1'b0;
+            att_s4_cs   <= 1'b0;
+            conv_s0_cs  <= '0;
             out_valid   <= 1'b0;
+            norm_valid  <= 1'b0;
             out_mha     <= 1'b0;
         end
         else begin
@@ -936,13 +1028,25 @@ module ATT_QKV_Proj_Quant_Parallel #(
             valid_s2_cs <= valid_s1_cs;
             valid_s3_cs <= valid_s2_cs;
             valid_s4_cs <= valid_s3_cs;
-            out_valid   <= valid_s4_cs;
+            out_valid   <= valid_s4_cs && att_s4_cs;
+            norm_valid  <= valid_s3_cs && !att_s3_cs;
 
-            mha_s0_cs <= is_mha;
+            if (in_valid) begin
+                att_s0_cs <= is_att;
+                mha_s0_cs <= is_mha;
+                conv_s0_cs <= {ROW_ELEM{!is_att && (op == 2'b01)}};
+                wq_data_s0_cs <= wq_data;
+                wk_data_s0_cs <= wk_data;
+                wv_data_s0_cs <= wv_data;
+            end
             mha_s1_cs <= mha_s0_cs;
             mha_s2_cs <= mha_s1_cs;
             mha_s3_cs <= mha_s2_cs;
             mha_s4_cs <= mha_s3_cs;
+            att_s1_cs <= att_s0_cs;
+            att_s2_cs <= att_s1_cs;
+            att_s3_cs <= att_s2_cs;
+            att_s4_cs <= att_s3_cs;
 
             if (in_valid) begin
                 for (int row = 0; row < ROW_ELEM; row++) begin
@@ -955,7 +1059,7 @@ module ATT_QKV_Proj_Quant_Parallel #(
             if (valid_s0_cs) begin
                 for (int pipe = 0; pipe < PIPE_COUNT; pipe++) begin
                     for (int i = 0; i < MAT_SIZE; i++) begin
-                        for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                        for (int tap = 0; tap < DOT_SIZE; tap++) begin
                             prod_cs[pipe][i][tap] <= prod_ns[pipe][i][tap];
                         end
                     end
@@ -977,6 +1081,9 @@ module ATT_QKV_Proj_Quant_Parallel #(
                         sum_cs[pipe][i] <= sum_ns[pipe][i];
                     end
                 end
+                for (int i = 0; i < MAT_SIZE; i++) begin
+                    norm_sum_cs[i] <= norm_sum_ns[i];
+                end
             end
 
             if (valid_s3_cs) begin
@@ -988,7 +1095,11 @@ module ATT_QKV_Proj_Quant_Parallel #(
                 end
             end
 
-            if (valid_s4_cs) begin
+            if (valid_s3_cs && !att_s3_cs) begin
+                norm_data <= norm_pack_ns;
+            end
+
+            if (valid_s4_cs && att_s4_cs) begin
                 out_mha <= mha_s4_cs;
                 q_data  <= quant_ns[Q_PIPE];
                 k_data  <= quant_ns[K_PIPE];
@@ -1752,7 +1863,7 @@ module ATT_Final_Booth_Acc #(
     logic                   lane_valid    [0:MAT_SIZE-1];
     acc_t                   lane_data     [0:MAT_SIZE-1];
     logic                   valid_s0_cs;
-    logic [255:0]           v_data_cs;
+    (* dont_touch = "true" *) logic [255:0] v_data_row_cs [0:ROW_ELEM-1];
 
     genvar row_idx;
     genvar lane_idx;
@@ -1774,7 +1885,7 @@ module ATT_Final_Booth_Acc #(
                     .score_data ((LANE_SEL >= 4) ?
                                  score_high_row_cs[row_idx] :
                                  score_low_row_cs[row_idx]),
-                    .v_data     (v_data_cs),
+                    .v_data     (v_data_row_cs[row_idx]),
                     .out_valid  (lane_valid[OUT_IDX]),
                     .out_data   (lane_data[OUT_IDX])
                 );
@@ -1792,8 +1903,8 @@ module ATT_Final_Booth_Acc #(
             valid_s0_cs <= in_valid;
 
             if (in_valid) begin
-                v_data_cs <= v_data;
                 for (int row = 0; row < ROW_ELEM; row++) begin
+                    v_data_row_cs[row] <= v_data;
                     for (int tap = 0; tap < ROW_ELEM; tap++) begin
                         score_low_row_cs[row][SCORE_ROW_W - 1 -
                                               (tap * SCORE_ELEM_W) -:
