@@ -687,41 +687,15 @@ module ATT_Stream_Core #(
 
     localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
     localparam int PROJ_W = 11;
-    localparam int PROJ_VEC_W = MAT_SIZE * PROJ_W;
 
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
-    typedef logic [PROJ_VEC_W-1:0] proj_vec_t;
     localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
 
-    logic qkv_valid_s0_cs;
-    logic [255:0] qkv_src_s0_cs;
-    logic qkv_mha_s0_cs;
-    logic qkv_mha_s1_cs;
-    logic qkv_mha_s2_cs;
-    logic qkv_mha_s3_cs;
-    logic quant_mha_s0_cs;
-    logic quant_mha_s1_cs;
-    logic quant_mha_s2_cs;
-    logic quant_mha_s3_cs;
-    logic q_matmul_valid;
-    logic k_matmul_valid;
-    logic v_matmul_valid;
-    logic matmul_valid;
-    proj_vec_t q_comp_data;
-    proj_vec_t k_comp_data;
-    proj_vec_t v_comp_data;
-
-    logic quant_valid_cs;
-    logic quant_mha_cs;
-    logic q_quant_valid;
-    logic k_quant_valid;
-    logic v_quant_valid;
-    logic qk_quant_valid_cs;
+    logic qkv_word_valid;
+    logic qkv_word_mha;
     logic [255:0] q_word_cs;
     logic [255:0] k_word_cs;
     logic [255:0] v_word_cs;
-    logic [255:0] q_word_align_cs;
-    logic [255:0] k_word_align_cs;
 
     logic score_pipe_valid;
     logic score_pipe_mha;
@@ -731,79 +705,23 @@ module ATT_Stream_Core #(
     logic final_valid;
     acc_vec_t final_data;
 
-    ATT_QKV_Matmul_3Stage #(
+    ATT_QKV_Proj_Quant_Parallel #(
         .PROJ_W   (PROJ_W),
         .MAT_SIZE (MAT_SIZE)
-    ) u_att_q_matmul (
+    ) u_att_qkv_proj_quant (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (qkv_valid_s0_cs),
-        .in_data_A (qkv_src_s0_cs),
-        .in_data_B (wq_data),
-        .out_valid (q_matmul_valid),
-        .out_data  (q_comp_data)
-    );
-
-    ATT_QKV_Matmul_3Stage #(
-        .PROJ_W   (PROJ_W),
-        .MAT_SIZE (MAT_SIZE)
-    ) u_att_k_matmul (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .in_valid  (qkv_valid_s0_cs),
-        .in_data_A (qkv_src_s0_cs),
-        .in_data_B (wk_data),
-        .out_valid (k_matmul_valid),
-        .out_data  (k_comp_data)
-    );
-
-    ATT_QKV_Matmul_3Stage #(
-        .PROJ_W   (PROJ_W),
-        .MAT_SIZE (MAT_SIZE)
-    ) u_att_v_matmul (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .in_valid  (qkv_valid_s0_cs),
-        .in_data_A (qkv_src_s0_cs),
-        .in_data_B (wv_data),
-        .out_valid (v_matmul_valid),
-        .out_data  (v_comp_data)
-    );
-
-    ATT_Quant_3Stage #(
-        .ACC_W    (PROJ_W),
-        .MAT_SIZE (MAT_SIZE)
-    ) u_att_q_quant (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .in_valid  (matmul_valid),
-        .in_data   (q_comp_data),
-        .out_valid (q_quant_valid),
-        .out_data  (q_word_cs)
-    );
-
-    ATT_Quant_3Stage #(
-        .ACC_W    (PROJ_W),
-        .MAT_SIZE (MAT_SIZE)
-    ) u_att_k_quant (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .in_valid  (matmul_valid),
-        .in_data   (k_comp_data),
-        .out_valid (k_quant_valid),
-        .out_data  (k_word_cs)
-    );
-
-    ATT_Quant_4Stage #(
-        .ACC_W    (PROJ_W),
-        .MAT_SIZE (MAT_SIZE)
-    ) u_att_v_quant (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .in_valid  (matmul_valid),
-        .in_data   (v_comp_data),
-        .out_valid (v_quant_valid),
-        .out_data  (v_word_cs)
+        .in_valid  (in_valid),
+        .is_mha    (is_mha),
+        .src_data  (src_data),
+        .wq_data   (wq_data),
+        .wk_data   (wk_data),
+        .wv_data   (wv_data),
+        .out_valid (qkv_word_valid),
+        .out_mha   (qkv_word_mha),
+        .q_data    (q_word_cs),
+        .k_data    (k_word_cs),
+        .v_data    (v_word_cs)
     );
 
     ATT_Score_8Tap #(
@@ -812,10 +730,10 @@ module ATT_Stream_Core #(
     ) u_att_score_8tap (
         .clk         (clk),
         .rst_n       (rst_n),
-        .in_valid    (quant_valid_cs),
-        .is_mha      (quant_mha_cs),
-        .q_data      (q_word_align_cs),
-        .k_data      (k_word_align_cs),
+        .in_valid    (qkv_word_valid),
+        .is_mha      (qkv_word_mha),
+        .q_data      (q_word_cs),
+        .k_data      (k_word_cs),
         .v_data      (v_word_cs),
         .out_valid   (score_pipe_valid),
         .out_mha     (score_pipe_mha),
@@ -840,45 +758,241 @@ module ATT_Stream_Core #(
         .out_data    (final_data)
     );
 
-    assign matmul_valid = q_matmul_valid && k_matmul_valid && v_matmul_valid;
-    assign quant_valid_cs = qk_quant_valid_cs && v_quant_valid;
-    assign quant_mha_cs = quant_mha_s3_cs;
     assign out_valid = final_valid;
     assign out_data  = final_data;
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            qkv_valid_s0_cs <= 1'b0;
-            qkv_src_s0_cs   <= 256'd0;
-            qkv_mha_s0_cs  <= 1'b0;
-            qkv_mha_s1_cs  <= 1'b0;
-            qkv_mha_s2_cs  <= 1'b0;
-            qkv_mha_s3_cs  <= 1'b0;
-            quant_mha_s0_cs <= 1'b0;
-            quant_mha_s1_cs <= 1'b0;
-            quant_mha_s2_cs <= 1'b0;
-            quant_mha_s3_cs <= 1'b0;
-            qk_quant_valid_cs <= 1'b0;
+endmodule
+
+
+module ATT_QKV_Proj_Quant_Parallel #(
+    parameter int PROJ_W = 11,
+    parameter int MAT_SIZE = 64
+)(
+    input  logic                 clk,
+    input  logic                 rst_n,
+    input  logic                 in_valid,
+    input  logic                 is_mha,
+    input  logic [255:0]         src_data,
+    input  logic [255:0]         wq_data,
+    input  logic [255:0]         wk_data,
+    input  logic [255:0]         wv_data,
+    output logic                 out_valid,
+    output logic                 out_mha,
+    output logic [255:0]         q_data,
+    output logic [255:0]         k_data,
+    output logic [255:0]         v_data
+);
+
+    localparam int ROW_ELEM   = 8;
+    localparam int PIPE_COUNT = 3;
+    localparam int Q_PIPE     = 0;
+    localparam int K_PIPE     = 1;
+    localparam int V_PIPE     = 2;
+    localparam int SHIFT_W    = $clog2(PROJ_W);
+    localparam logic [SHIFT_W-1:0] SHIFT_TWO = 2;
+
+    typedef logic signed [3:0]        s4_t;
+    typedef logic signed [7:0]        prod_t;
+    typedef logic signed [9:0]        part_t;
+    typedef logic signed [PROJ_W-1:0] proj_t;
+    typedef logic [PROJ_W-1:0]        mag_t;
+
+    logic valid_s0_cs;
+    logic valid_s1_cs;
+    logic valid_s2_cs;
+    logic valid_s3_cs;
+    logic valid_s4_cs;
+    logic mha_s0_cs;
+    logic mha_s1_cs;
+    logic mha_s2_cs;
+    logic mha_s3_cs;
+    logic mha_s4_cs;
+
+    s4_t   src_row_cs  [0:ROW_ELEM-1][0:ROW_ELEM-1];
+    prod_t prod_cs     [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:ROW_ELEM-1];
+    part_t part_cs     [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:1];
+    proj_t sum_cs      [0:PIPE_COUNT-1][0:MAT_SIZE-1];
+    proj_t max_data_cs [0:PIPE_COUNT-1][0:MAT_SIZE-1];
+    mag_t  max_bits_cs [0:PIPE_COUNT-1];
+
+    s4_t   src_row_ns [0:ROW_ELEM-1][0:ROW_ELEM-1];
+    prod_t prod_ns    [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:ROW_ELEM-1];
+    part_t part_ns    [0:PIPE_COUNT-1][0:MAT_SIZE-1][0:1];
+    proj_t sum_ns     [0:PIPE_COUNT-1][0:MAT_SIZE-1];
+    mag_t  max_bits_ns [0:PIPE_COUNT-1];
+    logic [SHIFT_W-1:0] shift_ns [0:PIPE_COUNT-1];
+    logic [255:0] quant_ns [0:PIPE_COUNT-1];
+
+    function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
+        get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
+    endfunction
+
+    function automatic mag_t abs_proj(input proj_t value);
+        abs_proj = value[PROJ_W - 1] ? mag_t'(-value) : mag_t'(value);
+    endfunction
+
+    function automatic logic [SHIFT_W-1:0] pot_shift(input mag_t max_abs);
+        logic [SHIFT_W-1:0] msb;
+        begin
+            msb = '0;
+            for (int b = 0; b < PROJ_W; b++) begin
+                if (max_abs[b]) begin
+                    msb = b[SHIFT_W-1:0];
+                end
+            end
+            pot_shift = (msb > SHIFT_TWO) ? (msb - SHIFT_TWO) : '0;
         end
-        else begin
-            qkv_valid_s0_cs <= in_valid;
-            if (in_valid) begin
-                qkv_src_s0_cs <= src_data;
+    endfunction
+
+    function automatic s4_t clamp_s4(input proj_t value);
+        begin
+            if (value > proj_t'(7)) begin
+                clamp_s4 = 4'sd7;
+            end
+            else if (value < proj_t'(-8)) begin
+                clamp_s4 = -4'sd8;
+            end
+            else begin
+                clamp_s4 = value[3:0];
+            end
+        end
+    endfunction
+
+    always_comb begin
+        for (int row = 0; row < ROW_ELEM; row++) begin
+            for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                src_row_ns[row][tap] = get_s4(src_data, (row * ROW_ELEM) + tap);
+            end
+        end
+
+        for (int pipe = 0; pipe < PIPE_COUNT; pipe++) begin
+            for (int row = 0; row < ROW_ELEM; row++) begin
+                for (int lane = 0; lane < ROW_ELEM; lane++) begin
+                    int out_idx;
+                    out_idx = (row * ROW_ELEM) + lane;
+
+                    for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                        s4_t weight_s4;
+
+                        unique case (pipe)
+                            Q_PIPE:  weight_s4 = get_s4(wq_data, (tap * ROW_ELEM) + lane);
+                            K_PIPE:  weight_s4 = get_s4(wk_data, (tap * ROW_ELEM) + lane);
+                            default: weight_s4 = get_s4(wv_data, (tap * ROW_ELEM) + lane);
+                        endcase
+
+                        prod_ns[pipe][out_idx][tap] =
+                            prod_t'($signed(src_row_cs[row][tap]) * $signed(weight_s4));
+                    end
+
+                    part_ns[pipe][out_idx][0] =
+                        part_t'(prod_cs[pipe][out_idx][0]) +
+                        part_t'(prod_cs[pipe][out_idx][1]) +
+                        part_t'(prod_cs[pipe][out_idx][2]) +
+                        part_t'(prod_cs[pipe][out_idx][3]);
+                    part_ns[pipe][out_idx][1] =
+                        part_t'(prod_cs[pipe][out_idx][4]) +
+                        part_t'(prod_cs[pipe][out_idx][5]) +
+                        part_t'(prod_cs[pipe][out_idx][6]) +
+                        part_t'(prod_cs[pipe][out_idx][7]);
+                    sum_ns[pipe][out_idx] =
+                        proj_t'(part_cs[pipe][out_idx][0]) +
+                        proj_t'(part_cs[pipe][out_idx][1]);
+                end
+            end
+        end
+    end
+
+    always_comb begin
+        for (int pipe = 0; pipe < PIPE_COUNT; pipe++) begin
+            max_bits_ns[pipe] = '0;
+            quant_ns[pipe] = 256'd0;
+            shift_ns[pipe] = pot_shift(max_bits_cs[pipe]);
+
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                max_bits_ns[pipe] |= abs_proj(sum_cs[pipe][i]);
             end
 
-            qkv_mha_s0_cs   <= qkv_valid_s0_cs ? is_mha : 1'b0;
-            qkv_mha_s1_cs   <= qkv_mha_s0_cs;
-            qkv_mha_s2_cs   <= qkv_mha_s1_cs;
-            qkv_mha_s3_cs   <= qkv_mha_s2_cs;
-            quant_mha_s0_cs <= matmul_valid ? qkv_mha_s3_cs : 1'b0;
-            quant_mha_s1_cs <= quant_mha_s0_cs;
-            quant_mha_s2_cs <= quant_mha_s1_cs;
-            quant_mha_s3_cs <= quant_mha_s2_cs;
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                proj_t scaled;
+                scaled = max_data_cs[pipe][i] >>> shift_ns[pipe];
+                quant_ns[pipe][255 - (i * 4) -: 4] = clamp_s4(scaled);
+            end
+        end
+    end
 
-            qk_quant_valid_cs <= q_quant_valid && k_quant_valid;
-            if (q_quant_valid && k_quant_valid) begin
-                q_word_align_cs <= q_word_cs;
-                k_word_align_cs <= k_word_cs;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid_s0_cs <= 1'b0;
+            valid_s1_cs <= 1'b0;
+            valid_s2_cs <= 1'b0;
+            valid_s3_cs <= 1'b0;
+            valid_s4_cs <= 1'b0;
+            out_valid   <= 1'b0;
+            out_mha     <= 1'b0;
+        end
+        else begin
+            valid_s0_cs <= in_valid;
+            valid_s1_cs <= valid_s0_cs;
+            valid_s2_cs <= valid_s1_cs;
+            valid_s3_cs <= valid_s2_cs;
+            valid_s4_cs <= valid_s3_cs;
+            out_valid   <= valid_s4_cs;
+
+            mha_s0_cs <= is_mha;
+            mha_s1_cs <= mha_s0_cs;
+            mha_s2_cs <= mha_s1_cs;
+            mha_s3_cs <= mha_s2_cs;
+            mha_s4_cs <= mha_s3_cs;
+
+            if (in_valid) begin
+                for (int row = 0; row < ROW_ELEM; row++) begin
+                    for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                        src_row_cs[row][tap] <= src_row_ns[row][tap];
+                    end
+                end
+            end
+
+            if (valid_s0_cs) begin
+                for (int pipe = 0; pipe < PIPE_COUNT; pipe++) begin
+                    for (int i = 0; i < MAT_SIZE; i++) begin
+                        for (int tap = 0; tap < ROW_ELEM; tap++) begin
+                            prod_cs[pipe][i][tap] <= prod_ns[pipe][i][tap];
+                        end
+                    end
+                end
+            end
+
+            if (valid_s1_cs) begin
+                for (int pipe = 0; pipe < PIPE_COUNT; pipe++) begin
+                    for (int i = 0; i < MAT_SIZE; i++) begin
+                        part_cs[pipe][i][0] <= part_ns[pipe][i][0];
+                        part_cs[pipe][i][1] <= part_ns[pipe][i][1];
+                    end
+                end
+            end
+
+            if (valid_s2_cs) begin
+                for (int pipe = 0; pipe < PIPE_COUNT; pipe++) begin
+                    for (int i = 0; i < MAT_SIZE; i++) begin
+                        sum_cs[pipe][i] <= sum_ns[pipe][i];
+                    end
+                end
+            end
+
+            if (valid_s3_cs) begin
+                for (int pipe = 0; pipe < PIPE_COUNT; pipe++) begin
+                    max_bits_cs[pipe] <= max_bits_ns[pipe];
+                    for (int i = 0; i < MAT_SIZE; i++) begin
+                        max_data_cs[pipe][i] <= sum_cs[pipe][i];
+                    end
+                end
+            end
+
+            if (valid_s4_cs) begin
+                out_mha <= mha_s4_cs;
+                q_data  <= quant_ns[Q_PIPE];
+                k_data  <= quant_ns[K_PIPE];
+                v_data  <= quant_ns[V_PIPE];
             end
         end
     end
