@@ -147,33 +147,27 @@ module CA_Control #(
 
     state_t state_cs;
 
+    // 讀取排程（FAST 與 ATT 各自獨立，性質不同故不合併）
     logic [1:0] fast_rd_req_cnt_cs;
-    logic [6:0] fast_group_result_cnt_cs;
-    logic fast_result_half_cs;
-    logic [6:0] fast_pre_result_cnt_cs;
-    logic fast_pre_write_half_cs;
-    logic fast_wr_pending_cs;
-    logic fast_pre_wr_issued_cs;
-
-    logic att_param_phase_cs;
-    logic att_rd_issued_cs;
+    logic       att_param_phase_cs;
+    logic       att_rd_issued_cs;
     logic [7:0] att_rd_word_cnt_cs;
-    logic att_read_half_cs;
-    logic att_result_half_cs;
-    logic [6:0] att_pre_result_cnt_cs;
-    logic att_pre_write_half_cs;
-    logic [6:0] att_group_result_cnt_cs;
-    logic att_wr_pending_cs;
-    logic att_pre_wr_issued_cs;
+    logic       att_read_half_cs;
+
+    // 寫回 + 完成追蹤 — FAST 與 ATT 共用一套。
+    //   兩者互斥（一個 job 不是 FAST 就是 ATT，中間必經 S_IDLE），且這段邏輯
+    //   逐行相同，故塌成單一套，由 result_active 統一 gate。
+    logic [6:0] pre_result_cnt_cs;
+    logic       pre_write_half_cs;
+    logic       wr_pending_cs;
+    logic       pre_wr_issued_cs;
+    logic [6:0] group_result_cnt_cs;
+    logic       result_half_cs;
 
     logic job_start;
     logic fast_rd_req;
     logic [ADDR_W-1:0] fast_rd_addr;
     logic fast_rd_fire;
-    logic fast_first_pre_result;
-    logic fast_wr_req;
-    logic [ADDR_W-1:0] fast_wr_addr;
-    logic fast_wr_fire;
     logic att_first_rd_req;
     logic att_read_rd_req;
     logic att_half_rd_req;
@@ -181,11 +175,8 @@ module CA_Control #(
     logic [ADDR_W-1:0] att_rd_addr;
     logic att_rd_fire;
     logic att_rd_data_fire;
-    logic att_result_active;
-    logic att_first_pre_result;
-    logic att_wr_req;
-    logic [ADDR_W-1:0] att_wr_addr;
-    logic att_wr_fire;
+    logic result_active;
+    logic first_pre_result;
     logic rd_cmd_req;
     logic [ADDR_W-1:0] rd_cmd_addr;
     logic rd_cmd_fire;
@@ -200,40 +191,34 @@ module CA_Control #(
     assign fast_rd_addr       = ((state_cs == S_FAST_RUN) && fast_rd_req_cnt_cs[0]) ?
                                 HALF_ADDR : '0;
     assign fast_rd_fire       = fast_rd_req && rd_ready;
-    assign fast_first_pre_result = (state_cs == S_FAST_RUN) &&
-                                   datapath_result_pre_valid &&
-                                   (fast_pre_result_cnt_cs == 7'd0) &&
-                                   !fast_pre_wr_issued_cs;
-    assign fast_wr_req        = (state_cs == S_FAST_RUN) &&
-                                (fast_wr_pending_cs || fast_first_pre_result);
-    assign fast_wr_addr       = fast_pre_write_half_cs ? HALF_ADDR : '0;
-    assign fast_wr_fire       = fast_wr_req && wr_ready;
 
     assign att_first_rd_req    = (state_cs == S_ATT_PARAM) && in_valid &&
                                  att_param_phase_cs;
     assign att_read_rd_req     = (state_cs == S_ATT_READ) && !att_rd_issued_cs;
     assign att_half_rd_req     = (state_cs == S_ATT_WAIT) &&
                                  !att_read_half_cs &&
-                                 att_pre_wr_issued_cs;
+                                 pre_wr_issued_cs;
     assign att_rd_req          = att_first_rd_req || att_read_rd_req || att_half_rd_req;
     assign att_rd_addr         = (att_half_rd_req || att_read_half_cs) ? HALF_ADDR : '0;
     assign att_rd_fire         = att_rd_req && rd_ready;
     assign att_rd_data_fire    = (state_cs == S_ATT_READ) && rd_valid &&
                                  (att_rd_word_cnt_cs < 8'd128);
-    assign att_result_active   = (state_cs == S_ATT_READ) || (state_cs == S_ATT_WAIT);
-    assign att_first_pre_result = att_result_active &&
-                                  datapath_result_pre_valid &&
-                                  (att_pre_result_cnt_cs == 7'd0) &&
-                                  !att_pre_wr_issued_cs;
-    assign att_wr_req          = att_result_active &&
-                                 (att_wr_pending_cs || att_first_pre_result);
-    assign att_wr_addr         = att_pre_write_half_cs ? HALF_ADDR : '0;
-    assign att_wr_fire         = att_wr_req && wr_ready;
+
+    // result_active：FAST 與 ATT 共用的「正在出結果」窗口
+    assign result_active       = (state_cs == S_FAST_RUN) ||
+                                 (state_cs == S_ATT_READ) ||
+                                 (state_cs == S_ATT_WAIT);
+    assign first_pre_result    = result_active &&
+                                 datapath_result_pre_valid &&
+                                 (pre_result_cnt_cs == 7'd0) &&
+                                 !pre_wr_issued_cs;
+
     assign rd_cmd_req          = fast_rd_req || att_rd_req;
     assign rd_cmd_addr         = fast_rd_req ? fast_rd_addr : att_rd_addr;
     assign rd_cmd_fire         = rd_cmd_req && rd_ready;
-    assign wr_cmd_req          = fast_wr_req || att_wr_req;
-    assign wr_cmd_addr         = fast_wr_req ? fast_wr_addr : att_wr_addr;
+    assign wr_cmd_req          = result_active &&
+                                 (wr_pending_cs || first_pre_result);
+    assign wr_cmd_addr         = pre_write_half_cs ? HALF_ADDR : '0;
     assign wr_cmd_fire         = wr_cmd_req && wr_ready;
 
     always_comb begin
@@ -252,45 +237,32 @@ module CA_Control #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state_cs                 <= S_IDLE;
-            exec_op                  <= 2'd0;
-            exec_act                 <= 2'd0;
-            exec_param               <= 256'd0;
-            exec_weight_k            <= 256'd0;
-            exec_weight_v            <= 256'd0;
-            fast_rd_req_cnt_cs       <= 2'd0;
-            fast_group_result_cnt_cs <= 7'd0;
-            fast_result_half_cs      <= 1'b0;
-            fast_pre_result_cnt_cs   <= 7'd0;
-            fast_pre_write_half_cs   <= 1'b0;
-            fast_wr_pending_cs       <= 1'b0;
-            fast_pre_wr_issued_cs    <= 1'b0;
-            att_param_phase_cs       <= 1'b0;
-            att_rd_issued_cs         <= 1'b0;
-            att_rd_word_cnt_cs       <= 8'd0;
-            att_read_half_cs         <= 1'b0;
-            att_result_half_cs       <= 1'b0;
-            att_pre_result_cnt_cs    <= 7'd0;
-            att_pre_write_half_cs    <= 1'b0;
-            att_group_result_cnt_cs  <= 7'd0;
-            att_wr_pending_cs        <= 1'b0;
-            att_pre_wr_issued_cs     <= 1'b0;
+            state_cs            <= S_IDLE;
+            exec_op             <= 2'd0;
+            exec_act            <= 2'd0;
+            exec_param          <= 256'd0;
+            exec_weight_k       <= 256'd0;
+            exec_weight_v       <= 256'd0;
+            fast_rd_req_cnt_cs  <= 2'd0;
+            att_param_phase_cs  <= 1'b0;
+            att_rd_issued_cs    <= 1'b0;
+            att_rd_word_cnt_cs  <= 8'd0;
+            att_read_half_cs    <= 1'b0;
+            pre_result_cnt_cs   <= 7'd0;
+            pre_write_half_cs   <= 1'b0;
+            wr_pending_cs       <= 1'b0;
+            pre_wr_issued_cs    <= 1'b0;
+            group_result_cnt_cs <= 7'd0;
+            result_half_cs      <= 1'b0;
         end
         else begin
-            if (fast_first_pre_result) begin
-                fast_wr_pending_cs <= 1'b1;
+            // 寫回 pending/issued（FAST/ATT 共用）
+            if (first_pre_result) begin
+                wr_pending_cs <= 1'b1;
             end
-            if (fast_wr_fire) begin
-                fast_wr_pending_cs    <= 1'b0;
-                fast_pre_wr_issued_cs <= 1'b1;
-            end
-
-            if (att_first_pre_result) begin
-                att_wr_pending_cs <= 1'b1;
-            end
-            if (att_wr_fire) begin
-                att_wr_pending_cs    <= 1'b0;
-                att_pre_wr_issued_cs <= 1'b1;
+            if (wr_cmd_fire) begin
+                wr_pending_cs    <= 1'b0;
+                pre_wr_issued_cs <= 1'b1;
             end
 
             case (state_cs)
@@ -300,24 +272,18 @@ module CA_Control #(
                         exec_act   <= act;
                         exec_param <= param;
 
-                        fast_rd_req_cnt_cs       <= fast_rd_fire ? 2'd1 : 2'd0;
-                        fast_group_result_cnt_cs <= 7'd0;
-                        fast_result_half_cs      <= 1'b0;
-                        fast_pre_result_cnt_cs   <= 7'd0;
-                        fast_pre_write_half_cs   <= 1'b0;
-                        fast_wr_pending_cs       <= 1'b0;
-                        fast_pre_wr_issued_cs    <= 1'b0;
+                        fast_rd_req_cnt_cs  <= fast_rd_fire ? 2'd1 : 2'd0;
+                        att_param_phase_cs  <= 1'b0;
+                        att_rd_issued_cs    <= 1'b0;
+                        att_rd_word_cnt_cs  <= 8'd0;
+                        att_read_half_cs    <= 1'b0;
 
-                        att_param_phase_cs       <= 1'b0;
-                        att_rd_issued_cs         <= 1'b0;
-                        att_rd_word_cnt_cs       <= 8'd0;
-                        att_read_half_cs         <= 1'b0;
-                        att_result_half_cs       <= 1'b0;
-                        att_pre_result_cnt_cs    <= 7'd0;
-                        att_pre_write_half_cs    <= 1'b0;
-                        att_group_result_cnt_cs  <= 7'd0;
-                        att_wr_pending_cs        <= 1'b0;
-                        att_pre_wr_issued_cs     <= 1'b0;
+                        pre_result_cnt_cs   <= 7'd0;
+                        pre_write_half_cs   <= 1'b0;
+                        wr_pending_cs       <= 1'b0;
+                        pre_wr_issued_cs    <= 1'b0;
+                        group_result_cnt_cs <= 7'd0;
+                        result_half_cs      <= 1'b0;
 
                         state_cs <= op[1] ? S_ATT_PARAM : S_FAST_RUN;
                     end
@@ -326,35 +292,6 @@ module CA_Control #(
                 S_FAST_RUN: begin
                     if (fast_rd_fire) begin
                         fast_rd_req_cnt_cs <= fast_rd_req_cnt_cs + 1'b1;
-                    end
-
-                    if (datapath_result_pre_valid) begin
-                        if (fast_pre_result_cnt_cs == 7'd127) begin
-                            fast_pre_result_cnt_cs <= 7'd0;
-                            if (!fast_pre_write_half_cs) begin
-                                fast_pre_write_half_cs <= 1'b1;
-                                fast_pre_wr_issued_cs  <= 1'b0;
-                                fast_wr_pending_cs     <= 1'b0;
-                            end
-                        end
-                        else begin
-                            fast_pre_result_cnt_cs <= fast_pre_result_cnt_cs + 1'b1;
-                        end
-                    end
-
-                    if (datapath_result_valid) begin
-                        if (fast_group_result_cnt_cs == 7'd127) begin
-                            if (fast_result_half_cs) begin
-                                state_cs <= S_IDLE;
-                            end
-                            else begin
-                                fast_result_half_cs      <= 1'b1;
-                                fast_group_result_cnt_cs <= 7'd0;
-                            end
-                        end
-                        else begin
-                            fast_group_result_cnt_cs <= fast_group_result_cnt_cs + 1'b1;
-                        end
                     end
                 end
 
@@ -365,17 +302,19 @@ module CA_Control #(
                             att_param_phase_cs <= 1'b1;
                         end
                         else begin
-                            exec_weight_v            <= param;
-                            att_rd_issued_cs         <= att_rd_fire;
-                            att_rd_word_cnt_cs       <= 8'd0;
-                            att_read_half_cs         <= 1'b0;
-                            att_result_half_cs       <= 1'b0;
-                            att_pre_result_cnt_cs    <= 7'd0;
-                            att_pre_write_half_cs    <= 1'b0;
-                            att_group_result_cnt_cs  <= 7'd0;
-                            att_pre_wr_issued_cs     <= 1'b0;
-                            att_wr_pending_cs        <= 1'b0;
-                            state_cs                 <= S_ATT_READ;
+                            exec_weight_v       <= param;
+                            att_rd_issued_cs    <= att_rd_fire;
+                            att_rd_word_cnt_cs  <= 8'd0;
+                            att_read_half_cs    <= 1'b0;
+
+                            pre_result_cnt_cs   <= 7'd0;
+                            pre_write_half_cs   <= 1'b0;
+                            wr_pending_cs       <= 1'b0;
+                            pre_wr_issued_cs    <= 1'b0;
+                            group_result_cnt_cs <= 7'd0;
+                            result_half_cs      <= 1'b0;
+
+                            state_cs            <= S_ATT_READ;
                         end
                     end
                 end
@@ -398,10 +337,10 @@ module CA_Control #(
 
                 S_ATT_WAIT: begin
                     if (att_rd_fire) begin
-                        att_read_half_cs  <= 1'b1;
-                        att_rd_issued_cs  <= 1'b1;
+                        att_read_half_cs   <= 1'b1;
+                        att_rd_issued_cs   <= 1'b1;
                         att_rd_word_cnt_cs <= 8'd0;
-                        state_cs          <= S_ATT_READ;
+                        state_cs           <= S_ATT_READ;
                     end
                 end
 
@@ -410,32 +349,34 @@ module CA_Control #(
                 end
             endcase
 
-            if (att_result_active && datapath_result_pre_valid) begin
-                if (att_pre_result_cnt_cs == 7'd127) begin
-                    att_pre_result_cnt_cs <= 7'd0;
-                    if (!att_pre_write_half_cs) begin
-                        att_pre_write_half_cs <= 1'b1;
-                        att_pre_wr_issued_cs  <= 1'b0;
-                        att_wr_pending_cs     <= 1'b0;
+            // 寫回 pre-result 計數（FAST/ATT 共用）：每 128 筆翻一次 write half
+            if (result_active && datapath_result_pre_valid) begin
+                if (pre_result_cnt_cs == 7'd127) begin
+                    pre_result_cnt_cs <= 7'd0;
+                    if (!pre_write_half_cs) begin
+                        pre_write_half_cs <= 1'b1;
+                        pre_wr_issued_cs  <= 1'b0;
+                        wr_pending_cs     <= 1'b0;
                     end
                 end
                 else begin
-                    att_pre_result_cnt_cs <= att_pre_result_cnt_cs + 1'b1;
+                    pre_result_cnt_cs <= pre_result_cnt_cs + 1'b1;
                 end
             end
 
-            if (att_result_active && datapath_result_valid) begin
-                if (att_group_result_cnt_cs == 7'd127) begin
-                    att_group_result_cnt_cs <= 7'd0;
-                    if (att_result_half_cs) begin
+            // 完成計數（FAST/ATT 共用）：兩個 half 都出滿 → 回 S_IDLE
+            if (result_active && datapath_result_valid) begin
+                if (group_result_cnt_cs == 7'd127) begin
+                    group_result_cnt_cs <= 7'd0;
+                    if (result_half_cs) begin
                         state_cs <= S_IDLE;
                     end
                     else begin
-                        att_result_half_cs <= 1'b1;
+                        result_half_cs <= 1'b1;
                     end
                 end
                 else begin
-                    att_group_result_cnt_cs <= att_group_result_cnt_cs + 1'b1;
+                    group_result_cnt_cs <= group_result_cnt_cs + 1'b1;
                 end
             end
         end
