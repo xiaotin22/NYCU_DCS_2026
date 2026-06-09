@@ -3,6 +3,7 @@
 > 來源：`2022dcs_final.pdf`、`2025_DCS_Final_Exam.pdf`、`2025_DCS_Final_Exam_ans.pdf`
 > 2025 附官方解答（紅字），2022 無解答（本檔解析為自行推導，標註「⊳推導」）。
 > 內文已嵌入原卷的電路圖、FSM 表、波形格、程式碼、timing report 等圖片（存於 `images/`）。
+> Metastability / CDC 段落（知識點 G）參考 `Lab/2026_DCS_Lab09.pptx`，並引用其投影片圖。
 
 ---
 
@@ -63,20 +64,187 @@ Hold  check（與 clock 無關）：  t_ccq + t_cd(min) ≥ t_hold
 - **Hold violation 解法**：在快路徑（短路徑）上 **加 delay（buffer）** 使 `t_ccq + t_cd + Δ ≥ t_hold`。加 delay 會吃進 setup 餘裕。
 - **Hold 違反與頻率無關**，加快 clock 不會解決也不會惡化 hold。
 
-## F. SRAM 擴充
+## F. SRAM 擴充（重點擴充）
 
-- **加寬（word width）**：多顆 **並聯**，共用同一 address，輸出 **拼接（concatenate）**。例：1K×8 ×4 顆 → 1K×32。
-- **加深（depth）**：多顆 **堆疊**，用 address 高位元當 **bank select**（decoder 選 chip enable / 輸出端 MUX）。例：1K×8 ×4 顆 → 4K×8，用 A[11:10] 選 bank。
-- **多 port（同時讀寫）**：
-  - 分 bank（address space 切兩半），兩 port 各自 MUX 連到所定址的 bank；保證不同時打同一 bank 即無衝突。
-  - 或複製記憶體（read 用多份 copy，write 同步寫所有 copy）。
+### F-0. 先看懂規格：`深度 × 寬度` = words × bits/word
 
-## G. Metastability / CDC / Synchronizer
+以 **1K×8** 為例：
+- **深度 = 1K = 1024 個 word** → address 需要 `log₂(1024) = 10` 條（A[9:0]）。**address 條數決定深度。**
+- **寬度 = 8 bit/word** → data bus 8 條。**data 條數決定寬度。**
 
-- **Metastability**：FF 取樣時違反 setup/hold，輸出卡在 0/1 之間的不穩定態，需不定長時間才 resolve。
-- **2-FF synchronizer**：第一級可能亞穩，但有將近一整個 clock cycle 讓它 resolve，第二級再取樣時穩定機率極高 → 大幅提升 MTBF。
-- **Gray code 跨域**：相鄰值**只變 1 bit**，即使在轉態瞬間被取樣，也只會拿到舊值或新值（最多差 1），不會出現多 bit 同時變造成的錯誤中間值。
-- **CDC 失敗波形**：來源資料在目標 clk 邊緣附近改變 → 違反 setup/hold → 目標 FF 取到亞穩/錯值。
+所有擴充題都在問：手上只有「1K×8 這種小積木」，要怎麼**堆出更大/更多功能的記憶體**。先記住一句話：
+
+> **加寬 = 要每個 word 更多 bit；加深 = 要更多個 word；多 port = 要一個 cycle 能多次存取。**
+
+---
+
+### F-1. 加寬（widen）：每個 word 要更多 bit，word 數量不變
+
+例：用 1K×8 組出 **1K×32**（一樣 1024 個 word，但每個 word 從 8 bit → 32 bit）。
+
+**做法：4 顆並聯，全部同時動作、共用同一個 address，輸出「拼接」成 32 bit。**
+
+```
+            A[9:0]  ← 4 顆共用「同一組位址」
+       ┌──────┼──────┬──────┬──────┐
+       ▼      ▼      ▼      ▼
+    ┌─────┐┌─────┐┌─────┐┌─────┐
+    │1K×8 ││1K×8 ││1K×8 ││1K×8 │   ← 4 顆都是 active
+    └──┬──┘└──┬──┘└──┬──┘└──┬──┘
+   D[7:0] D[15:8] D[23:16] D[31:24]
+       └──────┴───┬──┴──────┘
+                  ▼
+              D[31:0]   ← 32-bit 輸出（4×8 直接接在一起）
+```
+
+- **直覺**：像把 4 本筆記本並排，翻到**同一頁碼**，每本各抄一段 → 湊成更長的一列。
+- **address 不變（仍 10 條）、data 變寬（8→32）、不需要額外邏輯**（純接線拼接，寫入時把 32-bit 資料切 4 段分別餵）。
+
+---
+
+### F-2. 加深（deepen）：要更多 word，寬度不變
+
+例：用 1K×8 組出 **4K×8**（4096 個 word，每個仍 8 bit）。
+
+4096 個 word 需要 `log₂(4096) = 12` 條 address（A[11:0]）。但每顆只吃 10 條（A[9:0]），**多出來的高 2 位 A[11:10] 拿來「選哪一顆」**。
+
+**做法：4 顆堆疊，一次只有一顆 active，用高位元當 bank select。**
+
+```
+   A[11:10] ─► 2-to-4 decoder ─► 各顆 CE（同一時間只 1 顆被選中）
+   A[9:0] ────┬──────┬──────┬──────┐   ← 低位元送到「每一顆」
+              ▼      ▼      ▼      ▼
+          ┌─────┐┌─────┐┌─────┐┌─────┐
+  bank0 → │1K×8 ││1K×8 ││1K×8 ││1K×8 │ ← bank3
+          └──┬──┘└──┬──┘└──┬──┘└──┬──┘
+             └──────┴──┬───┴──────┘
+                       ▼  4-to-1 MUX（sel = A[11:10]）
+                   D[7:0]   ← 8-bit（寬度不變，但深度 ×4）
+```
+
+- **直覺**：像把 4 本筆記本疊起來，`A[11:10]` 先決定**翻哪一本**，`A[9:0]` 再決定**翻到第幾頁**。同一時間只看一本。
+- **address 變多（10→12）、data 不變、需要 decoder + 輸出端 MUX**。
+
+---
+
+### F-3. 加寬 vs 加深 一表對照（最容易混）
+
+| | **加寬 (widen)** | **加深 (deepen)** |
+|---|---|---|
+| 目標 | word 變寬（bit 數 ↑） | word 變多（數量 ↑） |
+| 例 | 1K×8 → 1K×**32** | 1K×8 → **4K**×8 |
+| 接法 | **並聯**，4 顆同時動 | **堆疊**，一次只動 1 顆 |
+| address | **不變**（同一組送全部） | **變多**（高位選 bank） |
+| data | **變寬**（輸出拼接） | **不變** |
+| 額外邏輯 | 幾乎沒有（只拼線） | **decoder + MUX** |
+
+---
+
+### F-4. 多 port：一個 cycle 要能同時存取多次
+
+基本 SRAM 是 **單 port**＝一個 cycle 只能「一讀」**或**「一寫」。多 port 題要做到一個 cycle 兩次（或更多）存取。用單 port 積木有兩招：
+
+**(招 1) 分 bank（address space 切開）** — 用在「保證兩 port 打不同位址範圍」時（2025 Q4(c)）：
+- 把 2K×8 拆成兩塊 1K×8：Bank0 = 位址 0~1023、Bank1 = 1024~2047，用 **最高位 A[10] 區分**。
+- 每個 port 依自己位址的 MSB，透過 MUX 路由到對應的 bank。題目保證兩 port **不會同時打同一塊** → 兩塊各自獨立做單 port 存取，**同 cycle 互不衝突**。
+
+```
+   Port A (addr_a)              Port B (addr_b)
+        │ MSB=a[10]                  │ MSB=b[10]
+        └────────►  routing MUX  ◄───┘   （依各 port MSB 決定連哪塊）
+                   ▼            ▼
+              ┌─────────┐  ┌─────────┐
+              │ Bank0   │  │ Bank1   │
+              │ 1K×8    │  │ 1K×8    │
+              │ 0~1023  │  │1024~2047│
+              └─────────┘  └─────────┘
+   兩 port 落在不同 bank → 同 cycle 一讀一寫 / 兩讀 / 兩寫都 OK
+```
+
+**(招 2) 複製記憶體（replication）** — 用在「要多個同時**讀**」時（2022 Q8 風格）：
+- 想支援 N 個同時讀 → 放 **N 份相同 copy**，每個讀 port 連到不同 copy（各自獨立讀）。
+- **寫入時要同步寫進「所有 copy」**，確保每份內容一致。
+- 代價：面積 ×N（讀越多 port 越貴）。
+
+> **判斷用哪招**：題目說「兩 port 不會同時打同一位址/分兩個 address space」→ **分 bank**（省面積）。題目要「任意位址都能多重**讀**」→ **複製**。要任意位址多重**寫**就只能更貴的真多 port cell。
+
+## G. Metastability / CDC / Synchronizer（重點擴充，參考 Lab09 - CDC）
+
+> 這是期末考必考觀念題（2022 Q9、2025 Q5）。Lab09 整個就在做 CDC / Async FIFO，內容直接對應，務必弄懂下面 5 個層次。
+
+### G-1. Clock Domain Crossing (CDC) 是什麼
+
+- **定義**：資料的 **launch（送出）與 capture（接收）由兩個不同、非同步的 clock domain 完成**，就稱為 CDC。
+- 兩個非同步 clock 之間**沒有固定相位關係**，目標 clk 的有效邊緣**可能剛好落在來源資料正在跳變的瞬間** → 無法保證滿足接收 FF 的 setup/hold。
+- 範例：clk1 週期 13、clk2 週期 10，兩者邊緣相對位置一直漂移，遲早撞進 setup/hold window：
+
+<img src="images/lab09_cdc.png" width="560">
+
+### G-2. Metastability（亞穩態）
+
+- **定義**：因資料在 setup/hold window 內跳變（non-ideal transition），FF 輸出 q **進入既不是穩定 0、也不是穩定 1 的不穩定態**，需要一段**不確定長度的時間**才會 resolve 到 0 或 1（甚至可能 resolve 到錯的值）。
+- 物理類比：球停在山頂，最終會滾向某一邊，但**滾下來的時間不定**。下圖 q 在取樣後出現多條不同的結算軌跡：
+
+<img src="images/lab09_metastability.png" width="600">
+
+- 在**單一同步設計**中，靠滿足 setup/hold 即可避免；但 **CDC 必然會遇到**，無法完全消除，只能把它「傳播到下游的機率」壓到極低。
+- **MTBF（Mean Time Between Failures）**——衡量多久才出一次亞穩態錯誤：
+
+  > **MTBF ＝ e^(t_r / τ) ／ ( T0 × f_clk × f_data )**
+
+  - `t_r`＝留給亞穩態 resolve 的時間、`τ`＝FF 的亞穩態時間常數、`T0`＝亞穩態窗口、`f_clk/f_data`＝接收時脈/資料切換頻率。
+  - 關鍵：**t_r 與 MTBF 成指數關係** → 只要多給亞穩態一點時間 resolve，可靠度就暴增。這正是 2-FF synchronizer 的原理。
+
+### G-3. Brute-Force Synchronizer（2-FF 雙寄存器同步器）
+
+- **結構**：`A →[FF1]→ AW →[FF2]→ AS`，兩級 FF 都用**目標 domain 的 clk**。
+
+<img src="images/lab09_2ff_sync.png" width="420">
+
+- **原理**：FF1 取到 CDC 訊號時 AW 可能亞穩（抖動），但 **FF1→FF2 之間有將近一整個 clk cycle** 讓 AW 慢慢 resolve；等 FF2 取樣時，AW 幾乎一定已穩定 → 輸出 AS 乾淨。等於把 MTBF 公式裡的 `t_r` 拉長到接近一個 cycle → MTBF 指數級上升。
+- **代價**：+1 cycle latency；機率上仍非 100%（殘餘失敗率極小），極端要求可用三級。
+- **⚠️ 只適用單 bit！** 多 bit 訊號不能每個 bit 各自獨立丟 2-FF（理由見 G-4）。
+
+### G-4. 多 bit 的 Convergence 問題 → 為何要用 Gray code
+
+- 多 bit 同時跨域時，各 bit 經過的繞線/閘延遲不同，**無法保證所有 bit 在同一個 clk 同時被取樣到**；可能某些 bit 已更新、某些還是舊值 → 讀到**錯誤的中間值**（re-convergence）。
+
+<img src="images/lab09_convergence.png" width="680">
+
+- 例：二進位 `011→100`，三個 bit 同時翻轉；若取樣瞬間只更新到部分 bit，可能讀到 `000`、`111` 等完全錯誤的值。
+- **Gray code 解法**：相鄰碼**只差 1 個 bit**。即使取樣落在轉態瞬間，最多只有那 1 個 bit 不確定 → 結果**不是舊值就是新值（最多差 1）**，不會亂跳。
+
+  | Dec | Binary | Gray | Dec | Binary | Gray |
+  |-----|--------|------|-----|--------|------|
+  | 0 | 000 | 000 | 4 | 100 | 110 |
+  | 1 | 001 | 001 | 5 | 101 | 111 |
+  | 2 | 010 | 011 | 6 | 110 | 101 |
+  | 3 | 011 | 010 | 7 | 111 | 100 |
+
+  （Gray 轉換：`gray = bin ^ (bin >> 1)`。）
+
+### G-5. 多 bit 安全跨域的三種方法（Lab09 主軸）
+
+| 方法 | 適用 | 優點 | 缺點 |
+|------|------|------|------|
+| **2-FF synchronizer** | 單 bit 控制訊號（valid/enable） | 最簡單、面積小 | 只能單 bit、+1~2 cycle latency |
+| **Handshake synchronizer** | 多 bit 資料、低頻 | 面積小、保證正確 | **latency 高**（每筆要 req-ack 來回） |
+| **Asynchronous FIFO** | 多 bit 資料、高吞吐 | **throughput 高**、可連續傳 | 硬體成本大（dual-port RAM + 雙指標 + 同步器） |
+
+**Handshake synchronizer**：req-acknowledge 協定。來源送 `sreq`（經 2-FF 同步到目標）、目標回 `sack`（同步回來）；資料在握手期間保持穩定才被取走。
+
+<img src="images/lab09_handshake.png" width="640">
+
+**Asynchronous FIFO**：用 dual-port RAM，一邊用 write clk 寫、一邊用 read clk 讀；read/write pointer 用 **gray code** 互相同步比較產生 full / empty 旗標。
+
+<img src="images/lab09_async_fifo.png" width="700">
+
+- **指標要多一個 bit**：深度 `2^n` 的 FIFO 用 **n+1 bit 指標**，多出的最高位用來區分「滿」與「空」（兩者低位都相同，差在 MSB）：
+  - `empty： waddr == raddr`（完全相同）
+  - `full ： waddr == {~raddr[MSB], raddr[lower]}`（低位相同、MSB 相反）
+- 跨域比較時：TX 端用「rx 指標同步過來的 gray 值」算 full；RX 端用「tx 指標同步過來的 gray 值」算 empty。
+
+> **CDC 失敗波形題（2022 Q9）**：要畫出來源資料 adat 在目標 bclk 邊緣附近改變 → 違反 setup/hold → bdat1 取到亞穩/錯值。重點是讓 adat 的轉態剛好對齊 bclk 上升緣。
 
 ## H. Microcode FSM
 
@@ -221,10 +389,10 @@ Hold  check（與 clock 無關）：  t_ccq + t_cd(min) ≥ t_hold
 
 <img src="images/ans_2025_q4_sram_c.png" width="700">
 
-**Q5 Metastability & Synchronizer（10%）** — 見上「知識點 G」。
-- (a) metastability 定義（取樣違反 setup/hold → 不穩定態，需不定時間 resolve）。
-- (b) 2-FF 為何有效（給將近一 cycle resolve，第二級取到穩定值，提升 MTBF）。
-- (c) Gray code 為何適合多 bit 跨域（相鄰只變 1 bit，避免多 bit 同變的錯誤中間值）。
+**Q5 Metastability & Synchronizer（10%）** — 完整觀念與圖見上方 **「一、知識點 G」**（含 Lab09 圖）。
+- (a) **metastability 定義**：當 FF 取樣的資料違反 setup/hold（在 window 內跳變），輸出進入既非 0 也非 1 的不穩定態，需經一段**不確定長度的時間**才 resolve 到 0/1（可能還是錯值）。→ 詳見 G-2。
+- (b) **為何 2-FF 能防**：第一級 FF 取到 CDC 訊號雖可能亞穩，但到第二級之間有**將近一整個 clock cycle 讓它 resolve**；第二級取樣時幾乎必為穩定值，使亞穩態傳到下游的機率（MTBF 公式中 t_r 變大 → 指數下降）降到極低。→ 詳見 G-3。
+- (c) **為何 Gray code 適合多 bit 跨域**：相鄰碼**只差 1 bit**；即使取樣落在轉態瞬間，最多 1 個 bit 不確定，結果非舊值即新值（最多差 1），**不會出現多 bit 同時變造成的錯誤中間值（convergence 問題）**。→ 詳見 G-4。
 
 **Q6 Jerry SystemVerilog（12%）** — 八個 8-bit 輸入分兩組各 4 個相加再相乘；4ns clock，slack=0.01。
 
@@ -296,7 +464,7 @@ block diagram 與 timing report：
 4. **slack≠最小週期−slack**：最小週期要重新合成，通常更低。
 5. **Waveform**：cs 在 posedge 更新（=上一 ns）、非同步 reset、有號數用 2's complement、`repeat(n)` 要展開、輸出比輸入晚一級。
 6. **SRAM**：加寬=並聯拼接、加深=高位選 bank、多 port=分 bank+MUX。
-7. **CDC**：2-FF synchronizer 原理、Gray code 只變 1 bit、metastability 定義。
+7. **CDC（必考）**：metastability 定義（不確定時間 resolve）→ 2-FF synchronizer 給近一 cycle resolve 提升 MTBF（只適用單 bit）→ 多 bit 用 Gray code（只變 1 bit，避開 convergence 錯誤中間值）→ handshake（低 latency 慢）vs async FIFO（高 throughput、gray pointer、n+1 bit 指標分滿/空）。細節見知識點 G。
 8. **Microcode**：address={state,input}、data={next state,output}；縮 memory=分存 output / 用 PC+instruction。
 9. **Verilog 驗證細節**：比較含 X 要用 `===`/`!==`，不可用 `==`/`!=`。
 10. **面積比較**：用 MUX 提前選資料（共用一套運算）比每個 mode 各開一套硬體小。
