@@ -443,7 +443,8 @@ module CA_DataPath #(
     output logic                 out_valid,
     output logic [31:0]          out_data
 );
-    localparam int RESULT_PRE_PIPE = 5;
+    localparam int ACT_OUT_TAG_STAGE = 5;
+    localparam int RESULT_PRE_PIPE = ACT_OUT_TAG_STAGE;
     localparam int MAT_SIZE = 64;
     localparam int ACC_W = 16;
     localparam int POT_ACC_W = 12;
@@ -476,7 +477,7 @@ module CA_DataPath #(
     logic [ACC_VEC_W-1:0] act_in_data;
     datapath_tag_t act_in_tag;
     logic act_valid;
-    logic [ACC_VEC_W-1:0] act_data;
+    logic [POT_VEC_W-1:0] act_data;
 
     logic pot_in_valid;
     logic [POT_VEC_W-1:0] pot_in_data;
@@ -484,7 +485,7 @@ module CA_DataPath #(
     logic pot_valid;
     logic [255:0] pot_data;
 
-    datapath_tag_t act_tag_cs [0:5];
+    datapath_tag_t act_tag_cs [0:ACT_OUT_TAG_STAGE];
     datapath_tag_t pot_tag_cs [0:4];
 
     logic         result_pre_pipe_cs [0:RESULT_PRE_PIPE-1];
@@ -499,21 +500,13 @@ module CA_DataPath #(
     assign act_in_tag   = att_core_valid ? DT_ATT :
                           (norm_mult_valid ? DT_NORM : DT_NONE);
 
-    assign pot_in_valid = act_valid && (act_tag_cs[5] != DT_NONE);
-    assign pot_in_tag   = act_tag_cs[5];
+    assign pot_in_valid = act_valid && (act_tag_cs[ACT_OUT_TAG_STAGE] != DT_NONE);
+    assign pot_in_tag   = act_tag_cs[ACT_OUT_TAG_STAGE];
 
     assign result_valid = pot_valid && (pot_tag_cs[4] != DT_NONE);
     assign result_pre_valid = result_pre_pipe_cs[RESULT_PRE_PIPE-1];
     assign wr_data      = wr_data_skid_valid_cs ? wr_data_skid_cs : pot_data;
-
-    always_comb begin
-        pot_in_data = '0;
-        for (int i = 0; i < MAT_SIZE; i++) begin
-            pot_in_data[POT_VEC_W - 1 - (i * POT_ACC_W) -: POT_ACC_W] =
-                act_data[ACC_VEC_W - 1 - (i * ACC_W) -
-                         (ACC_W - POT_ACC_W) -: POT_ACC_W];
-        end
-    end
+    assign pot_in_data  = act_data;
 
     ATT_Stream_Core #(
         .ACC_W        (ACC_W),
@@ -538,6 +531,7 @@ module CA_DataPath #(
 
     ACT_5Stage_Parallel #(
         .ACC_W    (ACC_W),
+        .OUT_W    (POT_ACC_W),
         .MAT_SIZE (MAT_SIZE)
     ) u_act (
         .clk       (clk),
@@ -574,7 +568,7 @@ module CA_DataPath #(
             for (int i = 0; i < RESULT_PRE_PIPE; i++) begin
                 result_pre_pipe_cs[i] <= 1'b0;
             end
-            for (int i = 0; i < 6; i++) begin
+            for (int i = 0; i <= ACT_OUT_TAG_STAGE; i++) begin
                 act_tag_cs[i] <= DT_NONE;
             end
             for (int i = 0; i < 5; i++) begin
@@ -586,7 +580,7 @@ module CA_DataPath #(
             issue_mode_cs  <= issue_valid ? issue_mode : IM_NONE;
             rd_data_cs     <= rd_data;
             act_tag_cs[0] <= act_in_valid ? act_in_tag : DT_NONE;
-            for (int i = 1; i < 6; i++) begin
+            for (int i = 1; i <= ACT_OUT_TAG_STAGE; i++) begin
                 act_tag_cs[i] <= act_tag_cs[i - 1];
             end
 
@@ -2074,6 +2068,7 @@ endmodule
 
 module ACT_5Stage_Parallel #(
     parameter int ACC_W = 16,
+    parameter int OUT_W = ACC_W,
     parameter int MAT_SIZE = 64
 )(
     input  logic          clk,
@@ -2083,13 +2078,14 @@ module ACT_5Stage_Parallel #(
     input  logic [1:0]    act_mode,
     input  logic [(MAT_SIZE*ACC_W)-1:0] in_data,
     output logic          out_valid,
-    output logic [(MAT_SIZE*ACC_W)-1:0] out_data
+    output logic [(MAT_SIZE*OUT_W)-1:0] out_data
 );
 
     localparam int ROW_ELEM   = 8;
     localparam int CHUNK_SIZE = 16;
     localparam int NUM_CHUNK  = 4;
     localparam int ACC_VEC_W  = MAT_SIZE * ACC_W;
+    localparam int OUT_VEC_W  = MAT_SIZE * OUT_W;
     localparam int ACT_STAGES = 4;  // pair → psum → threshold → apply
 
     localparam logic [1:0] ACT_USER    = 2'd0;
@@ -2115,7 +2111,7 @@ module ACT_5Stage_Parallel #(
     logic          valid_cs  [0:ACT_PIPE_STAGES-1];
     logic [1:0]    act_cs    [0:ACT_PIPE_STAGES-1];
     logic [1:0]    mode_cs   [0:ACT_PIPE_STAGES-1];
-    logic [ACC_VEC_W-1:0] matrix_cs [0:ACT_PIPE_STAGES-1];
+    logic [ACC_VEC_W-1:0] matrix_cs [0:ACT_PIPE_STAGES-2];
     (* dont_touch = "true" *) logic [1:0] act_apply_cs  [0:NUM_CHUNK-1];
     (* dont_touch = "true" *) logic [1:0] mode_apply_cs [0:NUM_CHUNK-1];
 
@@ -2142,14 +2138,12 @@ module ACT_5Stage_Parallel #(
     s18_t          psum_ns   [0:NUM_CHUNK-1][0:3];
     s16_t          thr_a_ns  [0:NUM_CHUNK-1];
     s16_t          thr_b_ns  [0:NUM_CHUNK-1];
-    logic [ACC_VEC_W-1:0] apply_ns;
+    logic [OUT_VEC_W-1:0] apply_ns;
 
     s20_t          part_sum01;
     s20_t          part_sum23;
 
     assign out_valid = valid_cs[ACT_PIPE_STAGES-1];
-    assign out_data  = matrix_cs[ACT_PIPE_STAGES-1];
-
     function automatic s16_t get_s16(input logic [ACC_VEC_W-1:0] vec, input integer idx);
         get_s16 = $signed(vec[ACC_VEC_W - 1 - (idx * ACC_W) -: ACC_W]);
     endfunction
@@ -2383,6 +2377,19 @@ module ACT_5Stage_Parallel #(
         end
     endfunction
 
+    function automatic logic [OUT_W-1:0] activate_value_out(
+        input s16_t       value,
+        input logic [1:0] act_sel,
+        input logic [1:0] mode_sel,
+        input s16_t       threshold
+    );
+        s16_t activated;
+        begin
+            activated = activate_value(value, act_sel, mode_sel, threshold);
+            activate_value_out = activated[OUT_W-1:0];
+        end
+    endfunction
+
     // Stage 0 combinational: 16 chunks×p pair sums (e0+e1, e2+e3) — act-MUX + 1 add level
     always_comb begin
         for (int chunk = 0; chunk < NUM_CHUNK; chunk++) begin
@@ -2447,12 +2454,13 @@ module ACT_5Stage_Parallel #(
     // 比原 (chunk, lane)→apply_idx 的 cross-bar 寫入結構淺。
     always_comb begin
         for (int pos = 0; pos < MAT_SIZE; pos++) begin
-            apply_ns[ACC_VEC_W - 1 - (pos * ACC_W) -: ACC_W] = activate_value(
-                get_s16(matrix_cs[3], pos),
-                act_apply_cs[pos / CHUNK_SIZE],
-                mode_apply_cs[pos / CHUNK_SIZE],
-                thr_for_position(act_apply_cs[pos / CHUNK_SIZE],
-                                 pos, thr_a_cs, thr_b_cs));
+            apply_ns[OUT_VEC_W - 1 - (pos * OUT_W) -: OUT_W] =
+                activate_value_out(
+                    get_s16(matrix_cs[3], pos),
+                    act_apply_cs[pos / CHUNK_SIZE],
+                    mode_apply_cs[pos / CHUNK_SIZE],
+                    thr_for_position(act_apply_cs[pos / CHUNK_SIZE],
+                                     pos, thr_a_cs, thr_b_cs));
         end
     end
 
@@ -2508,7 +2516,7 @@ module ACT_5Stage_Parallel #(
                 for (int p = 0; p < 4; p++) psum_cs[c][p] <= psum_ns[c][p];
             end
 
-            // Stage 3: threshold and carry.
+            // Stage 3: threshold and source carry.
             valid_cs[3]  <= valid_cs[2];
             act_cs[3]    <= act_cs[2];
             mode_cs[3]   <= mode_cs[2];
@@ -2520,11 +2528,11 @@ module ACT_5Stage_Parallel #(
                 thr_b_cs[c]      <= thr_b_ns[c];
             end
 
-            // Stage 4: apply activation.
+            // Stage 4: apply activation and narrow to the PoT input width.
             valid_cs[4]  <= valid_cs[3];
             act_cs[4]    <= act_cs[3];
             mode_cs[4]   <= mode_cs[3];
-            matrix_cs[4] <= apply_ns;
+            out_data     <= apply_ns;
         end
     end
 endmodule
@@ -2544,24 +2552,25 @@ module PoT_5Stage_Parallel #(
 
     localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
     localparam int SHIFT_W   = $clog2(ACC_W);
+    localparam int MAX_GROUP = 16;
+    localparam logic [SHIFT_W-1:0] SHIFT_TWO = 2;
 
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [ACC_W-1:0] s16_t;
+    typedef logic [ACC_W-1:0] mag_t;
 
-    // Input registers：
-    //   in_data_cs 走 src_pipe（quant 要 signed 原值）。
-    //   abs_cs 餵 Matrix_Max；abs comb 從 in_data 算（上游 act/mult Q 已 reg），
-    //   把 abs 的 ~15-gate carry chain 從 Matrix_Max stage 1 抽到 input edge，
-    //   切短原本 in_data_cs→abs→max4→max16_cs 的 critical path。
+    // Keep one full-width source copy; later alignment is only 256-bit quant data.
     logic          in_valid_cs;
-    logic [ACC_VEC_W-1:0] in_data_cs;
-    logic [ACC_VEC_W-1:0] abs_cs;
-    logic [ACC_VEC_W-1:0] abs_ns;
+    logic          max0_valid_cs;
+    logic          max1_valid_cs;
+    logic          max2_valid_cs;
+    logic [ACC_VEC_W-1:0] src_data_cs;
+    mag_t          max0_cs [0:MAX_GROUP-1];
+    mag_t          max_mask_ns;
+    logic [255:0]  quant_cs;
+    logic [255:0]  quant_pipe_cs;
+    logic [255:0]  quant_pipe2_cs;
 
-    logic          max_valid;
-    logic [SHIFT_W-1:0] shift_from_max;  // Matrix_Max 已算好的 shift 量
-    logic [ACC_VEC_W-1:0] src_pipe_cs [0:2];
-    logic [255:0]  out_data_ns;
 
     function automatic s16_t get_s16(input logic [ACC_VEC_W-1:0] vec, input integer idx);
         get_s16 = $signed(vec[ACC_VEC_W - 1 - (idx * ACC_W) -: ACC_W]);
@@ -2570,28 +2579,6 @@ module PoT_5Stage_Parallel #(
     function automatic logic [ACC_W-1:0] abs16(input s16_t value);
         abs16 = (value < 0) ? -value : value;
     endfunction
-
-    // abs comb：對 64 lanes 同步算 absolute value，給下一拍 abs_cs。
-    always_comb begin
-        for (int i = 0; i < MAT_SIZE; i++) begin
-            abs_ns[ACC_VEC_W - 1 - (i * ACC_W) -: ACC_W] =
-                abs16(get_s16(in_data, i));
-        end
-    end
-
-    // input register
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            in_valid_cs <= 1'b0;
-        end
-        else begin
-            // Do not gate with in_valid; avoiding the enable mux keeps the
-            // register D path simpler and gives synthesis more freedom.
-            in_valid_cs <= in_valid;
-            in_data_cs  <= in_data;
-            abs_cs      <= abs_ns;
-        end
-    end
 
     function automatic s4_t clamp_s4(input s16_t value);
         begin
@@ -2604,6 +2591,28 @@ module PoT_5Stage_Parallel #(
             else begin
                 clamp_s4 = value[3:0];
             end
+        end
+    endfunction
+
+    function automatic mag_t mag_or4(
+        input mag_t a,
+        input mag_t b,
+        input mag_t c,
+        input mag_t d
+    );
+        mag_or4 = a | b | c | d;
+    endfunction
+
+    function automatic logic [SHIFT_W-1:0] pot_shift(input mag_t max_abs);
+        logic [SHIFT_W-1:0] msb;
+        begin
+            msb = '0;
+            for (int b = 0; b < ACC_W; b++) begin
+                if (max_abs[b]) begin
+                    msb = b[SHIFT_W-1:0];
+                end
+            end
+            pot_shift = (msb > SHIFT_TWO) ? (msb - SHIFT_TWO) : '0;
         end
     endfunction
 
@@ -2624,35 +2633,60 @@ module PoT_5Stage_Parallel #(
         end
     endfunction
 
-    Matrix_Max_3Stage_Parallel #(
-        .ACC_W    (ACC_W),
-        .MAT_SIZE (MAT_SIZE)
-    ) u_matrix_max (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .in_valid  (in_valid_cs),
-        .in_abs    (abs_cs),
-        .out_valid (max_valid),
-        .out_shift (shift_from_max)
-    );
-
-    // pot_shift 已在 Matrix_Max 內 1-cycle 算完，PoT 這裡只剩 quant_all。
-    assign out_data_ns = quant_all(src_pipe_cs[2], shift_from_max);
-
-    always_ff @(posedge clk) begin
-        src_pipe_cs[0] <= in_data_cs;
-        src_pipe_cs[1] <= src_pipe_cs[0];
-        src_pipe_cs[2] <= src_pipe_cs[1];
+    // Build the magnitude mask from 16 registered 4-lane groups.
+    always_comb begin
+        max_mask_ns = '0;
+        for (int g = 0; g < MAX_GROUP; g += 4) begin
+            max_mask_ns |= mag_or4(max0_cs[g + 0],
+                                   max0_cs[g + 1],
+                                   max0_cs[g + 2],
+                                   max0_cs[g + 3]);
+        end
     end
 
-    // clean timing output
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            out_valid <= 1'b0;
+            in_valid_cs   <= 1'b0;
+            max0_valid_cs <= 1'b0;
+            max1_valid_cs <= 1'b0;
+            max2_valid_cs <= 1'b0;
+            out_valid     <= 1'b0;
         end
         else begin
-            out_valid  <= max_valid;
-            out_data   <= out_data_ns;
+            in_valid_cs   <= in_valid;
+            max0_valid_cs <= in_valid_cs;
+            max1_valid_cs <= max0_valid_cs;
+            max2_valid_cs <= max1_valid_cs;
+            out_valid     <= max2_valid_cs;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (in_valid) begin
+            src_data_cs <= in_data;
+
+            for (int g = 0; g < MAX_GROUP; g++) begin
+                max0_cs[g] <= mag_or4(abs16(get_s16(in_data, (g * 4) + 0)),
+                                      abs16(get_s16(in_data, (g * 4) + 1)),
+                                      abs16(get_s16(in_data, (g * 4) + 2)),
+                                      abs16(get_s16(in_data, (g * 4) + 3)));
+            end
+        end
+
+        if (in_valid_cs) begin
+            quant_cs <= quant_all(src_data_cs, pot_shift(max_mask_ns));
+        end
+
+        if (max0_valid_cs) begin
+            quant_pipe_cs <= quant_cs;
+        end
+
+        if (max1_valid_cs) begin
+            quant_pipe2_cs <= quant_pipe_cs;
+        end
+
+        if (max2_valid_cs) begin
+            out_data <= quant_pipe2_cs;
         end
     end
 

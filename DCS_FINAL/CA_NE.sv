@@ -42,7 +42,7 @@ module CA #(
     localparam int MAT_ELEMS = 64;
     localparam int ACC_W = 12;
     localparam int ACC_VEC_W = MAT_ELEMS * ACC_W;
-    localparam int SCORE_ELEM_W = 9;
+    localparam int SCORE_ELEM_W = 11;
 
     typedef enum logic [2:0] {
         S_IDLE,
@@ -472,19 +472,19 @@ module att_full_parallel #(
 );
 
     localparam int ROW_ELEM   = 8;
-    localparam int PROJ_W     = 10;
+    localparam int PROJ_W     = 11;
     localparam int ACC_VEC_W  = MAT_SIZE * ACC_W;
     localparam int PROJ_SHIFT_W = $clog2(PROJ_W);
     localparam logic [PROJ_SHIFT_W-1:0] PROJ_SHIFT_TWO = 2;
 
     typedef logic signed [3:0]  s4_t;
     typedef logic signed [7:0]  prod_t;
-    typedef logic signed [7:0]  score_pair_t;
-    typedef logic signed [7:0]  score_half_t;
-    typedef logic signed [9:0]  score_sum_t;
+    typedef logic signed [8:0]  score_pair_t;
+    typedef logic signed [9:0]  score_half_t;
+    typedef logic signed [10:0] score_sum_t;
     typedef logic signed [ACC_W-1:0] acc_t;
-    typedef logic signed [10:0] score_prod_t;
-    typedef logic signed [ACC_W-1:0] final_part_t;
+    typedef logic signed [12:0] score_prod_t;
+    typedef logic signed [14:0] final_part_t;
     typedef logic signed [SCORE_ELEM_W-1:0] score_t;
     typedef logic signed [PROJ_W-1:0] proj_t;
     typedef logic [PROJ_W-1:0] proj_mag_t;
@@ -556,6 +556,33 @@ module att_full_parallel #(
         get_acc = $signed(vec[ACC_VEC_W - 1 - (idx * ACC_W) -: ACC_W]);
     endfunction
 
+    function automatic proj_mag_t abs_proj(input proj_t value);
+        abs_proj = value[PROJ_W - 1] ? proj_mag_t'(-value) : proj_mag_t'(value);
+    endfunction
+
+    function automatic proj_mag_t max_abs_q_sum(input acc_vec_t src);
+        begin
+            max_abs_q_sum = '0;
+            for (int i = 0; i < MAT_SIZE; i++) begin
+                max_abs_q_sum |= abs_proj(proj_t'(get_acc(src, i)));
+            end
+        end
+    endfunction
+
+    function automatic s4_t sat_s4_proj(input proj_t value);
+        begin
+            if (value > proj_t'(7)) begin
+                sat_s4_proj = 4'sd7;
+            end
+            else if (value < proj_t'(-8)) begin
+                sat_s4_proj = 4'sb1000;
+            end
+            else begin
+                sat_s4_proj = s4_t'(value);
+            end
+        end
+    endfunction
+
     function automatic logic [PROJ_SHIFT_W-1:0] proj_pot_shift(input proj_mag_t max_abs);
         logic [PROJ_SHIFT_W-1:0] msb;
         begin
@@ -578,7 +605,7 @@ module att_full_parallel #(
             quant_q_sum = 256'd0;
             for (int i = 0; i < MAT_SIZE; i++) begin
                 value = proj_t'(get_acc(src, i));
-                quant_q_sum[255 - (i * 4) -: 4] = s4_t'(value >>> shift);
+                quant_q_sum[255 - (i * 4) -: 4] = sat_s4_proj(value >>> shift);
             end
         end
     endfunction
@@ -733,7 +760,7 @@ module att_full_parallel #(
         else begin
             q_proj_data <= quant_q_sum(
                 q_sum_data,
-                proj_pot_shift(proj_mag_t'(q_max_mask_data[PROJ_W-1:0]))
+                proj_pot_shift(max_abs_q_sum(q_sum_data))
             );
 
             score_prod_valid_q <= proj_valid;
@@ -853,6 +880,20 @@ module att_kv_proj_pipe #(
         end
     endfunction
 
+    function automatic s4_t sat_s4_proj(input proj_t value);
+        begin
+            if (value > proj_t'(7)) begin
+                sat_s4_proj = 4'sd7;
+            end
+            else if (value < proj_t'(-8)) begin
+                sat_s4_proj = 4'sb1000;
+            end
+            else begin
+                sat_s4_proj = s4_t'(value);
+            end
+        end
+    endfunction
+
     function automatic logic [SHIFT_W-1:0] pot_shift(input proj_mag_t max_abs);
         logic [SHIFT_W-1:0] msb;
         begin
@@ -874,7 +915,7 @@ module att_kv_proj_pipe #(
             quant_sum_pipe = 256'd0;
 
             for (int i = 0; i < MAT_SIZE; i++) begin
-                quant_sum_pipe[255 - (i * 4) -: 4] = s4_t'(sum_q[pipe][i] >>> shift);
+                quant_sum_pipe[255 - (i * 4) -: 4] = sat_s4_proj(sum_q[pipe][i] >>> shift);
             end
         end
     endfunction
@@ -1529,6 +1570,20 @@ module pot_5stage_parallel #(
         end
     endfunction
 
+    function automatic s4_t sat_s4_acc(input acc_t value);
+        begin
+            if (value > acc_t'(7)) begin
+                sat_s4_acc = 4'sd7;
+            end
+            else if (value < acc_t'(-8)) begin
+                sat_s4_acc = 4'sb1000;
+            end
+            else begin
+                sat_s4_acc = s4_t'(value);
+            end
+        end
+    endfunction
+
     function automatic logic [255:0] quant_all(
         input acc_vec_t             src_data,
         input logic [SHIFT_W-1:0]   shift
@@ -1539,7 +1594,7 @@ module pot_5stage_parallel #(
 
             for (int i = 0; i < MAT_SIZE; i++) begin
                 scaled = get_acc(src_data, i) >>> shift;
-                quant_all[255 - (i * 4) -: 4] = s4_t'(scaled);
+                quant_all[255 - (i * 4) -: 4] = sat_s4_acc(scaled);
             end
         end
     endfunction
