@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 
-`define CYCLE_TIME       4.4
+`define CYCLE_TIME       3.0
 `define DEBUG_EN         0
 `define SEED             23
 `define RAM_NUMBER       5
