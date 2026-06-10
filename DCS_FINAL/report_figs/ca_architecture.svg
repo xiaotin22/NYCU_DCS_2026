@@ -1,0 +1,181 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 880" width="1060" height="880">
+  <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang TC', 'Microsoft JhengHei', 'Microsoft YaHei', sans-serif; }
+  </style>
+  <defs>
+    <marker id="ab" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/></marker>
+    <marker id="ao" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#ea580c"/></marker>
+    <marker id="ag" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#16a34a"/></marker>
+    <marker id="ap" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#9333ea"/></marker>
+  </defs>
+
+  <rect width="1060" height="880" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="530" y="40" text-anchor="middle" font-size="20" font-weight="600" fill="#111827">CA — Conformer Accelerator 整體架構流程</text>
+  <text x="530" y="64" text-anchor="middle" font-size="13" fill="#6b7280">op ∈ {FFN, Conv, SHA, MHA} · act ∈ {ReLU, RAT, CAT, BAT} · 結果 PoT 量化為 4-bit signed</text>
+
+  <!-- ===================== EDGES (drawn before nodes) ===================== -->
+  <!-- PATTERN -> Control -->
+  <path d="M 450,150 L 450,188" stroke="#ea580c" stroke-width="1.6" fill="none" marker-end="url(#ao)"/>
+  <text x="458" y="172" font-size="10.5" fill="#9a3412">控制信號 + param/權重</text>
+
+  <!-- Control -> RAM (addr) -->
+  <path d="M 720,250 L 803,250" stroke="#ea580c" stroke-width="1.6" fill="none" marker-end="url(#ao)"/>
+  <text x="761" y="242" text-anchor="middle" font-size="10.5" fill="#9a3412">addr · burst</text>
+
+  <!-- Control -> DataPath (issue) -->
+  <path d="M 390,338 L 390,372" stroke="#ea580c" stroke-width="1.6" fill="none" marker-end="url(#ao)"/>
+  <text x="398" y="360" font-size="10.5" fill="#9a3412">issue_valid + mode</text>
+
+  <!-- RAM -> Input node (rd_data) -->
+  <path d="M 880,334 L 880,396" stroke="#16a34a" stroke-width="1.8" fill="none" marker-end="url(#ag)"/>
+  <text x="888" y="372" font-size="10.5" fill="#15803d">rd_data</text>
+
+  <!-- Input node -> Stage A -->
+  <path d="M 770,415 L 184,415 L 184,470" stroke="#16a34a" stroke-width="1.8" fill="none" marker-end="url(#ag)"/>
+  <text x="430" y="409" text-anchor="middle" font-size="10.5" fill="#6b7280">input matrix (8×8)</text>
+
+  <!-- A -> B -->
+  <path d="M 272,545 L 300,545" stroke="#2563eb" stroke-width="1.8" fill="none" marker-end="url(#ab)"/>
+  <text x="286" y="538" text-anchor="middle" font-size="10" fill="#2563eb">Q/K/V</text>
+  <!-- B -> C -->
+  <path d="M 464,545 L 492,545" stroke="#2563eb" stroke-width="1.8" fill="none" marker-end="url(#ab)"/>
+  <text x="478" y="538" text-anchor="middle" font-size="10" fill="#2563eb">score</text>
+  <!-- C -> ACT -->
+  <path d="M 656,540 L 700,540" stroke="#2563eb" stroke-width="1.8" fill="none" marker-end="url(#ab)"/>
+  <text x="678" y="533" text-anchor="middle" font-size="10" fill="#2563eb">ctx</text>
+  <!-- ACT -> PoT -->
+  <path d="M 810,525 L 830,525" stroke="#2563eb" stroke-width="1.8" fill="none" marker-end="url(#ab)"/>
+  <text x="820" y="518" text-anchor="middle" font-size="10" fill="#2563eb">act</text>
+
+  <!-- norm_data tap (FFN/Conv shared MAC) : Stage A bottom -> rail -> ACT -->
+  <path d="M 184,620 L 184,700 L 755,700 L 755,580" stroke="#9333ea" stroke-width="1.6" fill="none" stroke-dasharray="2,0" marker-end="url(#ap)"/>
+  <text x="330" y="694" font-size="10.5" fill="#7c3aed">norm_data：FFN / Conv  y = W·x（共用乘法器）</text>
+
+  <!-- wr_data write-back: PoT right -> right corridor -> RAM -->
+  <path d="M 942,525 L 1006,525 L 1006,300 L 957,300" stroke="#16a34a" stroke-width="1.8" fill="none" stroke-dasharray="6,4" marker-end="url(#ag)"/>
+  <text transform="translate(1030,470) rotate(-90)" text-anchor="middle" font-size="10.5" fill="#15803d">wr_data 寫回 RAM (burst 128)</text>
+
+  <!-- out_data: PoT bottom -> bottom rail -> left corridor -> PATTERN -->
+  <path d="M 886,580 L 886,728 L 30,728 L 30,121 L 315,121" stroke="#2563eb" stroke-width="1.8" fill="none" marker-end="url(#ab)"/>
+  <text x="470" y="722" text-anchor="middle" font-size="11" fill="#2563eb">out_valid / out_data[31:0]（last token = 結果矩陣最後一列）</text>
+
+  <!-- ===================== NODES ===================== -->
+  <!-- PATTERN -->
+  <rect x="315" y="92" width="430" height="58" rx="10" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5"/>
+  <text x="530" y="116" text-anchor="middle" font-size="14" font-weight="600" fill="#5b21b6">PATTERN（Testbench / 外部主機）</text>
+  <text x="530" y="136" text-anchor="middle" font-size="10.5" fill="#6b7280">in: mem_set · in_valid · op · act · param(weights)   ▸   out: out_valid · out_data[31:0]</text>
+
+  <!-- CA_Control -->
+  <rect x="60" y="188" width="660" height="150" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="78" y="212" font-size="13.5" font-weight="600" fill="#1d4ed8">CA_Control — 控制 FSM + RAM 讀寫排程</text>
+
+  <text x="80" y="251" font-size="10.5" font-weight="600" fill="#64748b">FAST</text>
+  <rect x="124" y="234" width="66" height="28" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+  <text x="157" y="252" text-anchor="middle" font-size="11" fill="#1e3a8a">S_IDLE</text>
+  <path d="M 192,248 L 222,248" stroke="#64748b" stroke-width="1.3" fill="none" marker-end="url(#ao)"/>
+  <rect x="224" y="234" width="112" height="28" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+  <text x="280" y="252" text-anchor="middle" font-size="11" fill="#1e3a8a">S_FAST_RUN</text>
+  <text x="350" y="252" font-size="10.5" fill="#6b7280">▸ FFN / Conv（IM_NORM）</text>
+
+  <text x="80" y="295" font-size="10.5" font-weight="600" fill="#64748b">ATT</text>
+  <rect x="124" y="278" width="112" height="28" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+  <text x="180" y="296" text-anchor="middle" font-size="11" fill="#1e3a8a">S_ATT_PARAM</text>
+  <path d="M 238,292 L 256,292" stroke="#64748b" stroke-width="1.3" fill="none" marker-end="url(#ao)"/>
+  <rect x="258" y="278" width="106" height="28" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+  <text x="311" y="296" text-anchor="middle" font-size="11" fill="#1e3a8a">S_ATT_READ</text>
+  <path d="M 366,292 L 384,292" stroke="#64748b" stroke-width="1.3" fill="none" marker-end="url(#ao)"/>
+  <rect x="386" y="278" width="104" height="28" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+  <text x="438" y="296" text-anchor="middle" font-size="11" fill="#1e3a8a">S_ATT_WAIT</text>
+  <text x="502" y="296" font-size="10.5" fill="#6b7280">▸ Attention（IM_ATT）</text>
+
+  <text x="78" y="328" font-size="10.5" fill="#6b7280">驅動 rd_en/rd_addr/rd_burst(128) · wr_en/wr_addr · 對 DataPath 發 issue + 完成追蹤</text>
+
+  <!-- RAM cylinder -->
+  <rect x="805" y="206" width="150" height="110" fill="#f0fdf4" stroke="none"/>
+  <line x1="805" y1="206" x2="805" y2="316" stroke="#4ade80" stroke-width="1.5"/>
+  <line x1="955" y1="206" x2="955" y2="316" stroke="#4ade80" stroke-width="1.5"/>
+  <ellipse cx="880" cy="316" rx="75" ry="18" fill="#f0fdf4" stroke="#4ade80" stroke-width="1.5"/>
+  <ellipse cx="880" cy="206" rx="75" ry="18" fill="#dcfce7" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="880" y="240" text-anchor="middle" font-size="15" font-weight="600" fill="#166534">RAM</text>
+  <text x="880" y="261" text-anchor="middle" font-size="11" fill="#15803d">256 × (8×8, 4-bit)</text>
+  <text x="880" y="279" text-anchor="middle" font-size="10" fill="#6b7280">negative-edge 觸發</text>
+  <text x="880" y="296" text-anchor="middle" font-size="10" fill="#6b7280">burst 2⁷ = 128 words</text>
+
+  <!-- CA_DataPath -->
+  <rect x="60" y="372" width="895" height="372" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6"/>
+  <text x="78" y="396" font-size="13.5" font-weight="600" fill="#1d4ed8">CA_DataPath — 運算管線</text>
+  <text x="262" y="396" font-size="11" fill="#6b7280">（compute → activation → PoT 量化，全程 pipeline）</text>
+
+  <!-- input demux node -->
+  <rect x="770" y="396" width="130" height="38" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="835" y="419" text-anchor="middle" font-size="11" fill="#334155">rd_data ▸ 分流</text>
+
+  <!-- ATT_Stream_Core dashed sub-container -->
+  <rect x="80" y="430" width="590" height="250" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.3" stroke-dasharray="6,4"/>
+  <text x="96" y="452" font-size="12.5" font-weight="600" fill="#0f172a">ATT_Stream_Core</text>
+  <text x="232" y="452" font-size="10" fill="#6b7280">乘法器共用：FFN y=Wx 與 Attention Q 投影同一組 MAC</text>
+
+  <!-- Stage A -->
+  <rect x="96" y="470" width="176" height="150" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <text x="184" y="494" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1e3a8a">QKV 投影 + 量化</text>
+  <text x="184" y="516" text-anchor="middle" font-size="11" fill="#1e40af">Q = X · Wq</text>
+  <text x="184" y="534" text-anchor="middle" font-size="11" fill="#1e40af">K = X · Wk</text>
+  <text x="184" y="552" text-anchor="middle" font-size="11" fill="#1e40af">V = X · Wv</text>
+  <text x="184" y="574" text-anchor="middle" font-size="10" fill="#6b7280">3 條並行 pipe</text>
+  <text x="184" y="591" text-anchor="middle" font-size="10" fill="#6b7280">各自 PoT 量化 → 4-bit</text>
+  <text x="184" y="611" text-anchor="middle" font-size="10" fill="#7c3aed">↘ FFN/Conv 由此抽 norm_data</text>
+
+  <!-- Stage B -->
+  <rect x="300" y="470" width="164" height="150" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <text x="382" y="494" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1e3a8a">Score 8-Tap</text>
+  <text x="382" y="518" text-anchor="middle" font-size="11" fill="#1e40af">score = Q · Kᵀ</text>
+  <text x="382" y="542" text-anchor="middle" font-size="10" fill="#6b7280">SHA：全 8 維</text>
+  <text x="382" y="560" text-anchor="middle" font-size="10" fill="#6b7280">MHA：column 切半 ×2</text>
+  <text x="382" y="584" text-anchor="middle" font-size="10" fill="#6b7280">ATT_Score_Lane ×N</text>
+
+  <!-- Stage C -->
+  <rect x="492" y="470" width="164" height="150" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <text x="574" y="494" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1e3a8a">Final Booth Acc</text>
+  <text x="574" y="518" text-anchor="middle" font-size="11" fill="#1e40af">partial = act(score)</text>
+  <text x="574" y="538" text-anchor="middle" font-size="10" fill="#6b7280">x≥0 留；x&lt;0 → x&gt;&gt;2</text>
+  <text x="574" y="562" text-anchor="middle" font-size="11" fill="#1e40af">ctx = partial · V</text>
+  <text x="574" y="584" text-anchor="middle" font-size="10" fill="#6b7280">Booth 累加</text>
+
+  <!-- ACT -->
+  <rect x="700" y="470" width="110" height="110" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <text x="755" y="496" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c2410c">ACT 5-Stage</text>
+  <text x="755" y="520" text-anchor="middle" font-size="11" fill="#9a3412">ReLU · RAT</text>
+  <text x="755" y="538" text-anchor="middle" font-size="11" fill="#9a3412">CAT · BAT</text>
+  <text x="755" y="560" text-anchor="middle" font-size="10" fill="#6b7280">row/col/block 均值</text>
+
+  <!-- PoT -->
+  <rect x="830" y="470" width="112" height="110" rx="8" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1.5"/>
+  <text x="886" y="496" text-anchor="middle" font-size="12.5" font-weight="600" fill="#6b21a8">PoT Quant</text>
+  <text x="886" y="518" text-anchor="middle" font-size="10.5" fill="#7c3aed">max_abs → CLZ</text>
+  <text x="886" y="536" text-anchor="middle" font-size="10.5" fill="#7c3aed">shift → clamp</text>
+  <text x="886" y="555" text-anchor="middle" font-size="10.5" fill="#7c3aed">→ 4-bit [-8, 7]</text>
+  <text x="886" y="573" text-anchor="middle" font-size="9.5" fill="#6b7280">Matrix_Max 3-Stage</text>
+
+  <!-- ===================== LEGEND + NOTES ===================== -->
+  <rect x="60" y="752" width="560" height="104" rx="8" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.2"/>
+  <text x="76" y="774" font-size="12" font-weight="600" fill="#374151">圖例 Legend</text>
+  <line x1="76" y1="792" x2="106" y2="792" stroke="#2563eb" stroke-width="1.8" marker-end="url(#ab)"/>
+  <text x="114" y="796" font-size="11" fill="#4b5563">主資料流（compute）</text>
+  <line x1="76" y1="814" x2="106" y2="814" stroke="#ea580c" stroke-width="1.8" marker-end="url(#ao)"/>
+  <text x="114" y="818" font-size="11" fill="#4b5563">控制 / issue 信號</text>
+  <line x1="76" y1="836" x2="106" y2="836" stroke="#16a34a" stroke-width="1.8" marker-end="url(#ag)"/>
+  <text x="114" y="840" font-size="11" fill="#4b5563">RAM 讀 rd_data</text>
+  <line x1="330" y1="792" x2="360" y2="792" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="6,4" marker-end="url(#ag)"/>
+  <text x="368" y="796" font-size="11" fill="#4b5563">RAM 寫回 wr_data</text>
+  <line x1="330" y1="814" x2="360" y2="814" stroke="#9333ea" stroke-width="1.8" marker-end="url(#ap)"/>
+  <text x="368" y="818" font-size="11" fill="#4b5563">FFN/Conv 共用乘法器 norm_data</text>
+
+  <rect x="640" y="752" width="315" height="104" rx="8" fill="#f8fafc" stroke="#e5e7eb" stroke-width="1.2"/>
+  <text x="656" y="774" font-size="12" font-weight="600" fill="#374151">設計重點</text>
+  <text x="656" y="795" font-size="10.5" fill="#475569">• 讀寫 pipeline 掩蓋 RAM 50-cycle 讀取延遲</text>
+  <text x="656" y="814" font-size="10.5" fill="#475569">• FFN/Conv 與 Attention Q 投影共用一組 MAC</text>
+  <text x="656" y="833" font-size="10.5" fill="#475569">• ACT / PoT 皆為 5-stage 全並行管線</text>
+  <text x="656" y="852" font-size="10.5" fill="#475569">• 目標：cycles × cycle_time × area 最小化</text>
+</svg>
