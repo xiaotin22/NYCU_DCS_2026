@@ -486,8 +486,6 @@ module CA_DataPath #(
     datapath_tag_t pot_in_tag;
     logic pot_valid;
     logic [255:0] pot_data;
-    logic result_valid_ns;
-    logic [255:0] result_data_ns;
 
     datapath_tag_t act_tag_cs [0:ACT_OUT_TAG_STAGE];
     datapath_tag_t pot_tag_cs [0:POT_OUT_TAG_STAGE];
@@ -504,16 +502,12 @@ module CA_DataPath #(
     assign act_in_tag   = att_core_valid ? DT_ATT :
                           (norm_mult_valid ? DT_NORM : DT_NONE);
 
-    assign pot_in_valid = act_valid &&
-                          (act_tag_cs[ACT_OUT_TAG_STAGE] != DT_NONE);
+    assign pot_in_valid = act_valid && (act_tag_cs[ACT_OUT_TAG_STAGE] != DT_NONE);
     assign pot_in_tag   = act_tag_cs[ACT_OUT_TAG_STAGE];
 
-    assign result_valid_ns = pot_valid &&
-                             (pot_tag_cs[POT_OUT_TAG_STAGE] != DT_NONE);
-    assign result_data_ns = pot_data;
-    assign result_valid = result_valid_ns;
+    assign result_valid = pot_valid && (pot_tag_cs[POT_OUT_TAG_STAGE] != DT_NONE);
     assign result_pre_valid = result_pre_pipe_cs[RESULT_PRE_PIPE-1];
-    assign wr_data      = wr_data_skid_valid_cs ? wr_data_skid_cs : result_data_ns;
+    assign wr_data      = wr_data_skid_valid_cs ? wr_data_skid_cs : pot_data;
     assign pot_in_data  = act_data;
 
     always_comb begin
@@ -616,7 +610,7 @@ module CA_DataPath #(
             if (wr_data_skid_valid_cs) begin
                 if (wr_valid) begin
                     if (result_valid) begin
-                        wr_data_skid_cs <= result_data_ns;
+                        wr_data_skid_cs <= pot_data;
                     end
                     else begin
                         wr_data_skid_valid_cs <= 1'b0;
@@ -625,14 +619,14 @@ module CA_DataPath #(
             end
             else begin
                 if (result_valid && !wr_valid) begin
-                    wr_data_skid_cs       <= result_data_ns;
+                    wr_data_skid_cs       <= pot_data;
                     wr_data_skid_valid_cs <= 1'b1;
                 end
             end
 
             out_valid <= result_valid;
             if (result_valid) begin
-                out_data <= result_data_ns[31:0];
+                out_data <= pot_data[31:0];
             end
         end
     end
