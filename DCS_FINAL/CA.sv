@@ -1728,7 +1728,12 @@ module ATT_Final_Booth_Acc #(
     logic valid_s0_cs;
     logic valid_s1_cs;
     logic valid_s2_cs;
+    logic valid_s3_cs;
 
+    score_t score0_cs [0:MAT_SIZE-1];
+    score_t score1_cs [0:MAT_SIZE-1];
+    booth_t v_booth_lo_cs [0:MAT_SIZE-1];
+    booth_t v_booth_hi_cs [0:ROW_ELEM-1][0:MAT_SIZE-1];
     prod_t  prod_cs [0:MAT_SIZE-1][0:ROW_ELEM-1];
     half_t  half_cs [0:MAT_SIZE-1][0:1];
     acc_t   result_cs [0:MAT_SIZE-1];
@@ -1741,7 +1746,7 @@ module ATT_Final_Booth_Acc #(
     half_t  half_ns [0:MAT_SIZE-1][0:1];
     acc_t   result_ns [0:MAT_SIZE-1];
 
-    assign out_valid = valid_s2_cs;
+    assign out_valid = valid_s3_cs;
 
     function automatic s4_t get_s4(input logic [255:0] vec, input integer idx);
         get_s4 = $signed(vec[255 - (idx * 4) -: 4]);
@@ -1830,13 +1835,13 @@ module ATT_Final_Booth_Acc #(
                     score_idx = (row * ROW_ELEM) + tap;
                     v_idx = (tap * ROW_ELEM) + lane;
                     score_value = (lane >= 4) ?
-                                  score1_ns[score_idx] :
-                                  score0_ns[score_idx];
+                                  score1_cs[score_idx] :
+                                  score0_cs[score_idx];
 
                     prod_ns[out_idx][tap] =
                         final_prod(score_value,
-                                   v_booth_lo_ns[v_idx],
-                                   v_booth_hi_ns[v_idx]);
+                                   v_booth_lo_cs[v_idx],
+                                   v_booth_hi_cs[row][v_idx]);
                 end
 
                 half_ns[out_idx][0] =
@@ -1862,13 +1867,29 @@ module ATT_Final_Booth_Acc #(
             valid_s0_cs <= 1'b0;
             valid_s1_cs <= 1'b0;
             valid_s2_cs <= 1'b0;
+            valid_s3_cs <= 1'b0;
         end
         else begin
             valid_s0_cs <= in_valid;
             valid_s1_cs <= valid_s0_cs;
             valid_s2_cs <= valid_s1_cs;
+            valid_s3_cs <= valid_s2_cs;
 
             if (in_valid) begin
+                for (int i = 0; i < MAT_SIZE; i++) begin
+                    score0_cs[i]      <= score0_ns[i];
+                    score1_cs[i]      <= score1_ns[i];
+                    v_booth_lo_cs[i]  <= v_booth_lo_ns[i];
+                end
+
+                for (int row = 0; row < ROW_ELEM; row++) begin
+                    for (int i = 0; i < MAT_SIZE; i++) begin
+                        v_booth_hi_cs[row][i] <= v_booth_hi_ns[i];
+                    end
+                end
+            end
+
+            if (valid_s0_cs) begin
                 for (int i = 0; i < MAT_SIZE; i++) begin
                     for (int tap = 0; tap < ROW_ELEM; tap++) begin
                         prod_cs[i][tap] <= prod_ns[i][tap];
@@ -1876,7 +1897,7 @@ module ATT_Final_Booth_Acc #(
                 end
             end
 
-            if (valid_s0_cs) begin
+            if (valid_s1_cs) begin
                 for (int i = 0; i < MAT_SIZE; i++) begin
                     for (int half_idx = 0; half_idx < 2; half_idx++) begin
                         half_cs[i][half_idx] <= half_ns[i][half_idx];
@@ -1884,7 +1905,7 @@ module ATT_Final_Booth_Acc #(
                 end
             end
 
-            if (valid_s1_cs) begin
+            if (valid_s2_cs) begin
                 for (int i = 0; i < MAT_SIZE; i++) begin
                     result_cs[i] <= result_ns[i];
                 end
@@ -2602,20 +2623,6 @@ module PoT_5Stage_Parallel #(
         abs16 = (value < 0) ? -value : value;
     endfunction
 
-    function automatic s4_t clamp_s4(input s16_t value);
-        begin
-            if (value > s16_t'(7)) begin
-                clamp_s4 = 4'sd7;
-            end
-            else if (value < s16_t'(-8)) begin
-                clamp_s4 = -4'sd8;
-            end
-            else begin
-                clamp_s4 = value[3:0];
-            end
-        end
-    endfunction
-
     function automatic mag_t mag_or4(
         input mag_t a,
         input mag_t b,
@@ -2638,33 +2645,51 @@ module PoT_5Stage_Parallel #(
         end
     endfunction
 
-    // Quantize all 64 elements in one stage: each lane is an independent
-    // arithmetic shift + clamp, so the two former phase-halves run in parallel
-    // without lengthening the per-lane path.
+    function automatic s4_t quant_lane(
+        input s16_t                  value,
+        input logic [SHIFT_W-1:0]    shift
+    );
+        begin
+            unique case (shift)
+                4'd0:    quant_lane = s4_t'(value[3:0]);
+                4'd1:    quant_lane = s4_t'(value[4:1]);
+                4'd2:    quant_lane = s4_t'(value[5:2]);
+                4'd3:    quant_lane = s4_t'(value[6:3]);
+                4'd4:    quant_lane = s4_t'(value[7:4]);
+                4'd5:    quant_lane = s4_t'(value[8:5]);
+                4'd6:    quant_lane = s4_t'(value[9:6]);
+                4'd7:    quant_lane = s4_t'(value[10:7]);
+                4'd8:    quant_lane = s4_t'(value[11:8]);
+                4'd9:    quant_lane = s4_t'(value[12:9]);
+                4'd10:   quant_lane = s4_t'(value[13:10]);
+                4'd11:   quant_lane = s4_t'(value[14:11]);
+                4'd12:   quant_lane = s4_t'(value[15:12]);
+                default: quant_lane = s4_t'({value[15], value[15], value[14], value[13]});
+            endcase
+        end
+    endfunction
+
+    // Quantize all 64 elements in one stage. pot_shift is derived from the
+    // global magnitude mask, so the shifted value already fits in signed 4b.
     function automatic logic [255:0] quant_all(
         input logic [ACC_VEC_W-1:0] src_data,
         input logic [SHIFT_W-1:0]   shift
     );
-        s16_t scaled;
         begin
             quant_all = 256'd0;
             for (int idx = 0; idx < MAT_SIZE; idx++) begin
-                scaled = get_s16(src_data, idx) >>> shift;
-                quant_all[255 - (idx * 4) -: 4] = clamp_s4(scaled);
+                quant_all[255 - (idx * 4) -: 4] =
+                    quant_lane(get_s16(src_data, idx), shift);
             end
         end
     endfunction
 
-    // Build the magnitude mask from 16 registered 4-lane groups.
-    always_comb begin
-        max_mask_ns = '0;
-        for (int g = 0; g < MAX_GROUP; g += 4) begin
-            max_mask_ns |= mag_or4(max0_cs[g + 0],
-                                   max0_cs[g + 1],
-                                   max0_cs[g + 2],
-                                   max0_cs[g + 3]);
-        end
-    end
+    assign max_mask_ns = mag_or4(
+        mag_or4(max0_cs[0],  max0_cs[1],  max0_cs[2],  max0_cs[3]),
+        mag_or4(max0_cs[4],  max0_cs[5],  max0_cs[6],  max0_cs[7]),
+        mag_or4(max0_cs[8],  max0_cs[9],  max0_cs[10], max0_cs[11]),
+        mag_or4(max0_cs[12], max0_cs[13], max0_cs[14], max0_cs[15])
+    );
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
