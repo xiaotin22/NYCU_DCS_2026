@@ -444,13 +444,14 @@ module CA_DataPath #(
     output logic [31:0]          out_data
 );
     localparam int ACT_OUT_TAG_STAGE = 5;
+    localparam int POT_OUT_TAG_STAGE = 4;
     localparam int RESULT_PRE_PIPE = ACT_OUT_TAG_STAGE;
     localparam int MAT_SIZE = 64;
-    localparam int ACC_W = 16;
-    localparam int POT_ACC_W = 12;
+    localparam int ACC_W = 12;
+    localparam int ATT_ACC_W = 16;
     localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
-    localparam int POT_VEC_W = MAT_SIZE * POT_ACC_W;
-    localparam int SCORE_ELEM_W = 9;
+    localparam int ATT_VEC_W = MAT_SIZE * ATT_ACC_W;
+    localparam int SCORE_ELEM_W = 11;
 
 
     localparam logic [1:0] ACT_USER = 2'd0;
@@ -471,22 +472,27 @@ module CA_DataPath #(
 
     logic att_in_valid;
     logic att_core_valid;
-    logic [ACC_VEC_W-1:0] att_core_data;
+    logic [ATT_VEC_W-1:0] att_core_data;
 
     logic act_in_valid;
-    logic [ACC_VEC_W-1:0] act_in_data;
     datapath_tag_t act_in_tag;
-    logic act_valid;
-    logic [POT_VEC_W-1:0] act_data;
+    logic norm_act_valid;
+    logic [ACC_VEC_W-1:0] norm_act_data;
+    logic att_act_valid;
+    logic [ATT_VEC_W-1:0] att_act_data;
 
-    logic pot_in_valid;
-    logic [POT_VEC_W-1:0] pot_in_data;
+    logic norm_pot_in_valid;
+    logic att_pot_in_valid;
     datapath_tag_t pot_in_tag;
-    logic pot_valid;
-    logic [255:0] pot_data;
+    logic norm_pot_valid;
+    logic [255:0] norm_pot_data;
+    logic att_pot_valid;
+    logic [255:0] att_pot_data;
+    logic result_valid_ns;
+    logic [255:0] result_data_ns;
 
     datapath_tag_t act_tag_cs [0:ACT_OUT_TAG_STAGE];
-    datapath_tag_t pot_tag_cs [0:4];
+    datapath_tag_t pot_tag_cs [0:POT_OUT_TAG_STAGE];
 
     logic         result_pre_pipe_cs [0:RESULT_PRE_PIPE-1];
     logic [255:0] wr_data_skid_cs;
@@ -496,20 +502,28 @@ module CA_DataPath #(
     assign att_in_valid  = issue_valid_cs && (issue_mode_cs == IM_ATT);
 
     assign act_in_valid = norm_mult_valid || att_core_valid;
-    assign act_in_data  = att_core_valid ? att_core_data : norm_mult_data;
     assign act_in_tag   = att_core_valid ? DT_ATT :
                           (norm_mult_valid ? DT_NORM : DT_NONE);
 
-    assign pot_in_valid = act_valid && (act_tag_cs[ACT_OUT_TAG_STAGE] != DT_NONE);
+    assign norm_pot_in_valid = norm_act_valid &&
+                               (act_tag_cs[ACT_OUT_TAG_STAGE] == DT_NORM);
+    assign att_pot_in_valid  = att_act_valid &&
+                               (act_tag_cs[ACT_OUT_TAG_STAGE] == DT_ATT);
     assign pot_in_tag   = act_tag_cs[ACT_OUT_TAG_STAGE];
 
-    assign result_valid = pot_valid && (pot_tag_cs[4] != DT_NONE);
+    assign result_valid_ns = (norm_pot_valid &&
+                              (pot_tag_cs[POT_OUT_TAG_STAGE] == DT_NORM)) ||
+                             (att_pot_valid &&
+                              (pot_tag_cs[POT_OUT_TAG_STAGE] == DT_ATT));
+    assign result_data_ns = (pot_tag_cs[POT_OUT_TAG_STAGE] == DT_ATT) ?
+                            att_pot_data : norm_pot_data;
+    assign result_valid = result_valid_ns;
     assign result_pre_valid = result_pre_pipe_cs[RESULT_PRE_PIPE-1];
-    assign wr_data      = wr_data_skid_valid_cs ? wr_data_skid_cs : pot_data;
-    assign pot_in_data  = act_data;
+    assign wr_data      = wr_data_skid_valid_cs ? wr_data_skid_cs : result_data_ns;
 
     ATT_Stream_Core #(
         .ACC_W        (ACC_W),
+        .OUT_W        (ATT_ACC_W),
         .MAT_SIZE     (MAT_SIZE),
         .SCORE_ELEM_W (SCORE_ELEM_W)
     ) u_att_stream_core (
@@ -531,29 +545,56 @@ module CA_DataPath #(
 
     ACT_5Stage_Parallel #(
         .ACC_W    (ACC_W),
-        .OUT_W    (POT_ACC_W),
+        .OUT_W    (ACC_W),
         .MAT_SIZE (MAT_SIZE)
-    ) u_act (
+    ) u_act_norm (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (act_in_valid),
+        .in_valid  (norm_mult_valid),
         .act       (act),
         .act_mode  (ACT_USER),
-        .in_data   (act_in_data),
-        .out_valid (act_valid),
-        .out_data  (act_data)
+        .in_data   (norm_mult_data),
+        .out_valid (norm_act_valid),
+        .out_data  (norm_act_data)
+    );
+
+    ACT_5Stage_Parallel #(
+        .ACC_W    (ATT_ACC_W),
+        .OUT_W    (ATT_ACC_W),
+        .MAT_SIZE (MAT_SIZE)
+    ) u_act_att (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (att_core_valid),
+        .act       (act),
+        .act_mode  (ACT_USER),
+        .in_data   (att_core_data),
+        .out_valid (att_act_valid),
+        .out_data  (att_act_data)
     );
 
     PoT_5Stage_Parallel #(
-        .ACC_W    (POT_ACC_W),
+        .ACC_W    (ACC_W),
         .MAT_SIZE (MAT_SIZE)
-    ) u_pot (
+    ) u_pot_norm (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (pot_in_valid),
-        .in_data   (pot_in_data),
-        .out_valid (pot_valid),
-        .out_data  (pot_data)
+        .in_valid  (norm_pot_in_valid),
+        .in_data   (norm_act_data),
+        .out_valid (norm_pot_valid),
+        .out_data  (norm_pot_data)
+    );
+
+    PoT_5Stage_Parallel #(
+        .ACC_W    (ATT_ACC_W),
+        .MAT_SIZE (MAT_SIZE)
+    ) u_pot_att (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .in_valid  (att_pot_in_valid),
+        .in_data   (att_act_data),
+        .out_valid (att_pot_valid),
+        .out_data  (att_pot_data)
     );
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -571,7 +612,7 @@ module CA_DataPath #(
             for (int i = 0; i <= ACT_OUT_TAG_STAGE; i++) begin
                 act_tag_cs[i] <= DT_NONE;
             end
-            for (int i = 0; i < 5; i++) begin
+            for (int i = 0; i <= POT_OUT_TAG_STAGE; i++) begin
                 pot_tag_cs[i] <= DT_NONE;
             end
         end
@@ -584,8 +625,9 @@ module CA_DataPath #(
                 act_tag_cs[i] <= act_tag_cs[i - 1];
             end
 
-            pot_tag_cs[0] <= pot_in_valid ? pot_in_tag : DT_NONE;
-            for (int i = 1; i < 5; i++) begin
+            pot_tag_cs[0] <= (norm_pot_in_valid || att_pot_in_valid) ?
+                             pot_in_tag : DT_NONE;
+            for (int i = 1; i <= POT_OUT_TAG_STAGE; i++) begin
                 pot_tag_cs[i] <= pot_tag_cs[i - 1];
             end
 
@@ -597,7 +639,7 @@ module CA_DataPath #(
             if (wr_data_skid_valid_cs) begin
                 if (wr_valid) begin
                     if (result_valid) begin
-                        wr_data_skid_cs <= pot_data;
+                        wr_data_skid_cs <= result_data_ns;
                     end
                     else begin
                         wr_data_skid_valid_cs <= 1'b0;
@@ -606,14 +648,14 @@ module CA_DataPath #(
             end
             else begin
                 if (result_valid && !wr_valid) begin
-                    wr_data_skid_cs       <= pot_data;
+                    wr_data_skid_cs       <= result_data_ns;
                     wr_data_skid_valid_cs <= 1'b1;
                 end
             end
 
             out_valid <= result_valid;
             if (result_valid) begin
-                out_data <= pot_data[31:0];
+                out_data <= result_data_ns[31:0];
             end
         end
     end
@@ -622,6 +664,7 @@ endmodule
 
 module ATT_Stream_Core #(
     parameter int ACC_W = 16,
+    parameter int OUT_W = ACC_W,
     parameter int MAT_SIZE = 64,
     parameter int SCORE_ELEM_W = 10
 )(
@@ -638,18 +681,20 @@ module ATT_Stream_Core #(
     output logic                 norm_valid,
     output logic [(MAT_SIZE*ACC_W)-1:0] norm_data,
     output logic                 out_valid,
-    output logic [(MAT_SIZE*ACC_W)-1:0] out_data
+    output logic [(MAT_SIZE*OUT_W)-1:0] out_data
 );
 
     localparam int ACC_VEC_W = MAT_SIZE * ACC_W;
-    localparam int PROJ_W = 10;
+    localparam int OUT_VEC_W = MAT_SIZE * OUT_W;
+    localparam int PROJ_W = 11;
     localparam int SCORE_CORE_ELEM_W = SCORE_ELEM_W;
-    localparam int FINAL_ACC_W = (ACC_W > 12) ? 12 : ACC_W;
-    localparam int FINAL_EXT_W = (ACC_W > FINAL_ACC_W) ?
-                                 (ACC_W - FINAL_ACC_W) : 1;
+    localparam int FINAL_ACC_W = OUT_W;
+    localparam int FINAL_EXT_W = (OUT_W > FINAL_ACC_W) ?
+                                 (OUT_W - FINAL_ACC_W) : 1;
     localparam int FINAL_ACC_VEC_W = MAT_SIZE * FINAL_ACC_W;
 
     typedef logic [ACC_VEC_W-1:0] acc_vec_t;
+    typedef logic [OUT_VEC_W-1:0] out_vec_t;
     typedef logic [FINAL_ACC_VEC_W-1:0] final_acc_vec_t;
     localparam int SCORE_BUS_W = MAT_SIZE * SCORE_ELEM_W;
     localparam int SCORE_CORE_BUS_W = MAT_SIZE * SCORE_CORE_ELEM_W;
@@ -669,11 +714,12 @@ module ATT_Stream_Core #(
     logic [SCORE_BUS_W-1:0] score1_data;
     logic final_valid;
     final_acc_vec_t final_core_data;
-    acc_vec_t final_data;
+    out_vec_t final_data;
 
     ATT_QKV_Proj_Quant_Parallel #(
         .PROJ_W   (PROJ_W),
-        .MAT_SIZE (MAT_SIZE)
+        .MAT_SIZE (MAT_SIZE),
+        .NORM_W   (ACC_W)
     ) u_att_qkv_proj_quant (
         .clk       (clk),
         .rst_n     (rst_n),
@@ -752,14 +798,14 @@ module ATT_Stream_Core #(
     always_comb begin
         final_data = '0;
         for (int i = 0; i < MAT_SIZE; i++) begin
-            if (ACC_W == FINAL_ACC_W) begin
-                final_data[ACC_VEC_W - 1 - (i * ACC_W) -: ACC_W] =
+            if (OUT_W == FINAL_ACC_W) begin
+                final_data[OUT_VEC_W - 1 - (i * OUT_W) -: OUT_W] =
                     final_core_data[FINAL_ACC_VEC_W - 1 -
                                     (i * FINAL_ACC_W) -:
                                     FINAL_ACC_W];
             end
             else begin
-                final_data[ACC_VEC_W - 1 - (i * ACC_W) -: ACC_W] =
+                final_data[OUT_VEC_W - 1 - (i * OUT_W) -: OUT_W] =
                     {{FINAL_EXT_W
                       {final_core_data[FINAL_ACC_VEC_W - 1 -
                                        (i * FINAL_ACC_W)]}},
@@ -2570,7 +2616,6 @@ module PoT_5Stage_Parallel #(
     logic [255:0]  quant_cs;
     logic [255:0]  quant_pipe_cs;
     logic [255:0]  quant_pipe2_cs;
-
 
     function automatic s16_t get_s16(input logic [ACC_VEC_W-1:0] vec, input integer idx);
         get_s16 = $signed(vec[ACC_VEC_W - 1 - (idx * ACC_W) -: ACC_W]);
