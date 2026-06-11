@@ -266,7 +266,7 @@ DataPath 內含一個小型 `wr_data` skid buffer。若 `result_valid` 出現時
 
 ### 1. Performance 取捨
 
-最終 performance 為：
+本 project 的評分指標不是單看 clock、area 或 latency，而是三者相乘：
 
 ```text
 performance = area x clk x latency
@@ -274,31 +274,40 @@ performance = area x clk x latency
             = 3.63e+11
 ```
 
-本設計在 3.3 ns 下 timing clean，但 worst slack 剛好是 0.00 ns。這代表目前架構已經接近合成後的 timing limit。若要把 clock 推到 3.2 ns 或更低，應該需要額外的 timing-oriented RTL change，而不只是單純修改 constraint。
+因此這個設計的優化方向必須同時考慮三件事。降低 area 不一定會讓 performance 變好，因為若共用硬體造成 latency 明顯上升，最後乘積可能反而變差；加 pipeline register 也不一定有利，因為雖然 clock 可能變短，但 register area 與 control latency 也會增加。最後版本選擇維持 9493 cycles 的短 latency，並把主要心力放在 attention datapath 的面積縮減與 3.3 ns timing closure。
+
+目前 synthesis 在 3.3 ns 下通過，worst slack 為 0.00 ns，代表這版已經接近 timing 邊界。若要再往 3.0 ns 推進，不能只調整 constraint，而需要重新分配 critical path 的運算量，例如把 score-by-V accumulation、activation threshold generation 或 PoT quantization 中較重的 combinational logic 切得更平均。不過這類改動會增加 cycle 或 register area，所以必須重新用完整 formula 評估。
 
 ### 2. 為什麼 Streaming Architecture 有幫助
 
-舊版 stage-based attention design 需要更多 control state、更多 intermediate memory，以及更多 stage-specific bookkeeping。最終版本將 attention 改成 streaming datapath，使每筆 RAM word 連續流過 QKV、score、final、ACT 與 PoT。這有三個好處：
+舊版 stage-based attention design 需要比較多 control state、intermediate memory 與 stage-specific bookkeeping。最終版本改成 streaming datapath 後，每筆 RAM word 會依序通過 QKV projection、score、final accumulation、ACT 與 PoT，而不是先在某個 stage 存完整中間矩陣後再進入下一個 stage。
+
+這個方向帶來三個主要好處：
 
 1. Control 更簡單，只需要計算 RAM word 與 result word。
-2. Storage 較少，不需要為許多 word 保存完整 Q/K/V/score memories。
-3. Pipeline timing 較規則，因為每個 stage 都有固定的 producer-consumer 關係。
+2. Storage 較少，不需要額外保存大量完整 Q/K/V/score matrices。
+3. Pipeline timing 較規則，stage 之間形成固定的 producer-consumer 關係。
 
-代價是 area：為了維持 throughput，Q/K/V 仍然平行計算，因此 projection module 仍是最大面積來源。
+這個架構也比較容易做局部優化。例如 normal path 可以借用 attention Q projection pipe，而 PoT block 可以只保留一份 full precision source data，後面只 pipeline 256-bit quantized result。代價是為了維持 throughput，Q/K/V projection 仍然需要高度平行化，所以它仍是目前最大的 area source。
 
 ### 3. Write Scheduling 設計
 
-Control logic 中最容易出錯的地方，是 `result_pre_valid` 與 `result_valid` 的分離。Write command 必須在真正資料出現前發出，但 result counter 只能計算真正 valid 的 output。把兩個 signal 分開後，可以避免 off-by-one error，也能在不增加 datapath stall 的情況下隱藏 RAM write timing。
+Control logic 中最容易出錯的部分，是 RAM write command 與 datapath output data 並不是同一拍發生。因此設計中將 `result_pre_valid` 與 `result_valid` 分開處理。`result_pre_valid` 用來提前通知 Control 發出 write command，`result_valid` 則代表真正的 quantized output 已經產生，可以用來更新 result counter 與 output data。
+
+這樣做的好處是可以把 RAM write timing 隱藏在 datapath pipeline 裡，不需要讓 datapath 因為 write command 尚未準備好而停住。同時，result counter 只看真正 valid 的 output，能避免 half-burst 邊界附近常見的 off-by-one error。DataPath 內部再加上一個小型 skid buffer，處理 `result_valid` 與 `wr_valid` 暫時錯位的情況，確保 output word 不會遺失。
 
 ### 4. 剩餘瓶頸
 
-目前設計仍有三個主要 bottleneck：
+目前面積仍主要集中在 attention arithmetic。從 hierarchy 來看，最重的是 Q/K/V projection、final score-by-V accumulation 與 score dot-product stage。這些 block 之所以大，是因為它們為了維持每個 RAM word 都能連續流過 pipeline，保留了大量 lane-level parallelism。
 
-1. `ATT_QKV_Proj_Quant_Parallel` 面積大，因為它包含三條 parallel projection pipe。
-2. `ATT_Final_Booth_Acc` 面積大，因為它有 64 個 final lanes，每個 lane 都有 Booth partial-product logic 與 reduction tree。
-3. 3.3 ns timing 剛好通過，因此任何增加 mux depth 的 area reduction 都可能破壞 timing。
+後續若要繼續壓低 area，最有機會的方向如下：
 
-未來若要繼續優化，可以考慮 partial serialization final stage，或讓 Q/K/V 硬體在更多 cycle 之間共用。不過這些方法都會增加 latency，因此必須用完整 performance formula 評估，而不能只看 area。
+1. 讓 Q/K/V projection 在更多 cycle 之間共用 multiplier，但要控制 latency 增幅。
+2. 重新切分 final accumulation，使 Booth partial product 與 reduction tree 的工作量更平均。
+3. 將 attention final/ACT 需要的較寬資料路徑限制在必要範圍內，避免 16-bit datapath 擴散到所有 matrix pipeline。
+4. 檢查 PoT 與 ACT 是否仍有 full matrix pipeline 可以改成 single-source 或 narrow result pipeline。
+
+不過目前 3.3 ns timing margin 很小，任何增加 mux depth 或拉長 adder tree 的 area optimization 都可能造成 timing violation。因此後續優化不能只看 gate count，還要觀察 critical path 是否被平均切開，以及新增 cycle 後整體 performance 是否真的下降。
 
 ---
 
