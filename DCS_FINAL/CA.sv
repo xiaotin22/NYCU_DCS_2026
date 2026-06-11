@@ -1,3 +1,4 @@
+// clk=3.0 area = 11.2M
 typedef enum logic [1:0] {
     IM_NONE = 2'd0,
     IM_NORM = 2'd1,
