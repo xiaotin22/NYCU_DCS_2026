@@ -1,33 +1,24 @@
 `timescale 1ns/1ps
 
 `define CYCLE_TIME       3.0
-`define DEBUG_EN         0
+`define DEBUG_EN     1
 `define SEED             23
 `define RAM_NUMBER       5
 `define OP_SET_NUMBER    5
+`define CORNER_CASE_NUMBER 16
 `define RAM_WIDTH        256
 `define RAM_DEPTH        256
 `define READ_LATENCY     50
 `define WRITE_LATENCY    5
 `define BURST_BIT        3
 `define PRINT_LATENCY    1
-
-// ============================================================
-// TESTBED RAM interface hierarchy
-// Change these names according to your TESTBED.sv
-// ============================================================
-`define TB_RD_EN      $root.TESTBED.rd_en
-`define TB_RD_ADDR    $root.TESTBED.rd_addr
-`define TB_RD_BURST   $root.TESTBED.rd_burst
-
-`define TB_WR_EN      $root.TESTBED.wr_en
-`define TB_WR_ADDR    $root.TESTBED.wr_addr
-`define TB_WR_BURST   $root.TESTBED.wr_burst
-`define TB_WR_DATA    $root.TESTBED.wr_data
-
-`define TB_WR_READY   $root.TESTBED.wr_ready
-`define TB_WR_VALID   $root.TESTBED.wr_valid
-
+`define DBG_CLR_RESET    "\033[0m"
+`define DBG_CLR_RED      "\033[1;31m"
+`define DBG_CLR_GREEN    "\033[1;32m"
+`define DBG_CLR_YELLOW   "\033[1;33m"
+`define DBG_CLR_BLUE     "\033[1;34m"
+`define DBG_CLR_CYAN     "\033[1;36m"
+`define DBG_CLR_BLINK_RED "\033[5;1;31m"
 
 module PATTERN(
     output logic clk,
@@ -52,6 +43,7 @@ localparam int MAX_WAIT = 10000;
 typedef int signed mtx_t [0:N-1][0:N-1];
 
 mtx_t golden_ram [0:`RAM_DEPTH-1];
+mtx_t golden_input_before_op [0:`RAM_DEPTH-1];
 
 mtx_t param_q;
 mtx_t param_k;
@@ -61,29 +53,17 @@ logic [31:0] golden_out [0:`RAM_DEPTH-1];
 
 logic [1:0] cur_op;
 logic [1:0] cur_act;
+string cur_phase;
+string cur_case_name;
 
 int unsigned seed;
 int dummy_rand;
 int ram_idx;
 int set_idx;
+int op_act_count [0:3][0:3];
 
 int total_latency;
-
-// ============================================================
-// Static drivers for force/procedural RAM preload.
-// VCS does not allow automatic task variables on RHS of force,
-// so force TESTBED signals to these module-level drivers only.
-// ============================================================
-logic         tb_rd_en_drv;
-logic [7:0]   tb_rd_addr_drv;
-logic [2:0]   tb_rd_burst_drv;
-
-logic         tb_wr_en_drv;
-logic [7:0]   tb_wr_addr_drv;
-logic [2:0]   tb_wr_burst_drv;
-logic [255:0] tb_wr_data_drv;
-
-logic [255:0] dut_ram_word [0:`RAM_DEPTH-1];
+integer fp_debug;
 
 // ============================================================
 // Clock
@@ -99,6 +79,22 @@ initial begin
     seed = `SEED;
     dummy_rand = $urandom(seed);
     total_latency = 0;
+    fp_debug = 0;
+    cur_phase = "INIT";
+    cur_case_name = "N/A";
+    clear_coverage_task();
+
+    if (`DEBUG_EN == 1) begin
+        fp_debug = $fopen("fp_debug.txt", "w");
+        if (fp_debug == 0) begin
+            YOU_FAIL_TASK();
+            $display("======================================================================================================================");
+            $display(" Cannot open debug dump file.");
+            $display(" file_name = fp_debug.txt");
+            $display("======================================================================================================================");
+            $finish;
+        end
+    end
 
     reset_task();
 
@@ -120,10 +116,9 @@ initial begin
         for (set_idx = 0; set_idx < `OP_SET_NUMBER; set_idx = set_idx + 1) begin
             if (set_idx == 0) begin
                 // First op set of this RAM pattern:
-                // DUT RAM is empty, so PATTERN actively writes the original
-                // patXX file data in, then raises mem_set once RAM is ready.
-                preload_dut_ram_from_current_golden_task(ram_idx, set_idx);
-
+                // DUT RAM is empty, so PATTERN directly preloads the original
+                // patXX file data, then raises mem_set once RAM is ready.
+                preload_dut_ram_from_file_task(ram_idx);
                 @(negedge clk);
                 mem_set = 1'b1;
                 repeat (3) @(negedge clk);
@@ -160,12 +155,18 @@ initial begin
         repeat ($urandom_range(2, 5)) @(negedge clk);
     end
 
+    run_corner_tests_task();
+    print_coverage_summary_task();
+
     YOU_PASS_TASK();
     $display ("----------------------------------------------------------------------------------------------------------------------");
     $display ("                                                  Congratulations!                 					             ");
     $display ("                                           You have passed all patterns!          					             ");
     $display ("                                Cycle Time = %.1f ns , execution cycles = %6d cycles        					         ", `CYCLE_TIME ,total_latency);
     $display ("----------------------------------------------------------------------------------------------------------------------");
+    if (`DEBUG_EN == 1 && fp_debug != 0) begin
+        $fclose(fp_debug);
+    end
     $finish;
 end
 
@@ -185,9 +186,10 @@ begin
     cur_act  = 2'd0;
 
     #(0.5 * `CYCLE_TIME);
+    force clk = 0;
     rst_n = 1'b0;
 
-    repeat (3) @(negedge clk);
+    #(3 * `CYCLE_TIME);
 
     if (out_valid !== 1'b0 || out_data !== 32'd0) begin
         YOU_FAIL_TASK();
@@ -196,41 +198,13 @@ begin
         $display(" out_valid = %b", out_valid);
         $display(" out_data  = %h", out_data);
         $display("======================================================================================================================");
-        repeat (3) @(negedge clk);
+        #(3 * `CYCLE_TIME);
         $finish;
     end
 
     rst_n = 1'b1;
+    release clk;
     repeat (3) @(negedge clk);
-end
-endtask
-
-
-// ============================================================
-// New RAM pattern
-// Kept for compatibility; main flow does not call this task now.
-// RAM file index is pat00~pat04.
-// ============================================================
-task automatic new_ram_task(input int rid);
-begin
-    @(negedge clk);
-    mem_set  = 1'b0;
-    in_valid = 1'b0;
-    op       = 2'd0;
-    act      = 2'd0;
-    param    = 256'd0;
-
-    load_golden_ram_from_file_task(rid);
-    preload_dut_ram_from_current_golden_task(rid, 0);
-
-    @(negedge clk);
-    mem_set = 1'b1;
-
-    repeat ($urandom_range(2, 5)) @(negedge clk);
-
-    if (`DEBUG_EN) begin
-        $display("[RAM %0d] mem_set = 1 after DUT RAM preload", rid);
-    end
 end
 endtask
 
@@ -260,173 +234,256 @@ begin
         golden_ram[a] = unpack_word_to_mtx(ram_word[a]);
     end
 
-    if (`DEBUG_EN) begin
-        $display("[LOAD] %s", file_name);
+    if (`DEBUG_EN == 1) begin
+        $fdisplay(fp_debug, "%s[LOAD]%s %s", `DBG_CLR_CYAN, `DBG_CLR_RESET, file_name);
+    end
+end
+endtask
+
+
+// First op set only: mirror patXX data into the protected TESTBED RAM model.
+task automatic preload_dut_ram_from_file_task(input int rid);
+    string data_file;
+begin
+    data_file = $sformatf("../00_TESTBED/ram/pat%02d_data.txt", rid);
+    $readmemh(data_file, $root.TESTBED.u_data_ram.mem);
+
+    if (`DEBUG_EN == 1) begin
+        $fdisplay(fp_debug, "%s[DUT RAM PRELOAD]%s %s -> $root.TESTBED.u_data_ram.mem",
+                  `DBG_CLR_CYAN, `DBG_CLR_RESET, data_file);
     end
 end
 endtask
 
 
 // ============================================================
-// Sync current PATTERN golden RAM into real DUT RAM
-//
-// 256 words = two burst writes
-// wr_burst = 7 => 2^7 = 128 words per burst
-//
-// This task is called ONLY for the first op set (set_idx == 0) of each
-// RAM pattern, to load the original patXX file data into the empty DUT RAM.
-// For later op sets the DUT carries its own write-back forward, so PATTERN
-// does not force the RAM again.
+// Functional coverage / corner test helpers
 // ============================================================
-task automatic preload_dut_ram_from_current_golden_task(input int rid, input int sid);
+task automatic clear_coverage_task();
+    int oi;
+    int ai;
+begin
+    for (oi = 0; oi < 4; oi = oi + 1) begin
+        for (ai = 0; ai < 4; ai = ai + 1) begin
+            op_act_count[oi][ai] = 0;
+        end
+    end
+end
+endtask
+
+
+task automatic record_op_act_coverage_task();
+begin
+    op_act_count[cur_op][cur_act] = op_act_count[cur_op][cur_act] + 1;
+end
+endtask
+
+
+task automatic print_coverage_summary_task();
+    int oi;
+    int ai;
+begin
+    $display("----------------------------------------------------------------------------------------------------------------------");
+    $display("\033[36mFunctional coverage summary (op x act)\033[0m");
+
+    if (`DEBUG_EN == 1 && fp_debug != 0) begin
+        $fdisplay(fp_debug, "");
+        print_debug_section_task("Functional Coverage Summary");
+    end
+
+    for (oi = 0; oi < 4; oi = oi + 1) begin
+        for (ai = 0; ai < 4; ai = ai + 1) begin
+            $display("  op=%0d %-11s act=%0d %-4s count=%0d",
+                     oi, op_name_func(oi), ai, act_name_func(ai), op_act_count[oi][ai]);
+
+            if (`DEBUG_EN == 1 && fp_debug != 0) begin
+                $fdisplay(fp_debug, "  op=%0d %-11s act=%0d %-4s count=%0d",
+                          oi, op_name_func(oi), ai, act_name_func(ai), op_act_count[oi][ai]);
+            end
+        end
+    end
+
+    $display("----------------------------------------------------------------------------------------------------------------------");
+end
+endtask
+
+
+task automatic run_corner_tests_task();
+    int cid;
+begin
+    $display("----------------------------------------------------------------------------------------------------------------------");
+    $display("\033[36mStart corner tests: dedicated RAM + fixed op/act coverage\033[0m");
+    $display("----------------------------------------------------------------------------------------------------------------------");
+
+    for (cid = 0; cid < `CORNER_CASE_NUMBER; cid = cid + 1) begin
+        @(negedge clk);
+        mem_set  = 1'b0;
+        in_valid = 1'b0;
+        op       = 2'd0;
+        act      = 2'd0;
+        param    = 256'd0;
+
+        repeat (3) @(negedge clk);
+
+        cur_phase     = "CORNER";
+        cur_case_name = corner_case_name_func(cid);
+        load_corner_ram_task(cid);
+
+        @(negedge clk);
+        mem_set = 1'b1;
+        repeat (3) @(negedge clk);
+
+        corner_op_set_task(cid);
+
+        build_golden_task(cur_op, cur_act);
+        send_op_set_task(cur_op, cur_act);
+        check_all_outputs_task(`RAM_NUMBER + cid, cid);
+
+        @(negedge clk);
+        mem_set  = 1'b0;
+        in_valid = 1'b0;
+        op       = 2'd0;
+        act      = 2'd0;
+        param    = 256'd0;
+
+        repeat (2) @(negedge clk);
+    end
+
+    cur_phase     = "DONE";
+    cur_case_name = "N/A";
+end
+endtask
+
+
+task automatic load_corner_ram_task(input int cid);
     int a;
+    mtx_t corner_mtx;
+    logic [255:0] corner_word;
 begin
     for (a = 0; a < `RAM_DEPTH; a = a + 1) begin
-        dut_ram_word[a] = pack_mtx4(golden_ram[a]);
+        corner_mtx  = corner_mtx_func(cid % 8, a + cid * 17);
+        corner_word = pack_mtx4(corner_mtx);
+
+        golden_ram[a] = corner_mtx;
+        $root.TESTBED.u_data_ram.mem[a] = corner_word;
     end
 
-    if (`DEBUG_EN) begin
-        $display("[DUT RAM SYNC] PATTERN=%0d OP_SET=%0d word0=%h",
-                 rid, sid, dut_ram_word[0]);
+    if (`DEBUG_EN == 1) begin
+        $fdisplay(fp_debug, "%s[CORNER RAM]%s case=%0d %s -> $root.TESTBED.u_data_ram.mem",
+                  `DBG_CLR_CYAN, `DBG_CLR_RESET, cid, cur_case_name);
     end
-
-    preload_dut_ram_by_burst_write_task(rid, sid);
 end
 endtask
 
 
-task automatic preload_dut_ram_by_burst_write_task(input int rid, input int sid);
+task automatic corner_op_set_task(input int cid);
+    int op_i;
+    int act_i;
 begin
-    // Initialize module-level static drivers.
-    tb_rd_en_drv    = 1'b0;
-    tb_rd_addr_drv  = 8'd0;
-    tb_rd_burst_drv = 3'd0;
+    op_i  = (cid / 4) % 4;
+    act_i = cid % 4;
 
-    tb_wr_en_drv    = 1'b0;
-    tb_wr_addr_drv  = 8'd0;
-    tb_wr_burst_drv = 3'd0;
-    tb_wr_data_drv  = 256'd0;
+    cur_op  = op_i;
+    cur_act = act_i;
 
-    // Take over CA -> RAM interface temporarily.
-    // Because force RHS is static driver signal, this avoids VCS
-    // automatic-variable force errors.
-    force `TB_RD_EN    = tb_rd_en_drv;
-    force `TB_RD_ADDR  = tb_rd_addr_drv;
-    force `TB_RD_BURST = tb_rd_burst_drv;
+    param_q = corner_mtx_func((cid + 1) % 8, cid + 101);
+    param_k = corner_mtx_func((cid + 3) % 8, cid + 211);
+    param_v = corner_mtx_func((cid + 5) % 8, cid + 307);
 
-    force `TB_WR_EN    = tb_wr_en_drv;
-    force `TB_WR_ADDR  = tb_wr_addr_drv;
-    force `TB_WR_BURST = tb_wr_burst_drv;
-    force `TB_WR_DATA  = tb_wr_data_drv;
+    record_op_act_coverage_task();
 
-    repeat (2) @(posedge clk);
-
-    // word 0 ~ 127
-    ram_burst_write_128_task(8'd0);
-
-    // word 128 ~ 255
-    ram_burst_write_128_task(8'd128);
-
-    tb_wr_en_drv    = 1'b0;
-    tb_wr_addr_drv  = 8'd0;
-    tb_wr_burst_drv = 3'd0;
-    tb_wr_data_drv  = 256'd0;
-
-    repeat (2) @(posedge clk);
-
-    // Release RAM interface back to CA.
-    release `TB_RD_EN;
-    release `TB_RD_ADDR;
-    release `TB_RD_BURST;
-
-    release `TB_WR_EN;
-    release `TB_WR_ADDR;
-    release `TB_WR_BURST;
-    release `TB_WR_DATA;
-
-    repeat (2) @(posedge clk);
-
-    if (`DEBUG_EN) begin
-        $display("[DUT RAM SYNC DONE] PATTERN=%0d OP_SET=%0d", rid, sid);
+    if (`DEBUG_EN == 1) begin
+        $fdisplay(fp_debug, "%s[CORNER SET %0d]%s op=%0d act=%0d %s",
+                  `DBG_CLR_CYAN, cid, `DBG_CLR_RESET, cur_op, cur_act, cur_case_name);
     end
 end
 endtask
 
 
-task automatic ram_burst_write_128_task(input logic [7:0] start_addr);
-    int wait_cnt;
+function automatic string corner_case_name_func(input int cid);
+    int pat;
+    logic [1:0] op_i;
+    logic [1:0] act_i;
+begin
+    pat   = cid % 8;
+    op_i  = (cid / 4) % 4;
+    act_i = cid % 4;
+
+    corner_case_name_func = $sformatf("%s | op=%s act=%s",
+                                      corner_pattern_name_func(pat),
+                                      op_name_func(op_i),
+                                      act_name_func(act_i));
+end
+endfunction
+
+
+function automatic string corner_pattern_name_func(input int pat);
+begin
+    case (pat % 8)
+        0: corner_pattern_name_func = "RAM all zero";
+        1: corner_pattern_name_func = "RAM all max +7";
+        2: corner_pattern_name_func = "RAM all min -8";
+        3: corner_pattern_name_func = "RAM checkerboard +7/-8";
+        4: corner_pattern_name_func = "RAM diagonal +7";
+        5: corner_pattern_name_func = "RAM row ramp";
+        6: corner_pattern_name_func = "RAM column ramp";
+        7: corner_pattern_name_func = "RAM sparse impulse";
+        default: corner_pattern_name_func = "RAM unknown";
+    endcase
+end
+endfunction
+
+
+function automatic mtx_t corner_mtx_func(input int pat, input int salt);
+    mtx_t m;
     int i;
-    int base_addr;
+    int j;
 begin
-    base_addr = start_addr;
-    wait_cnt  = 0;
-
-    // Wait until RAM can accept write command.
-    // Drive command/data at posedge; RAM itself is negedge-triggered.
-    while (`TB_WR_READY !== 1'b1) begin
-        @(posedge clk);
-        wait_cnt = wait_cnt + 1;
-
-        if (wait_cnt > MAX_WAIT) begin
-            YOU_FAIL_TASK();
-            $display("============================================================");
-            $display(" Timeout while waiting wr_ready during RAM sync.");
-            $display(" start_addr = %0d", base_addr);
-            $display("============================================================");
-            repeat (3) @(negedge clk);
-            $finish;
+    for (i = 0; i < N; i = i + 1) begin
+        for (j = 0; j < N; j = j + 1) begin
+            m[i][j] = corner_value_func(pat, salt, i, j);
         end
     end
 
-    // Step 1: wr_ready=1, pull wr_en and give wr_addr/wr_burst.
-    // Also put first data word on wr_data.
-    @(posedge clk);
-    tb_wr_addr_drv  = start_addr;
-    tb_wr_burst_drv = 3'd7;
-    tb_wr_data_drv  = dut_ram_word[base_addr];
-    tb_wr_en_drv    = 1'b1;
-
-    @(posedge clk);
-    tb_wr_en_drv    = 1'b0;
-
-    // Step 2: hold first wr_data until wr_valid=1.
-    wait_cnt = 0;
-    while (`TB_WR_VALID !== 1'b1) begin
-        @(posedge clk);
-        wait_cnt = wait_cnt + 1;
-
-        if (wait_cnt > MAX_WAIT) begin
-            YOU_FAIL_TASK();
-            $display("======================================================================================================================");
-            $display(" Timeout while waiting wr_valid during RAM sync.");
-            $display(" start_addr = %0d", base_addr);
-            $display(" first data = %h", dut_ram_word[base_addr]);
-            $display("======================================================================================================================");
-            repeat (3) @(negedge clk);
-            $finish;
-        end
-    end
-
-    // After wr_valid=1, switch to next write data every positive edge.
-    // Data is updated at posedge and sampled by RAM at following negedge.
-    for (i = 1; i < 128; i = i + 1) begin
-        tb_wr_data_drv = dut_ram_word[base_addr + i];
-        @(posedge clk);
-    end
-
-    // Clean command/data after the burst.
-    tb_wr_addr_drv  = 8'd0;
-    tb_wr_burst_drv = 3'd0;
-    tb_wr_data_drv  = 256'd0;
-
-    repeat (2) @(posedge clk);
-
-    if (`DEBUG_EN) begin
-        $display("[BURST WRITE] start_addr=%0d end_addr=%0d done",
-                 base_addr, base_addr + 127);
-    end
+    return m;
 end
-endtask
+endfunction
+
+
+function automatic int signed corner_value_func(input int pat, input int salt, input int i, input int j);
+    int pos_i;
+    int pos_j;
+    int neg_i;
+    int neg_j;
+begin
+    pos_i = salt % N;
+    pos_j = (salt / N) % N;
+    neg_i = N - 1 - pos_i;
+    neg_j = N - 1 - pos_j;
+
+    case (pat % 8)
+        0: corner_value_func = 0;
+        1: corner_value_func = 7;
+        2: corner_value_func = -8;
+        3: begin
+            if (((i + j + salt) % 2) == 0) corner_value_func = 7;
+            else                           corner_value_func = -8;
+        end
+        4: begin
+            if (i == j) corner_value_func = 7;
+            else        corner_value_func = 0;
+        end
+        5: corner_value_func = ((j + salt) % 16) - 8;
+        6: corner_value_func = ((i + salt) % 16) - 8;
+        7: begin
+            if (i == pos_i && j == pos_j)      corner_value_func = 7;
+            else if (i == neg_i && j == neg_j) corner_value_func = -8;
+            else                               corner_value_func = 0;
+        end
+        default: corner_value_func = 0;
+    endcase
+end
+endfunction
 
 
 // ============================================================
@@ -434,8 +491,8 @@ endtask
 // ============================================================
 task automatic random_op_set_task(input int sid);
 begin
-    // First four sets cover op = 0,1,2,3.
-    // Remaining sets are random.
+    // Random phase keeps broad randomized stimulus. Dedicated corner phase
+    // later guarantees every op/act combination with extreme RAM contents.
     cur_op = $urandom_range(0, 3);
     cur_act = $urandom_range(0, 3);
 
@@ -443,8 +500,13 @@ begin
     random_mtx4_task(param_k);
     random_mtx4_task(param_v);
 
-    if (`DEBUG_EN) begin
-        $display("[SET %0d] op=%0d act=%0d", sid, cur_op, cur_act);
+    cur_phase     = "RANDOM";
+    cur_case_name = $sformatf("pat%02d random set %0d", ram_idx, sid);
+    record_op_act_coverage_task();
+
+    if (`DEBUG_EN == 1) begin
+        $fdisplay(fp_debug, "%s[SET %0d]%s op=%0d act=%0d",
+                  `DBG_CLR_CYAN, sid, `DBG_CLR_RESET, cur_op, cur_act);
     end
 end
 endtask
@@ -529,6 +591,8 @@ task automatic build_golden_task(
     mtx_t q_mtx;
 begin
     for (a = 0; a < `RAM_DEPTH; a = a + 1) begin
+        golden_input_before_op[a] = golden_ram[a];
+
         case (op_i)
             2'b00: comp_mtx = ffn_func(golden_ram[a], param_q);
             2'b01: comp_mtx = conv_func(golden_ram[a], param_q);
@@ -1053,6 +1117,550 @@ end
 endfunction
 
 
+// ============================================================
+// Debug dump helpers
+// ============================================================
+function automatic string op_name_func(input logic [1:0] op_i);
+begin
+    case (op_i)
+        2'b00: op_name_func = "FFN";
+        2'b01: op_name_func = "CONV";
+        2'b10: op_name_func = "ATTN_SINGLE";
+        2'b11: op_name_func = "ATTN_MUL";
+        default: op_name_func = "UNKNOWN";
+    endcase
+end
+endfunction
+
+
+function automatic string act_name_func(input logic [1:0] act_i);
+begin
+    case (act_i)
+        2'b00: act_name_func = "ReLU";
+        2'b01: act_name_func = "RAT";
+        2'b10: act_name_func = "CAT";
+        2'b11: act_name_func = "BAT";
+        default: act_name_func = "UNKNOWN";
+    endcase
+end
+endfunction
+
+
+function automatic mtx_t attn_score_range_func(
+    input mtx_t q_mtx,
+    input mtx_t k_mtx,
+    input int col_start,
+    input int col_end
+);
+    mtx_t score_mtx;
+    int i;
+    int j;
+    int k;
+    int signed acc;
+begin
+    score_mtx = zero_mtx_func();
+
+    for (i = 0; i < N; i = i + 1) begin
+        for (j = 0; j < N; j = j + 1) begin
+            acc = 0;
+
+            for (k = col_start; k < col_end; k = k + 1) begin
+                acc = acc + q_mtx[i][k] * k_mtx[j][k];
+            end
+
+            score_mtx[i][j] = acc;
+        end
+    end
+
+    return score_mtx;
+end
+endfunction
+
+
+function automatic mtx_t attn_context_range_func(
+    input mtx_t prob_mtx,
+    input mtx_t v_mtx,
+    input int col_start,
+    input int col_end
+);
+    mtx_t ctx_mtx;
+    int i;
+    int j;
+    int k;
+    int signed acc;
+begin
+    ctx_mtx = zero_mtx_func();
+
+    for (i = 0; i < N; i = i + 1) begin
+        for (j = col_start; j < col_end; j = j + 1) begin
+            acc = 0;
+
+            for (k = 0; k < N; k = k + 1) begin
+                acc = acc + prob_mtx[i][k] * v_mtx[k][j];
+            end
+
+            ctx_mtx[i][j] = acc;
+        end
+    end
+
+    return ctx_mtx;
+end
+endfunction
+
+
+function automatic mtx_t merge_mha_context_func(input mtx_t head_1_ctx, input mtx_t head_2_ctx);
+    mtx_t ctx_mtx;
+    int i;
+    int j;
+begin
+    ctx_mtx = zero_mtx_func();
+
+    for (i = 0; i < N; i = i + 1) begin
+        for (j = 0; j < N; j = j + 1) begin
+            if (j < 4) ctx_mtx[i][j] = head_1_ctx[i][j];
+            else       ctx_mtx[i][j] = head_2_ctx[i][j];
+        end
+    end
+
+    return ctx_mtx;
+end
+endfunction
+
+
+task automatic print_debug_separator_task();
+    int i;
+begin
+    $fwrite(fp_debug, "%s+", `DBG_CLR_CYAN);
+
+    for (i = 0; i < 96; i = i + 1) begin
+        $fwrite(fp_debug, "=");
+    end
+
+    $fdisplay(fp_debug, "+%s", `DBG_CLR_RESET);
+end
+endtask
+
+
+task automatic print_debug_banner_task(input string title);
+    int i;
+begin
+    print_debug_separator_task();
+
+    $fwrite(fp_debug, "%s|", `DBG_CLR_CYAN);
+    for (i = 0; i < 96; i = i + 1) begin
+        $fwrite(fp_debug, " ");
+    end
+    $fdisplay(fp_debug, "|%s", `DBG_CLR_RESET);
+
+    $fdisplay(fp_debug, "%s| %s%-94s%s |%s",
+              `DBG_CLR_CYAN, `DBG_CLR_BLINK_RED, title, `DBG_CLR_CYAN, `DBG_CLR_RESET);
+
+    $fwrite(fp_debug, "%s|", `DBG_CLR_CYAN);
+    for (i = 0; i < 96; i = i + 1) begin
+        $fwrite(fp_debug, " ");
+    end
+    $fdisplay(fp_debug, "|%s", `DBG_CLR_RESET);
+
+    print_debug_separator_task();
+end
+endtask
+
+
+task automatic print_debug_section_task(input string title);
+begin
+    $fdisplay(fp_debug, "");
+    $fdisplay(fp_debug, "%s>>>=[ %s ]=<<<%s", `DBG_CLR_YELLOW, title, `DBG_CLR_RESET);
+end
+endtask
+
+
+task automatic print_mtx_task(input string title, input mtx_t mtx);
+    int i;
+    int j;
+begin
+    $fdisplay(fp_debug, "  %s[%s]%s", `DBG_CLR_BLUE, title, `DBG_CLR_RESET);
+
+    for (i = 0; i < N; i = i + 1) begin
+        $fwrite(fp_debug, "    r%0d:", i);
+
+        for (j = 0; j < N; j = j + 1) begin
+            $fwrite(fp_debug, "%6d", mtx[i][j]);
+        end
+
+        $fdisplay(fp_debug, "");
+    end
+end
+endtask
+
+
+task automatic print_mtx2_task(
+    input string title0,
+    input mtx_t mtx0,
+    input string title1,
+    input mtx_t mtx1
+);
+    int i;
+    int j;
+begin
+    $fdisplay(fp_debug, "  %s%-35s%s | %s%-35s%s",
+              `DBG_CLR_BLUE, title0, `DBG_CLR_RESET,
+              `DBG_CLR_BLUE, title1, `DBG_CLR_RESET);
+
+    for (i = 0; i < N; i = i + 1) begin
+        $fwrite(fp_debug, "  r%0d:", i);
+
+        for (j = 0; j < N; j = j + 1) begin
+            $fwrite(fp_debug, "%4d", mtx0[i][j]);
+        end
+
+        $fwrite(fp_debug, " | r%0d:", i);
+
+        for (j = 0; j < N; j = j + 1) begin
+            $fwrite(fp_debug, "%4d", mtx1[i][j]);
+        end
+
+        $fdisplay(fp_debug, "");
+    end
+end
+endtask
+
+
+task automatic print_mtx3_task(
+    input string title0,
+    input mtx_t mtx0,
+    input string title1,
+    input mtx_t mtx1,
+    input string title2,
+    input mtx_t mtx2
+);
+    int i;
+    int j;
+begin
+    $fdisplay(fp_debug, "  %s%-35s%s | %s%-35s%s | %s%-35s%s",
+              `DBG_CLR_BLUE, title0, `DBG_CLR_RESET,
+              `DBG_CLR_BLUE, title1, `DBG_CLR_RESET,
+              `DBG_CLR_BLUE, title2, `DBG_CLR_RESET);
+
+    for (i = 0; i < N; i = i + 1) begin
+        $fwrite(fp_debug, "  r%0d:", i);
+
+        for (j = 0; j < N; j = j + 1) begin
+            $fwrite(fp_debug, "%4d", mtx0[i][j]);
+        end
+
+        $fwrite(fp_debug, " | r%0d:", i);
+
+        for (j = 0; j < N; j = j + 1) begin
+            $fwrite(fp_debug, "%4d", mtx1[i][j]);
+        end
+
+        $fwrite(fp_debug, " | r%0d:", i);
+
+        for (j = 0; j < N; j = j + 1) begin
+            $fwrite(fp_debug, "%4d", mtx2[i][j]);
+        end
+
+        $fdisplay(fp_debug, "");
+    end
+end
+endtask
+
+
+task automatic print_conv_kernel_task(input mtx_t kernel);
+    int i;
+    int j;
+    int idx;
+begin
+    $fdisplay(fp_debug, "  %s[Conv 3x3 Kernel]%s", `DBG_CLR_BLUE, `DBG_CLR_RESET);
+
+    for (i = 0; i < 3; i = i + 1) begin
+        $fwrite(fp_debug, "    r%0d:", i);
+
+        for (j = 0; j < 3; j = j + 1) begin
+            idx = i * 3 + j;
+            $fwrite(fp_debug, "%6d", kernel[idx / N][idx % N]);
+        end
+
+        $fdisplay(fp_debug, "");
+    end
+end
+endtask
+
+
+task automatic print_token_values_task(input logic [31:0] data);
+    logic signed [3:0] s4;
+    int j;
+begin
+    $fwrite(fp_debug, "%08h  (", data);
+
+    for (j = 0; j < N; j = j + 1) begin
+        s4 = data[31 - j*4 -: 4];
+        $fwrite(fp_debug, "%4d", s4);
+    end
+
+    $fwrite(fp_debug, " )");
+end
+endtask
+
+task automatic print_token_pair_task(
+    input string golden_label,
+    input logic [31:0] golden_data,
+    input string dut_label,
+    input logic [31:0] dut_data
+);
+begin
+    $fdisplay(fp_debug, "  %s%-47s%s | %s%-47s%s",
+              `DBG_CLR_GREEN, golden_label, `DBG_CLR_RESET,
+              `DBG_CLR_RED, dut_label, `DBG_CLR_RESET);
+    $fwrite(fp_debug, "  %s", `DBG_CLR_GREEN);
+    print_token_values_task(golden_data);
+    $fwrite(fp_debug, "%s | %s", `DBG_CLR_RESET, `DBG_CLR_RED);
+    print_token_values_task(dut_data);
+    $fdisplay(fp_debug, "%s", `DBG_CLR_RESET);
+end
+endtask
+
+
+task automatic print_wr_data_pair_task(
+    input logic [255:0] golden_wr_data,
+    input logic [255:0] dut_wr_data
+);
+    mtx_t golden_wr_mtx;
+    mtx_t dut_wr_mtx;
+begin
+    golden_wr_mtx = unpack_word_to_mtx(golden_wr_data);
+    dut_wr_mtx    = unpack_word_to_mtx(dut_wr_data);
+
+    $fdisplay(fp_debug, "  DUT write bus: wr_en=%b wr_addr=%0d wr_valid=%b wr_ready=%b",
+              $root.TESTBED.wr_en,
+              $root.TESTBED.wr_addr,
+              $root.TESTBED.wr_valid,
+              $root.TESTBED.wr_ready);
+
+    print_mtx2_task("Golden wr_data", golden_wr_mtx, "DUT wr_data", dut_wr_mtx);
+
+    $fdisplay(fp_debug, "  Golden wr_data = %064h", golden_wr_data);
+    $fdisplay(fp_debug, "  DUT wr_data    = %064h", dut_wr_data);
+end
+endtask
+
+
+task automatic print_activation_debug_task(
+    input logic [1:0] act_i,
+    input mtx_t in_mtx,
+    input mtx_t out_mtx
+);
+    int i;
+    int j;
+    int bi;
+    int bj;
+    int ii;
+    int jj;
+    int signed sum;
+    int signed threshold;
+begin
+    case (act_i)
+        2'b00: begin
+            $fdisplay(fp_debug, "  ReLU: negative values clamp to 0");
+        end
+
+        2'b01: begin
+            for (i = 0; i < N; i = i + 1) begin
+                sum = 0;
+
+                for (j = 0; j < N; j = j + 1) begin
+                    sum = sum + in_mtx[i][j];
+                end
+
+                threshold = sum >>> 3;
+                $fdisplay(fp_debug, "  RAT row[%0d]: row_sum=%0d threshold(>>3)=%0d", i, sum, threshold);
+            end
+        end
+
+        2'b10: begin
+            for (j = 0; j < N; j = j + 1) begin
+                sum = 0;
+
+                for (i = 0; i < N; i = i + 1) begin
+                    sum = sum + in_mtx[i][j];
+                end
+
+                threshold = sum >>> 3;
+                $fdisplay(fp_debug, "  CAT col[%0d]: col_sum=%0d threshold(>>3)=%0d", j, sum, threshold);
+            end
+        end
+
+        default: begin
+            for (bi = 0; bi < N; bi = bi + 4) begin
+                for (bj = 0; bj < N; bj = bj + 4) begin
+                    sum = 0;
+
+                    for (ii = bi; ii < bi + 4; ii = ii + 1) begin
+                        for (jj = bj; jj < bj + 4; jj = jj + 1) begin
+                            sum = sum + in_mtx[ii][jj];
+                        end
+                    end
+
+                    threshold = sum >>> 4;
+                    $fdisplay(fp_debug, "  BAT block row[%0d:%0d] col[%0d:%0d]: block_sum=%0d threshold(>>4)=%0d",
+                              bi, bi + 3, bj, bj + 3, sum, threshold);
+                end
+            end
+        end
+    endcase
+
+    print_mtx_task("Post-activation output", out_mtx);
+end
+endtask
+
+
+task automatic print_failure_debug_task(
+    input int rid,
+    input int sid,
+    input int addr,
+    input logic [31:0] golden_data,
+    input logic [31:0] dut_data,
+    input string reason
+);
+    mtx_t input_mtx;
+    mtx_t comp_mtx;
+    mtx_t act_mtx;
+    mtx_t quant_mtx;
+    mtx_t q_raw;
+    mtx_t k_raw;
+    mtx_t v_raw;
+    mtx_t q_quant;
+    mtx_t k_quant;
+    mtx_t v_quant;
+    mtx_t score_1;
+    mtx_t score_2;
+    mtx_t prob_1;
+    mtx_t prob_2;
+    mtx_t head_1_ctx;
+    mtx_t head_2_ctx;
+    logic [255:0] golden_wr_data;
+    logic [255:0] dut_wr_data;
+    string section_title;
+begin
+    if (fp_debug == 0) begin
+        fp_debug = $fopen("fp_debug.txt", "w");
+
+        if (fp_debug == 0) begin
+            return;
+        end
+    end
+
+    input_mtx = golden_input_before_op[addr];
+    comp_mtx  = zero_mtx_func();
+
+    print_debug_banner_task("DEBUG DUMP");
+    $fdisplay(fp_debug, " RAM=%0d | OP_SET=%0d | DATA=%0d | OP=%s | ACT=%s",
+              rid, sid, addr, op_name_func(cur_op), act_name_func(cur_act));
+    $fdisplay(fp_debug, " PHASE=%s | CASE=%s", cur_phase, cur_case_name);
+    $fdisplay(fp_debug, "%s Reason: %s%s", `DBG_CLR_BLINK_RED, reason, `DBG_CLR_RESET);
+    print_debug_separator_task();
+
+    case (cur_op)
+        2'b00: begin
+            print_debug_section_task("Input & Weight");
+            print_mtx2_task("Input Data", input_mtx, "FFN Weight", param_q);
+
+            comp_mtx = ffn_func(input_mtx, param_q);
+            print_debug_section_task("FFN Output");
+            print_mtx_task("FFN Output", comp_mtx);
+        end
+
+        2'b01: begin
+            print_debug_section_task("Input & Conv Kernel");
+            print_mtx_task("Input Data", input_mtx);
+            print_conv_kernel_task(param_q);
+
+            comp_mtx = conv_func(input_mtx, param_q);
+            print_debug_section_task("Convolution Output");
+            print_mtx_task("Convolution Output", comp_mtx);
+        end
+
+        default: begin
+            print_debug_section_task("Input");
+            print_mtx_task("Input Data", input_mtx);
+
+            print_debug_section_task("Weights");
+            print_mtx3_task("WQ", param_q, "WK", param_k, "WV", param_v);
+
+            q_raw = ffn_func(input_mtx, param_q);
+            k_raw = ffn_func(input_mtx, param_k);
+            v_raw = ffn_func(input_mtx, param_v);
+
+            print_debug_section_task("QKV Projection (pre-quantize, 11-bit)");
+            print_mtx3_task("Q", q_raw, "K", k_raw, "V", v_raw);
+
+            q_quant = quantize_pot_func(q_raw);
+            k_quant = quantize_pot_func(k_raw);
+            v_quant = quantize_pot_func(v_raw);
+
+            print_debug_section_task("QKV Projection (post-quantize, 4-bit)");
+            print_mtx3_task("Q_quantized", q_quant, "K_quantized", k_quant, "V_quantized", v_quant);
+
+            if (cur_op == 2'b10) begin
+                score_1 = attn_score_range_func(q_quant, k_quant, 0, N);
+                prob_1  = attn_act_func(score_1);
+
+                print_debug_section_task("ATTN_SINGLE: Score = Q * K^T");
+                print_mtx_task("Attention Score", score_1);
+                print_debug_section_task("ATTN_SINGLE: Probability = act(Score)");
+                print_mtx_task("Probability", prob_1);
+
+                comp_mtx = attn_context_range_func(prob_1, v_quant, 0, N);
+            end
+            else begin
+                score_1 = attn_score_range_func(q_quant, k_quant, 0, 4);
+                score_2 = attn_score_range_func(q_quant, k_quant, 4, N);
+                prob_1  = attn_act_func(score_1);
+                prob_2  = attn_act_func(score_2);
+
+                print_debug_section_task("ATTN_MUL: Scores (head0 cols 0:4, head1 cols 4:8)");
+                print_mtx2_task("Score_1", score_1, "Score_2", score_2);
+                print_debug_section_task("ATTN_MUL: Probabilities");
+                print_mtx2_task("Probability_1", prob_1, "Probability_2", prob_2);
+
+                head_1_ctx = attn_context_range_func(prob_1, v_quant, 0, 4);
+                head_2_ctx = attn_context_range_func(prob_2, v_quant, 4, N);
+                comp_mtx   = merge_mha_context_func(head_1_ctx, head_2_ctx);
+            end
+
+            print_debug_section_task("Attention Output");
+            print_mtx_task("Attention Output", comp_mtx);
+        end
+    endcase
+
+    act_mtx   = post_act_func(comp_mtx, cur_act);
+    quant_mtx = quantize_pot_func(act_mtx);
+
+    section_title = $sformatf("Activation (%s)", act_name_func(cur_act));
+    print_debug_section_task(section_title);
+    print_activation_debug_task(cur_act, comp_mtx, act_mtx);
+
+    print_debug_section_task("Requantize");
+    print_mtx_task("Quantized Post-activation output", quant_mtx);
+
+    print_debug_section_task("Expected Output");
+    print_token_pair_task("Golden output", golden_data, "DUT out_data", dut_data);
+    $fdisplay(fp_debug, "  out_valid = %b", out_valid);
+    $fdisplay(fp_debug, "  Match     = %sFAIL !!!%s", `DBG_CLR_BLINK_RED, `DBG_CLR_RESET);
+
+    golden_wr_data = pack_mtx4(golden_ram[addr]);
+    dut_wr_data    = $root.TESTBED.wr_data;
+
+    print_debug_section_task("Write-back Data");
+    print_wr_data_pair_task(golden_wr_data, dut_wr_data);
+
+    print_debug_separator_task();
+    $fclose(fp_debug);
+    fp_debug = 0;
+end
+endtask
+
+
 
 // ============================================================
 // Output checker + latency counter
@@ -1135,8 +1743,13 @@ begin
                 $display("Timeout: no output within %0d cycles.", MAX_WAIT);
                 $display("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d",
                          rid, sid, addr);
+                $display("phase = %s", cur_phase);
+                $display("case  = %s", cur_case_name);
                 $display("op = %0d, act = %0d", cur_op, cur_act);
                 $display("======================================================================================================================");
+                if (`DEBUG_EN == 1) begin
+                    print_failure_debug_task(rid, sid, addr, golden_data, out_data, "TIMEOUT waiting first output");
+                end
                 repeat (3) @(negedge clk);
                 $finish;
             end
@@ -1162,8 +1775,13 @@ begin
                     $display("Timeout: no output within %0d cycles.", MAX_WAIT);
                     $display("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d",
                              rid, sid, addr);
+                    $display("phase = %s", cur_phase);
+                    $display("case  = %s", cur_case_name);
                     $display("op = %0d, act = %0d", cur_op, cur_act);
                     $display("======================================================================================================================");
+                    if (`DEBUG_EN == 1) begin
+                        print_failure_debug_task(rid, sid, addr, golden_data, out_data, "TIMEOUT waiting next output");
+                    end
                     repeat (3) @(negedge clk);
                     $finish;
                 end
@@ -1180,11 +1798,16 @@ begin
         $display("PATTERN NO. = %0d", rid);
         $display("OP SET NO.  = %0d", sid);
         $display("Data NO.    = %0d", addr);
+        $display("phase       = %s", cur_phase);
+        $display("case        = %s", cur_case_name);
         $display("op          = %0d", cur_op);
         $display("act         = %0d", cur_act);
         $display("DUT    out_data = %h", out_data);
         $display("Golden out_data = %h", golden_data);
         $display("============================================================");
+        if (`DEBUG_EN == 1) begin
+            print_failure_debug_task(rid, sid, addr, golden_data, out_data, "OUTPUT MISMATCH");
+        end
         $finish;
     end
 
@@ -1242,7 +1865,6 @@ task YOU_PASS_TASK; begin
     $display("\033[0m       \033[38;2;29;28;26m.\033[38;2;31;30;27m.\033[0m   \033[38;2;47;43;32m.\033[38;2;39;37;29m.\033[0m                                                                  ");
 end endtask
 
- 
 task YOU_FAIL_TASK; begin
     $display("\033[38;2;38;38;38m..........\033[38;2;37;37;37m.\033[38;2;36;37;37m.\033[38;2;49;50;51m.\033[38;2;56;57;58m:\033[38;2;40;40;41m.\033[38;2;36;36;35m.\033[38;2;38;38;38m.....\033[38;2;37;37;37m.\033[38;2;35;35;35m.\033[38;2;36;36;36m.\033[38;2;38;38;38m........................................................\033[0m");
     $display("\033[38;2;38;38;38m.........\033[38;2;37;37;37m.\033[38;2;40;40;40m.\033[38;2;101;100;100m-\033[38;2;150;144;143m+\033[38;2;145;136;132m=\033[38;2;135;132;130m=\033[38;2;59;60;59m:\033[38;2;36;36;36m.\033[38;2;36;37;37m.\033[38;2;38;38;38m..\033[38;2;36;36;36m.\033[38;2;45;45;45m.\033[38;2;63;64;64m:\033[38;2;54;54;54m.\033[38;2;37;38;37m.\033[38;2;38;37;37m.\033[38;2;38;38;38m.......................\033[38;2;37;37;37m.\033[38;2;38;38;38m..\033[38;2;37;37;37m.\033[38;2;36;36;36m..\033[38;2;38;38;38m.........................\033[0m");
