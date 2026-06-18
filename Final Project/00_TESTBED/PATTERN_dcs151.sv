@@ -5,7 +5,8 @@
 `define SEED             23
 `define RAM_NUMBER       5
 `define OP_SET_NUMBER    5
-`define CORNER_CASE_NUMBER 16
+`define CORNER_RAM_NUMBER 4
+`define CORNER_OP_SET_NUMBER 4
 `define RAM_WIDTH        256
 `define RAM_DEPTH        256
 `define READ_LATENCY     50
@@ -16,8 +17,8 @@
 `define DBG_CLR_RED      "\033[1;31m"
 `define DBG_CLR_GREEN    "\033[1;32m"
 `define DBG_CLR_YELLOW   "\033[1;33m"
-`define DBG_CLR_BLUE     "\033[1;34m"
-`define DBG_CLR_CYAN     "\033[1;36m"
+`define DBG_CLR_PURPLE   "\033[1;35m"
+`define DBG_CLR_WHITE    "\033[1;37m"
 `define DBG_CLR_BLINK_RED "\033[5;1;31m"
 
 module PATTERN(
@@ -39,6 +40,7 @@ module PATTERN(
 // ============================================================
 localparam int N        = 8;
 localparam int MAX_WAIT = 10000;
+localparam int CORNER_RAM_PATTERN_NUMBER = 7;
 
 typedef int signed mtx_t [0:N-1][0:N-1];
 
@@ -53,6 +55,10 @@ logic [31:0] golden_out [0:`RAM_DEPTH-1];
 
 logic [1:0] cur_op;
 logic [1:0] cur_act;
+bit fixed_op_en;
+bit fixed_act_en;
+logic [1:0] fixed_op;
+logic [1:0] fixed_act;
 string cur_phase;
 string cur_case_name;
 
@@ -88,13 +94,15 @@ initial begin
         fp_debug = $fopen("fp_debug.txt", "w");
         if (fp_debug == 0) begin
             YOU_FAIL_TASK();
-            $display("======================================================================================================================");
-            $display(" Cannot open debug dump file.");
-            $display(" file_name = fp_debug.txt");
-            $display("======================================================================================================================");
+            print_fail_msg_task(
+                "Cannot open debug dump file.",
+                "file_name = fp_debug.txt"
+            );
             $finish;
         end
     end
+
+    init_fixed_op_act_mode_task();
 
     reset_task();
 
@@ -171,6 +179,34 @@ initial begin
 end
 
 
+task automatic print_fail_msg_task(
+    input string title,
+    input string line0 = "",
+    input string line1 = "",
+    input string line2 = "",
+    input string line3 = "",
+    input string line4 = "",
+    input string line5 = "",
+    input string line6 = "",
+    input string line7 = ""
+);
+begin
+    $display("----------------------------------------------------------------------------------------------------------------------");
+    $display("FAIL!");
+    $display("%s", title);
+    if (line0.len() != 0) $display("%s", line0);
+    if (line1.len() != 0) $display("%s", line1);
+    if (line2.len() != 0) $display("%s", line2);
+    if (line3.len() != 0) $display("%s", line3);
+    if (line4.len() != 0) $display("%s", line4);
+    if (line5.len() != 0) $display("%s", line5);
+    if (line6.len() != 0) $display("%s", line6);
+    if (line7.len() != 0) $display("%s", line7);
+    $display("----------------------------------------------------------------------------------------------------------------------");
+end
+endtask
+
+
 // ============================================================
 // Reset
 // ============================================================
@@ -193,11 +229,11 @@ begin
 
     if (out_valid !== 1'b0 || out_data !== 32'd0) begin
         YOU_FAIL_TASK();
-        $display("======================================================================================================================");
-        $display(" Reset output is not zero.");
-        $display(" out_valid = %b", out_valid);
-        $display(" out_data  = %h", out_data);
-        $display("======================================================================================================================");
+        print_fail_msg_task(
+            "Reset output is not zero.",
+            $sformatf("out_valid = %b", out_valid),
+            $sformatf("out_data  = %h", out_data)
+        );
         #(3 * `CYCLE_TIME);
         $finish;
     end
@@ -220,10 +256,10 @@ begin
     fp = $fopen(file_name, "r");
     if (fp == 0) begin
         YOU_FAIL_TASK();
-        $display("======================================================================================================================");
-        $display(" Cannot open RAM data file.");
-        $display(" file_name = %s", file_name);
-        $display("======================================================================================================================");
+        print_fail_msg_task(
+            "Cannot open RAM data file.",
+            $sformatf("file_name = %s", file_name)
+        );
         $finish;
     end
     $fclose(fp);
@@ -234,9 +270,6 @@ begin
         golden_ram[a] = unpack_word_to_mtx(ram_word[a]);
     end
 
-    if (`DEBUG_EN == 1) begin
-        $fdisplay(fp_debug, "%s[LOAD]%s %s", `DBG_CLR_CYAN, `DBG_CLR_RESET, file_name);
-    end
 end
 endtask
 
@@ -248,10 +281,6 @@ begin
     data_file = $sformatf("../00_TESTBED/ram/pat%02d_data.txt", rid);
     $readmemh(data_file, $root.TESTBED.u_data_ram.mem);
 
-    if (`DEBUG_EN == 1) begin
-        $fdisplay(fp_debug, "%s[DUT RAM PRELOAD]%s %s -> $root.TESTBED.u_data_ram.mem",
-                  `DBG_CLR_CYAN, `DBG_CLR_RESET, data_file);
-    end
 end
 endtask
 
@@ -293,12 +322,12 @@ begin
 
     for (oi = 0; oi < 4; oi = oi + 1) begin
         for (ai = 0; ai < 4; ai = ai + 1) begin
-            $display("  op=%0d %-11s act=%0d %-4s count=%0d",
-                     oi, op_name_func(oi), ai, act_name_func(ai), op_act_count[oi][ai]);
+            $display("  op = %-5s act = %-6s count = %0d",
+                      op_name_func(oi), act_name_func(ai), op_act_count[oi][ai]);
 
             if (`DEBUG_EN == 1 && fp_debug != 0) begin
-                $fdisplay(fp_debug, "  op=%0d %-11s act=%0d %-4s count=%0d",
-                          oi, op_name_func(oi), ai, act_name_func(ai), op_act_count[oi][ai]);
+                $fdisplay(fp_debug, "  op = %-5s act = %-6s count = %0d",
+                          op_name_func(oi), act_name_func(ai), op_act_count[oi][ai]);
             end
         end
     end
@@ -309,13 +338,14 @@ endtask
 
 
 task automatic run_corner_tests_task();
-    int cid;
+    int crid;
+    int osid;
 begin
     $display("----------------------------------------------------------------------------------------------------------------------");
-    $display("\033[36mStart corner tests: dedicated RAM + fixed op/act coverage\033[0m");
+    $display("\033[36mStart corner tests: mixed RAM + 4 chained op sets per RAM\033[0m");
     $display("----------------------------------------------------------------------------------------------------------------------");
 
-    for (cid = 0; cid < `CORNER_CASE_NUMBER; cid = cid + 1) begin
+    for (crid = 0; crid < `CORNER_RAM_NUMBER; crid = crid + 1) begin
         @(negedge clk);
         mem_set  = 1'b0;
         in_valid = 1'b0;
@@ -326,18 +356,24 @@ begin
         repeat (3) @(negedge clk);
 
         cur_phase     = "CORNER";
-        cur_case_name = corner_case_name_func(cid);
-        load_corner_ram_task(cid);
+        cur_case_name = corner_ram_name_func(crid);
+        load_corner_ram_task(crid);
 
         @(negedge clk);
         mem_set = 1'b1;
         repeat (3) @(negedge clk);
 
-        corner_op_set_task(cid);
+        for (osid = 0; osid < `CORNER_OP_SET_NUMBER; osid = osid + 1) begin
+            if (osid != 0) begin
+                repeat ($urandom_range(1, 3)) @(negedge clk);
+            end
 
-        build_golden_task(cur_op, cur_act);
-        send_op_set_task(cur_op, cur_act);
-        check_all_outputs_task(`RAM_NUMBER + cid, cid);
+            corner_op_set_task(crid, osid);
+
+            build_golden_task(cur_op, cur_act);
+            send_op_set_task(cur_op, cur_act);
+            check_all_outputs_task(`RAM_NUMBER + crid, osid);
+        end
 
         @(negedge clk);
         mem_set  = 1'b0;
@@ -355,93 +391,200 @@ end
 endtask
 
 
-task automatic load_corner_ram_task(input int cid);
+task automatic load_corner_ram_task(input int crid);
     int a;
     mtx_t corner_mtx;
     logic [255:0] corner_word;
 begin
     for (a = 0; a < `RAM_DEPTH; a = a + 1) begin
-        corner_mtx  = corner_mtx_func(cid % 8, a + cid * 17);
+        corner_mtx  = corner_ram_mtx_func(crid, a);
         corner_word = pack_mtx4(corner_mtx);
 
         golden_ram[a] = corner_mtx;
         $root.TESTBED.u_data_ram.mem[a] = corner_word;
     end
 
-    if (`DEBUG_EN == 1) begin
-        $fdisplay(fp_debug, "%s[CORNER RAM]%s case=%0d %s -> $root.TESTBED.u_data_ram.mem",
-                  `DBG_CLR_CYAN, `DBG_CLR_RESET, cid, cur_case_name);
-    end
 end
 endtask
 
 
-task automatic corner_op_set_task(input int cid);
+task automatic corner_op_set_task(input int crid, input int osid);
     int op_i;
     int act_i;
 begin
-    op_i  = (cid / 4) % 4;
-    act_i = cid % 4;
+    op_i  = corner_op_func(crid, osid);
+    act_i = corner_act_func(crid, osid);
 
     cur_op  = op_i;
     cur_act = act_i;
+    cur_case_name = corner_case_name_func(crid, osid);
+    apply_fixed_op_act_mode_task();
 
-    param_q = corner_mtx_func((cid + 1) % 8, cid + 101);
-    param_k = corner_mtx_func((cid + 3) % 8, cid + 211);
-    param_v = corner_mtx_func((cid + 5) % 8, cid + 307);
+    param_q = corner_param_stress_mtx_func(crid, osid, cur_op, 0);
+    param_k = corner_param_stress_mtx_func(crid, osid, cur_op, 1);
+    param_v = corner_param_stress_mtx_func(crid, osid, cur_op, 2);
 
     record_op_act_coverage_task();
 
-    if (`DEBUG_EN == 1) begin
-        $fdisplay(fp_debug, "%s[CORNER SET %0d]%s op=%0d act=%0d %s",
-                  `DBG_CLR_CYAN, cid, `DBG_CLR_RESET, cur_op, cur_act, cur_case_name);
-    end
 end
 endtask
 
 
-function automatic string corner_case_name_func(input int cid);
-    int pat;
-    logic [1:0] op_i;
-    logic [1:0] act_i;
+function automatic logic [1:0] corner_op_func(input int crid, input int osid);
 begin
-    pat   = cid % 8;
-    op_i  = (cid / 4) % 4;
-    act_i = cid % 4;
-
-    corner_case_name_func = $sformatf("%s | op=%s act=%s",
-                                      corner_pattern_name_func(pat),
-                                      op_name_func(op_i),
-                                      act_name_func(act_i));
+    corner_op_func = (osid + crid) % 4;
 end
 endfunction
 
 
-function automatic string corner_pattern_name_func(input int pat);
+function automatic logic [1:0] corner_act_func(input int crid, input int osid);
+    int offset;
 begin
-    case (pat % 8)
-        0: corner_pattern_name_func = "RAM all zero";
-        1: corner_pattern_name_func = "RAM all max +7";
-        2: corner_pattern_name_func = "RAM all min -8";
-        3: corner_pattern_name_func = "RAM checkerboard +7/-8";
-        4: corner_pattern_name_func = "RAM diagonal +7";
-        5: corner_pattern_name_func = "RAM row ramp";
-        6: corner_pattern_name_func = "RAM column ramp";
-        7: corner_pattern_name_func = "RAM sparse impulse";
-        default: corner_pattern_name_func = "RAM unknown";
+    case (crid % 4)
+        0: offset = 1;
+        1: offset = 3;
+        2: offset = 2; // crid=2, osid=0 becomes SHA/CAT on freshly loaded RAM.
+        3: offset = 2;
+        default: offset = 0;
+    endcase
+
+    corner_act_func = (osid + offset) % 4;
+end
+endfunction
+
+
+function automatic string corner_ram_name_func(input int crid);
+begin
+    case (crid % 4)
+        0: corner_ram_name_func = "corner-ram A";
+        1: corner_ram_name_func = "corner-ram B";
+        2: corner_ram_name_func = "corner-ram C";
+        3: corner_ram_name_func = "corner-ram D";
+        default: corner_ram_name_func = "corner-ram X";
     endcase
 end
 endfunction
 
 
-function automatic mtx_t corner_mtx_func(input int pat, input int salt);
+function automatic string corner_case_name_func(input int crid, input int osid);
+begin
+    corner_case_name_func = $sformatf("%s | set%0d %s/%s | %s",
+                                      corner_ram_name_func(crid),
+                                      osid,
+                                      op_name_func(corner_op_func(crid, osid)),
+                                      act_name_func(corner_act_func(crid, osid)),
+                                      corner_param_name_func(crid, osid, corner_op_func(crid, osid)));
+end
+endfunction
+
+
+function automatic string corner_param_name_func(input int crid, input int osid, input logic [1:0] op_i);
+begin
+    if (op_i == 2'b10 || op_i == 2'b11) begin
+        case (crid % 4)
+            0: corner_param_name_func = "att-all-pos";
+            1: corner_param_name_func = "att-all-neg";
+            2: corner_param_name_func = "att-qk-neg-v-pos";
+            3: corner_param_name_func = "att-q-pos-kv-neg";
+            default: corner_param_name_func = "mixed";
+        endcase
+    end
+    else begin
+        case (crid % 4)
+            0: corner_param_name_func = "max-pos";
+            1: corner_param_name_func = "max-neg";
+            2: corner_param_name_func = "checker-extreme";
+            3: corner_param_name_func = "structured-extreme";
+            default: corner_param_name_func = "mixed";
+        endcase
+    end
+end
+endfunction
+
+
+function automatic mtx_t corner_ram_mtx_func(input int crid, input int addr);
+    mtx_t m;
+    int pat;
+    int salt;
+begin
+    pat  = (addr + crid) % CORNER_RAM_PATTERN_NUMBER;
+    salt = addr + crid * 37;
+
+    case (pat)
+        0:  m = stress_fill_mtx_func(0);
+        1:  m = stress_fill_mtx_func(7);
+        2:  m = stress_fill_mtx_func(-8);
+        3:  m = stress_checker_mtx_func(7, -8, salt);
+        4:  m = stress_impulse_mtx_func(7, -8, salt);
+        5:  m = stress_row_split_mtx_func(7, -8);
+        6:  m = stress_col_split_mtx_func(7, -8);
+        default: m = stress_fill_mtx_func(0);
+    endcase
+
+    return m;
+end
+endfunction
+
+
+function automatic mtx_t corner_param_stress_mtx_func(
+    input int crid,
+    input int osid,
+    input logic [1:0] op_i,
+    input int param_sel
+);
+    mtx_t m;
+    int profile;
+begin
+    profile = crid % 4;
+
+    case (op_i)
+        2'b00: begin
+            case (profile)
+                0: m = stress_fill_mtx_func(7);
+                1: m = stress_fill_mtx_func(-8);
+                2: m = stress_checker_mtx_func(7, -8, crid + osid);
+                3: m = stress_col_split_mtx_func(7, -8);
+                default: m = stress_fill_mtx_func(0);
+            endcase
+        end
+
+        2'b01: begin
+            m = stress_conv_kernel_mtx_func(profile);
+        end
+
+        2'b10,
+        2'b11: begin
+            case (profile)
+                0: m = stress_fill_mtx_func(7);
+                1: m = stress_fill_mtx_func(-8);
+                2: begin
+                    if (param_sel == 2) m = stress_fill_mtx_func(7);
+                    else                m = stress_fill_mtx_func(-8);
+                end
+                3: begin
+                    if (param_sel == 0) m = stress_fill_mtx_func(7);
+                    else                m = stress_fill_mtx_func(-8);
+                end
+                default: m = stress_fill_mtx_func(0);
+            endcase
+        end
+
+        default: m = stress_fill_mtx_func(0);
+    endcase
+
+    return m;
+end
+endfunction
+
+
+function automatic mtx_t stress_fill_mtx_func(input int signed val);
     mtx_t m;
     int i;
     int j;
 begin
     for (i = 0; i < N; i = i + 1) begin
         for (j = 0; j < N; j = j + 1) begin
-            m[i][j] = corner_value_func(pat, salt, i, j);
+            m[i][j] = val;
         end
     end
 
@@ -450,7 +593,69 @@ end
 endfunction
 
 
-function automatic int signed corner_value_func(input int pat, input int salt, input int i, input int j);
+function automatic mtx_t stress_checker_mtx_func(
+    input int signed even_val,
+    input int signed odd_val,
+    input int salt
+);
+    mtx_t m;
+    int i;
+    int j;
+begin
+    for (i = 0; i < N; i = i + 1) begin
+        for (j = 0; j < N; j = j + 1) begin
+            if (((i + j + salt) % 2) == 0) m[i][j] = even_val;
+            else                           m[i][j] = odd_val;
+        end
+    end
+
+    return m;
+end
+endfunction
+
+
+function automatic mtx_t stress_row_split_mtx_func(input int signed top_val, input int signed bottom_val);
+    mtx_t m;
+    int i;
+    int j;
+begin
+    for (i = 0; i < N; i = i + 1) begin
+        for (j = 0; j < N; j = j + 1) begin
+            if (i < 4) m[i][j] = top_val;
+            else       m[i][j] = bottom_val;
+        end
+    end
+
+    return m;
+end
+endfunction
+
+
+function automatic mtx_t stress_col_split_mtx_func(input int signed left_val, input int signed right_val);
+    mtx_t m;
+    int i;
+    int j;
+begin
+    for (i = 0; i < N; i = i + 1) begin
+        for (j = 0; j < N; j = j + 1) begin
+            if (j < 4) m[i][j] = left_val;
+            else       m[i][j] = right_val;
+        end
+    end
+
+    return m;
+end
+endfunction
+
+
+function automatic mtx_t stress_impulse_mtx_func(
+    input int signed pos_val,
+    input int signed neg_val,
+    input int salt
+);
+    mtx_t m;
+    int i;
+    int j;
     int pos_i;
     int pos_j;
     int neg_i;
@@ -461,27 +666,46 @@ begin
     neg_i = N - 1 - pos_i;
     neg_j = N - 1 - pos_j;
 
-    case (pat % 8)
-        0: corner_value_func = 0;
-        1: corner_value_func = 7;
-        2: corner_value_func = -8;
-        3: begin
-            if (((i + j + salt) % 2) == 0) corner_value_func = 7;
-            else                           corner_value_func = -8;
+    for (i = 0; i < N; i = i + 1) begin
+        for (j = 0; j < N; j = j + 1) begin
+            if (i == pos_i && j == pos_j)      m[i][j] = pos_val;
+            else if (i == neg_i && j == neg_j) m[i][j] = neg_val;
+            else                               m[i][j] = 0;
         end
-        4: begin
-            if (i == j) corner_value_func = 7;
-            else        corner_value_func = 0;
-        end
-        5: corner_value_func = ((j + salt) % 16) - 8;
-        6: corner_value_func = ((i + salt) % 16) - 8;
-        7: begin
-            if (i == pos_i && j == pos_j)      corner_value_func = 7;
-            else if (i == neg_i && j == neg_j) corner_value_func = -8;
-            else                               corner_value_func = 0;
-        end
-        default: corner_value_func = 0;
-    endcase
+    end
+
+    return m;
+end
+endfunction
+
+
+function automatic mtx_t stress_conv_kernel_mtx_func(input int mode);
+    mtx_t m;
+    int idx;
+    int signed tap;
+begin
+    m = stress_fill_mtx_func(0);
+
+    for (idx = 0; idx < 9; idx = idx + 1) begin
+        case (mode % 4)
+            0: tap = 7;
+            1: tap = -8;
+            2: begin
+                if ((idx % 2) == 0) tap = 7;
+                else                tap = -8;
+            end
+            3: begin
+                if (idx == 4)      tap = 7;
+                else if (idx == 8) tap = -8;
+                else               tap = 0;
+            end
+            default: tap = 0;
+        endcase
+
+        m[idx / N][idx % N] = tap;
+    end
+
+    return m;
 end
 endfunction
 
@@ -502,12 +726,9 @@ begin
 
     cur_phase     = "RANDOM";
     cur_case_name = $sformatf("pat%02d random set %0d", ram_idx, sid);
+    apply_fixed_op_act_mode_task();
     record_op_act_coverage_task();
 
-    if (`DEBUG_EN == 1) begin
-        $fdisplay(fp_debug, "%s[SET %0d]%s op=%0d act=%0d",
-                  `DBG_CLR_CYAN, sid, `DBG_CLR_RESET, cur_op, cur_act);
-    end
 end
 endtask
 
@@ -1125,8 +1346,8 @@ begin
     case (op_i)
         2'b00: op_name_func = "FFN";
         2'b01: op_name_func = "CONV";
-        2'b10: op_name_func = "ATTN_SINGLE";
-        2'b11: op_name_func = "ATTN_MUL";
+        2'b10: op_name_func = "SHA";
+        2'b11: op_name_func = "MHA";
         default: op_name_func = "UNKNOWN";
     endcase
 end
@@ -1144,6 +1365,111 @@ begin
     endcase
 end
 endfunction
+
+
+task automatic init_fixed_op_act_mode_task();
+    int fixed_op_count;
+    int fixed_act_count;
+begin
+    fixed_op_en    = 1'b0;
+    fixed_act_en   = 1'b0;
+    fixed_op       = 2'd0;
+    fixed_act      = 2'd0;
+    fixed_op_count = 0;
+    fixed_act_count = 0;
+
+`ifdef FFN
+    fixed_op_en = 1'b1;
+    fixed_op = 2'b00;
+    fixed_op_count = fixed_op_count + 1;
+`endif
+`ifdef CONV
+    fixed_op_en = 1'b1;
+    fixed_op = 2'b01;
+    fixed_op_count = fixed_op_count + 1;
+`endif
+`ifdef SHA
+    fixed_op_en = 1'b1;
+    fixed_op = 2'b10;
+    fixed_op_count = fixed_op_count + 1;
+`endif
+`ifdef MHA
+    fixed_op_en = 1'b1;
+    fixed_op = 2'b11;
+    fixed_op_count = fixed_op_count + 1;
+`endif
+
+`ifdef RELU
+    fixed_act_en = 1'b1;
+    fixed_act = 2'b00;
+    fixed_act_count = fixed_act_count + 1;
+`endif
+`ifdef ReLU
+    fixed_act_en = 1'b1;
+    fixed_act = 2'b00;
+    fixed_act_count = fixed_act_count + 1;
+`endif
+`ifdef RAT
+    fixed_act_en = 1'b1;
+    fixed_act = 2'b01;
+    fixed_act_count = fixed_act_count + 1;
+`endif
+`ifdef CAT
+    fixed_act_en = 1'b1;
+    fixed_act = 2'b10;
+    fixed_act_count = fixed_act_count + 1;
+`endif
+`ifdef BAT
+    fixed_act_en = 1'b1;
+    fixed_act = 2'b11;
+    fixed_act_count = fixed_act_count + 1;
+`endif
+
+    if (fixed_op_count > 1 || fixed_act_count > 1) begin
+        YOU_FAIL_TASK();
+        print_fail_msg_task(
+            "Fixed OP/ACT define conflict.",
+            "Please choose at most one OP from: FFN CONV SHA MHA",
+            "Please choose at most one ACT from: RELU/ReLU RAT CAT BAT"
+        );
+        $finish;
+    end
+
+    if (fixed_op_en || fixed_act_en) begin
+        $display("----------------------------------------------------------------------------------------------------------------------");
+        $display("\033[33mFixed OP/ACT mode enabled:\033[0m OP=%s, ACT=%s",
+                 fixed_op_en ? op_name_func(fixed_op) : "RANDOM/CORNER",
+                 fixed_act_en ? act_name_func(fixed_act) : "RANDOM/CORNER");
+        $display("----------------------------------------------------------------------------------------------------------------------");
+
+        if (`DEBUG_EN == 1 && fp_debug != 0) begin
+            $fdisplay(fp_debug, "Fixed OP/ACT mode enabled: OP=%s, ACT=%s",
+                      fixed_op_en ? op_name_func(fixed_op) : "RANDOM/CORNER",
+                      fixed_act_en ? act_name_func(fixed_act) : "RANDOM/CORNER");
+        end
+    end
+end
+endtask
+
+
+task automatic apply_fixed_op_act_mode_task();
+begin
+    if (fixed_op_en) begin
+        cur_op = fixed_op;
+    end
+
+    if (fixed_act_en) begin
+        cur_act = fixed_act;
+    end
+
+    if (fixed_op_en || fixed_act_en) begin
+        cur_case_name = $sformatf("%s [fixed OP=%s ACT=%s]",
+                                  cur_case_name,
+                                  fixed_op_en ? op_name_func(cur_op) : "random/corner",
+                                  fixed_act_en ? act_name_func(cur_act) : "random/corner");
+    end
+end
+endtask
 
 
 function automatic mtx_t attn_score_range_func(
@@ -1230,13 +1556,13 @@ endfunction
 task automatic print_debug_separator_task();
     int i;
 begin
-    $fwrite(fp_debug, "%s+", `DBG_CLR_CYAN);
+    $fwrite(fp_debug, "%s=", `DBG_CLR_WHITE);
 
-    for (i = 0; i < 96; i = i + 1) begin
+    for (i = 0; i < 160; i = i + 1) begin
         $fwrite(fp_debug, "=");
     end
 
-    $fdisplay(fp_debug, "+%s", `DBG_CLR_RESET);
+    $fdisplay(fp_debug, "=%s", `DBG_CLR_RESET);
 end
 endtask
 
@@ -1246,17 +1572,17 @@ task automatic print_debug_banner_task(input string title);
 begin
     print_debug_separator_task();
 
-    $fwrite(fp_debug, "%s|", `DBG_CLR_CYAN);
-    for (i = 0; i < 96; i = i + 1) begin
+    $fwrite(fp_debug, "%s|", `DBG_CLR_WHITE);
+    for (i = 0; i < 160; i = i + 1) begin
         $fwrite(fp_debug, " ");
     end
     $fdisplay(fp_debug, "|%s", `DBG_CLR_RESET);
 
-    $fdisplay(fp_debug, "%s| %s%-94s%s |%s",
-              `DBG_CLR_CYAN, `DBG_CLR_BLINK_RED, title, `DBG_CLR_CYAN, `DBG_CLR_RESET);
+    $fdisplay(fp_debug, "%s| %s%-158s%s |%s",
+              `DBG_CLR_WHITE, `DBG_CLR_RED, title, `DBG_CLR_WHITE, `DBG_CLR_RESET);
 
-    $fwrite(fp_debug, "%s|", `DBG_CLR_CYAN);
-    for (i = 0; i < 96; i = i + 1) begin
+    $fwrite(fp_debug, "%s|", `DBG_CLR_WHITE);
+    for (i = 0; i < 160; i = i + 1) begin
         $fwrite(fp_debug, " ");
     end
     $fdisplay(fp_debug, "|%s", `DBG_CLR_RESET);
@@ -1269,7 +1595,7 @@ endtask
 task automatic print_debug_section_task(input string title);
 begin
     $fdisplay(fp_debug, "");
-    $fdisplay(fp_debug, "%s>>>=[ %s ]=<<<%s", `DBG_CLR_YELLOW, title, `DBG_CLR_RESET);
+    $fdisplay(fp_debug, "%s----- %s -----%s", `DBG_CLR_YELLOW, title, `DBG_CLR_RESET);
 end
 endtask
 
@@ -1278,13 +1604,32 @@ task automatic print_mtx_task(input string title, input mtx_t mtx);
     int i;
     int j;
 begin
-    $fdisplay(fp_debug, "  %s[%s]%s", `DBG_CLR_BLUE, title, `DBG_CLR_RESET);
+    $fdisplay(fp_debug, "  %s[%s]%s", `DBG_CLR_PURPLE, title, `DBG_CLR_RESET);
 
     for (i = 0; i < N; i = i + 1) begin
-        $fwrite(fp_debug, "    r%0d:", i);
+        $fwrite(fp_debug, "    [%0d]:", i);
 
         for (j = 0; j < N; j = j + 1) begin
-            $fwrite(fp_debug, "%6d", mtx[i][j]);
+            $fwrite(fp_debug, "%s%5d%s", `DBG_CLR_WHITE, mtx[i][j], `DBG_CLR_RESET);
+        end
+
+        $fdisplay(fp_debug, "");
+    end
+end
+endtask
+
+
+task automatic print_mtx_wide_task(input string title, input mtx_t mtx);
+    int i;
+    int j;
+begin
+    $fdisplay(fp_debug, "  %s[%s]%s", `DBG_CLR_PURPLE, title, `DBG_CLR_RESET);
+
+    for (i = 0; i < N; i = i + 1) begin
+        $fwrite(fp_debug, "    [%0d]:", i);
+
+        for (j = 0; j < N; j = j + 1) begin
+            $fwrite(fp_debug, "%s%6d%s", `DBG_CLR_WHITE, mtx[i][j], `DBG_CLR_RESET);
         end
 
         $fdisplay(fp_debug, "");
@@ -1302,21 +1647,60 @@ task automatic print_mtx2_task(
     int i;
     int j;
 begin
-    $fdisplay(fp_debug, "  %s%-35s%s | %s%-35s%s",
-              `DBG_CLR_BLUE, title0, `DBG_CLR_RESET,
-              `DBG_CLR_BLUE, title1, `DBG_CLR_RESET);
+    $fdisplay(fp_debug, "  %s%-44s%s      %s||%s      %s%-44s%s",
+              `DBG_CLR_PURPLE, title0, `DBG_CLR_RESET,
+              `DBG_CLR_WHITE, `DBG_CLR_RESET,
+              `DBG_CLR_PURPLE, title1, `DBG_CLR_RESET);
 
     for (i = 0; i < N; i = i + 1) begin
-        $fwrite(fp_debug, "  r%0d:", i);
+        $fwrite(fp_debug, "  [%0d]:", i);
 
         for (j = 0; j < N; j = j + 1) begin
-            $fwrite(fp_debug, "%4d", mtx0[i][j]);
+            $fwrite(fp_debug, "%s%5d%s", `DBG_CLR_WHITE, mtx0[i][j], `DBG_CLR_RESET);
         end
 
-        $fwrite(fp_debug, " | r%0d:", i);
+        $fwrite(fp_debug, "      %s||%s      [%0d]:", `DBG_CLR_WHITE, `DBG_CLR_RESET, i);
 
         for (j = 0; j < N; j = j + 1) begin
-            $fwrite(fp_debug, "%4d", mtx1[i][j]);
+            $fwrite(fp_debug, "%s%5d%s", `DBG_CLR_WHITE, mtx1[i][j], `DBG_CLR_RESET);
+        end
+
+        $fdisplay(fp_debug, "");
+    end
+end
+endtask
+
+
+task automatic print_mtx2_compare_task(
+    input string title0,
+    input mtx_t mtx0,
+    input string title1,
+    input mtx_t mtx1
+);
+    int i;
+    int j;
+begin
+    $fdisplay(fp_debug, "  %s%-44s%s      %s||%s      %s%-44s%s",
+              `DBG_CLR_PURPLE, title0, `DBG_CLR_RESET,
+              `DBG_CLR_WHITE, `DBG_CLR_RESET,
+              `DBG_CLR_PURPLE, title1, `DBG_CLR_RESET);
+
+    for (i = 0; i < N; i = i + 1) begin
+        $fwrite(fp_debug, "  [%0d]:", i);
+
+        for (j = 0; j < N; j = j + 1) begin
+            $fwrite(fp_debug, "%s%5d%s", `DBG_CLR_WHITE, mtx0[i][j], `DBG_CLR_RESET);
+        end
+
+        $fwrite(fp_debug, "      %s||%s      [%0d]:", `DBG_CLR_WHITE, `DBG_CLR_RESET, i);
+
+        for (j = 0; j < N; j = j + 1) begin
+            if (mtx1[i][j] != mtx0[i][j]) begin
+                $fwrite(fp_debug, "%s%5d%s", `DBG_CLR_RED, mtx1[i][j], `DBG_CLR_RESET);
+            end
+            else begin
+                $fwrite(fp_debug, "%s%5d%s", `DBG_CLR_WHITE, mtx1[i][j], `DBG_CLR_RESET);
+            end
         end
 
         $fdisplay(fp_debug, "");
@@ -1336,28 +1720,30 @@ task automatic print_mtx3_task(
     int i;
     int j;
 begin
-    $fdisplay(fp_debug, "  %s%-35s%s | %s%-35s%s | %s%-35s%s",
-              `DBG_CLR_BLUE, title0, `DBG_CLR_RESET,
-              `DBG_CLR_BLUE, title1, `DBG_CLR_RESET,
-              `DBG_CLR_BLUE, title2, `DBG_CLR_RESET);
+    $fdisplay(fp_debug, "  %s%-44s%s      %s||%s      %s%-44s%s      %s||%s      %s%-44s%s",
+              `DBG_CLR_PURPLE, title0, `DBG_CLR_RESET,
+              `DBG_CLR_WHITE, `DBG_CLR_RESET,
+              `DBG_CLR_PURPLE, title1, `DBG_CLR_RESET,
+              `DBG_CLR_WHITE, `DBG_CLR_RESET,
+              `DBG_CLR_PURPLE, title2, `DBG_CLR_RESET);
 
     for (i = 0; i < N; i = i + 1) begin
-        $fwrite(fp_debug, "  r%0d:", i);
+        $fwrite(fp_debug, "  [%0d]:", i);
 
         for (j = 0; j < N; j = j + 1) begin
-            $fwrite(fp_debug, "%4d", mtx0[i][j]);
+            $fwrite(fp_debug, "%s%5d%s", `DBG_CLR_WHITE, mtx0[i][j], `DBG_CLR_RESET);
         end
 
-        $fwrite(fp_debug, " | r%0d:", i);
+        $fwrite(fp_debug, "      %s||%s      [%0d]:", `DBG_CLR_WHITE, `DBG_CLR_RESET, i);
 
         for (j = 0; j < N; j = j + 1) begin
-            $fwrite(fp_debug, "%4d", mtx1[i][j]);
+            $fwrite(fp_debug, "%s%5d%s", `DBG_CLR_WHITE, mtx1[i][j], `DBG_CLR_RESET);
         end
 
-        $fwrite(fp_debug, " | r%0d:", i);
+        $fwrite(fp_debug, "      %s||%s      [%0d]:", `DBG_CLR_WHITE, `DBG_CLR_RESET, i);
 
         for (j = 0; j < N; j = j + 1) begin
-            $fwrite(fp_debug, "%4d", mtx2[i][j]);
+            $fwrite(fp_debug, "%s%5d%s", `DBG_CLR_WHITE, mtx2[i][j], `DBG_CLR_RESET);
         end
 
         $fdisplay(fp_debug, "");
@@ -1371,14 +1757,14 @@ task automatic print_conv_kernel_task(input mtx_t kernel);
     int j;
     int idx;
 begin
-    $fdisplay(fp_debug, "  %s[Conv 3x3 Kernel]%s", `DBG_CLR_BLUE, `DBG_CLR_RESET);
+    $fdisplay(fp_debug, "  %s[Conv 3x3 Kernel]%s", `DBG_CLR_PURPLE, `DBG_CLR_RESET);
 
     for (i = 0; i < 3; i = i + 1) begin
-        $fwrite(fp_debug, "    r%0d:", i);
+        $fwrite(fp_debug, "    [%0d]:", i);
 
         for (j = 0; j < 3; j = j + 1) begin
             idx = i * 3 + j;
-            $fwrite(fp_debug, "%6d", kernel[idx / N][idx % N]);
+            $fwrite(fp_debug, "%s%6d%s", `DBG_CLR_WHITE, kernel[idx / N][idx % N], `DBG_CLR_RESET);
         end
 
         $fdisplay(fp_debug, "");
@@ -1387,15 +1773,30 @@ end
 endtask
 
 
-task automatic print_token_values_task(input logic [31:0] data);
+task automatic print_token_values_compare_task(
+    input logic [31:0] data,
+    input logic [31:0] ref_data,
+    input string match_color,
+    input string mismatch_color
+);
+    logic [3:0] nibble;
+    logic [3:0] ref_nibble;
     logic signed [3:0] s4;
     int j;
 begin
-    $fwrite(fp_debug, "%08h  (", data);
+    $fwrite(fp_debug, "%s%08h%s  (", match_color, data, `DBG_CLR_RESET);
 
     for (j = 0; j < N; j = j + 1) begin
-        s4 = data[31 - j*4 -: 4];
-        $fwrite(fp_debug, "%4d", s4);
+        nibble     = data[31 - j*4 -: 4];
+        ref_nibble = ref_data[31 - j*4 -: 4];
+        s4         = nibble;
+
+        if (nibble !== ref_nibble) begin
+            $fwrite(fp_debug, "%s%4d%s", mismatch_color, s4, `DBG_CLR_RESET);
+        end
+        else begin
+            $fwrite(fp_debug, "%s%4d%s", match_color, s4, `DBG_CLR_RESET);
+        end
     end
 
     $fwrite(fp_debug, " )");
@@ -1409,19 +1810,18 @@ task automatic print_token_pair_task(
     input logic [31:0] dut_data
 );
 begin
-    $fdisplay(fp_debug, "  %s%-47s%s | %s%-47s%s",
-              `DBG_CLR_GREEN, golden_label, `DBG_CLR_RESET,
-              `DBG_CLR_RED, dut_label, `DBG_CLR_RESET);
-    $fwrite(fp_debug, "  %s", `DBG_CLR_GREEN);
-    print_token_values_task(golden_data);
-    $fwrite(fp_debug, "%s | %s", `DBG_CLR_RESET, `DBG_CLR_RED);
-    print_token_values_task(dut_data);
+    $fwrite(fp_debug, "  %s : ", golden_label);
+    print_token_values_compare_task(golden_data, dut_data, `DBG_CLR_WHITE, `DBG_CLR_WHITE);
+    $fdisplay(fp_debug, "%s", `DBG_CLR_RESET);
+
+    $fwrite(fp_debug, "  %-12s  : ", dut_label);
+    print_token_values_compare_task(dut_data, golden_data, `DBG_CLR_WHITE, `DBG_CLR_RED);
     $fdisplay(fp_debug, "%s", `DBG_CLR_RESET);
 end
 endtask
 
 
-task automatic print_wr_data_pair_task(
+task automatic print_wr_data_compare_task(
     input logic [255:0] golden_wr_data,
     input logic [255:0] dut_wr_data
 );
@@ -1431,16 +1831,8 @@ begin
     golden_wr_mtx = unpack_word_to_mtx(golden_wr_data);
     dut_wr_mtx    = unpack_word_to_mtx(dut_wr_data);
 
-    $fdisplay(fp_debug, "  DUT write bus: wr_en=%b wr_addr=%0d wr_valid=%b wr_ready=%b",
-              $root.TESTBED.wr_en,
-              $root.TESTBED.wr_addr,
-              $root.TESTBED.wr_valid,
-              $root.TESTBED.wr_ready);
-
-    print_mtx2_task("Golden wr_data", golden_wr_mtx, "DUT wr_data", dut_wr_mtx);
-
-    $fdisplay(fp_debug, "  Golden wr_data = %064h", golden_wr_data);
-    $fdisplay(fp_debug, "  DUT wr_data    = %064h", dut_wr_data);
+    print_mtx2_compare_task("Requantized (golden wr_data)", golden_wr_mtx,
+                            "Your wr_data", dut_wr_mtx);
 end
 endtask
 
@@ -1473,7 +1865,9 @@ begin
                 end
 
                 threshold = sum >>> 3;
-                $fdisplay(fp_debug, "  RAT row[%0d]: row_sum=%0d threshold(>>3)=%0d", i, sum, threshold);
+                $fdisplay(fp_debug, "  RAT row[%0d]: row_sum=%s%6d%s  threshold(>>3)=%s%0d%s",
+                          i, `DBG_CLR_WHITE, sum, `DBG_CLR_RESET,
+                          `DBG_CLR_WHITE, threshold, `DBG_CLR_RESET);
             end
         end
 
@@ -1486,7 +1880,9 @@ begin
                 end
 
                 threshold = sum >>> 3;
-                $fdisplay(fp_debug, "  CAT col[%0d]: col_sum=%0d threshold(>>3)=%0d", j, sum, threshold);
+                $fdisplay(fp_debug, "  CAT col[%0d]: col_sum=%s%6d%s  threshold(>>3)=%s%0d%s",
+                          j, `DBG_CLR_WHITE, sum, `DBG_CLR_RESET,
+                          `DBG_CLR_WHITE, threshold, `DBG_CLR_RESET);
             end
         end
 
@@ -1502,8 +1898,10 @@ begin
                     end
 
                     threshold = sum >>> 4;
-                    $fdisplay(fp_debug, "  BAT block row[%0d:%0d] col[%0d:%0d]: block_sum=%0d threshold(>>4)=%0d",
-                              bi, bi + 3, bj, bj + 3, sum, threshold);
+                    $fdisplay(fp_debug, "  BAT block row[%0d:%0d] col[%0d:%0d]: block_sum=%s%6d%s  threshold(>>4)=%s%0d%s",
+                              bi, bi + 3, bj, bj + 3,
+                              `DBG_CLR_WHITE, sum, `DBG_CLR_RESET,
+                              `DBG_CLR_WHITE, threshold, `DBG_CLR_RESET);
                 end
             end
         end
@@ -1556,7 +1954,7 @@ begin
     print_debug_banner_task("DEBUG DUMP");
     $fdisplay(fp_debug, " RAM=%0d | OP_SET=%0d | DATA=%0d | OP=%s | ACT=%s",
               rid, sid, addr, op_name_func(cur_op), act_name_func(cur_act));
-    $fdisplay(fp_debug, " PHASE=%s | CASE=%s", cur_phase, cur_case_name);
+    $fdisplay(fp_debug, " PHASE=%s | TEST=%s", cur_phase, cur_case_name);
     $fdisplay(fp_debug, "%s Reason: %s%s", `DBG_CLR_BLINK_RED, reason, `DBG_CLR_RESET);
     print_debug_separator_task();
 
@@ -1605,9 +2003,9 @@ begin
                 score_1 = attn_score_range_func(q_quant, k_quant, 0, N);
                 prob_1  = attn_act_func(score_1);
 
-                print_debug_section_task("ATTN_SINGLE: Score = Q * K^T");
+                print_debug_section_task("SHA: Score = Q * K^T");
                 print_mtx_task("Attention Score", score_1);
-                print_debug_section_task("ATTN_SINGLE: Probability = act(Score)");
+                print_debug_section_task("SHA: Probability = act(Score)");
                 print_mtx_task("Probability", prob_1);
 
                 comp_mtx = attn_context_range_func(prob_1, v_quant, 0, N);
@@ -1618,9 +2016,9 @@ begin
                 prob_1  = attn_act_func(score_1);
                 prob_2  = attn_act_func(score_2);
 
-                print_debug_section_task("ATTN_MUL: Scores (head0 cols 0:4, head1 cols 4:8)");
+                print_debug_section_task("MHA: Scores (head0 cols 0:4, head1 cols 4:8)");
                 print_mtx2_task("Score_1", score_1, "Score_2", score_2);
-                print_debug_section_task("ATTN_MUL: Probabilities");
+                print_debug_section_task("MHA: Probabilities");
                 print_mtx2_task("Probability_1", prob_1, "Probability_2", prob_2);
 
                 head_1_ctx = attn_context_range_func(prob_1, v_quant, 0, 4);
@@ -1629,30 +2027,25 @@ begin
             end
 
             print_debug_section_task("Attention Output");
-            print_mtx_task("Attention Output", comp_mtx);
+            print_mtx_wide_task("Attention Output", comp_mtx);
         end
     endcase
 
     act_mtx   = post_act_func(comp_mtx, cur_act);
     quant_mtx = quantize_pot_func(act_mtx);
+    golden_wr_data = pack_mtx4(quant_mtx);
+    dut_wr_data    = $root.TESTBED.wr_data;
 
     section_title = $sformatf("Activation (%s)", act_name_func(cur_act));
     print_debug_section_task(section_title);
     print_activation_debug_task(cur_act, comp_mtx, act_mtx);
 
-    print_debug_section_task("Requantize");
-    print_mtx_task("Quantized Post-activation output", quant_mtx);
+    print_debug_section_task("Requantization (Whole Output)");
+    print_wr_data_compare_task(golden_wr_data, dut_wr_data);
 
-    print_debug_section_task("Expected Output");
-    print_token_pair_task("Golden output", golden_data, "DUT out_data", dut_data);
-    $fdisplay(fp_debug, "  out_valid = %b", out_valid);
+    print_debug_section_task("Expected Output (Last Token)");
+    print_token_pair_task("Golden output", golden_data, "Your output", dut_data);
     $fdisplay(fp_debug, "  Match     = %sFAIL !!!%s", `DBG_CLR_BLINK_RED, `DBG_CLR_RESET);
-
-    golden_wr_data = pack_mtx4(golden_ram[addr]);
-    dut_wr_data    = $root.TESTBED.wr_data;
-
-    print_debug_section_task("Write-back Data");
-    print_wr_data_pair_task(golden_wr_data, dut_wr_data);
 
     print_debug_separator_task();
     $fclose(fp_debug);
@@ -1661,21 +2054,6 @@ end
 endtask
 
 
-
-// ============================================================
-// Output checker + latency counter
-// One operation set should generate 256 outputs.
-// Output order is assumed to be addr 0 -> 255.
-//
-// Latency rule:
-// Data 0:
-//     in_valid fall -> out_valid rise
-//
-// Data 1~255:
-//     out_valid fall -> out_valid rise + 1
-//
-// If out_valid keeps high continuously, next data latency = 1.
-// ============================================================
 task automatic check_all_outputs_task(input int rid, input int sid);
     int a;
     int word_latency;
@@ -1698,20 +2076,21 @@ begin
     end
 
     $display("--------------------------------------------------------------------------------------------------------------------------");
-    $display("\033[33mOP SET DONE:\033[0m \033[35mPATTERN NO. %2d, OP SET NO. %1d \033[0m| op = %0d, act = %0d | opset latency = %0d | total latency = %0d",
-             rid, sid, cur_op, cur_act, opset_latency, total_latency);
+    $display("\033[33mOP SET DONE:\033[0m \033[35mPATTERN NO. %2d, OP SET NO. %1d \033[0m| op = %s, act = %s | opset latency = %0d | total latency = %0d",
+             rid, sid, op_name_func(cur_op), act_name_func(cur_act), opset_latency, total_latency);
     $display("--------------------------------------------------------------------------------------------------------------------------");
 
     if (out_valid === 1'b1) begin
         YOU_FAIL_TASK();
-        $display("======================================================================================================================");
-        $display("Extra out_valid after 256 outputs.");
-        $display("PATTERN NO. = %0d, OP SET NO. = %0d", rid, sid);
-        $display("out_data = %h", out_data);
-        $display("======================================================================================================================");
+        print_fail_msg_task(
+            "Extra out_valid after 256 outputs.",
+            $sformatf("PATTERN NO. = %0d, OP SET NO. = %0d", rid, sid),
+            $sformatf("out_data = %h", out_data)
+        );
         repeat (3) @(negedge clk);
         $finish;
     end
+
 end
 endtask
 
@@ -1739,14 +2118,13 @@ begin
 
             if (word_latency > MAX_WAIT) begin
                 YOU_FAIL_TASK();
-                $display("======================================================================================================================");
-                $display("Timeout: no output within %0d cycles.", MAX_WAIT);
-                $display("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d",
-                         rid, sid, addr);
-                $display("phase = %s", cur_phase);
-                $display("case  = %s", cur_case_name);
-                $display("op = %0d, act = %0d", cur_op, cur_act);
-                $display("======================================================================================================================");
+                print_fail_msg_task(
+                    $sformatf("Timeout: no output within %0d cycles.", MAX_WAIT),
+                    $sformatf("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d", rid, sid, addr),
+                    $sformatf("phase = %s", cur_phase),
+                    $sformatf("TEST  = %s", cur_case_name),
+                    $sformatf("op = %0d, act = %0d", cur_op, cur_act)
+                );
                 if (`DEBUG_EN == 1) begin
                     print_failure_debug_task(rid, sid, addr, golden_data, out_data, "TIMEOUT waiting first output");
                 end
@@ -1771,14 +2149,13 @@ begin
 
                 if (wait_cnt > MAX_WAIT) begin
                     YOU_FAIL_TASK();
-                    $display("======================================================================================================================");
-                    $display("Timeout: no output within %0d cycles.", MAX_WAIT);
-                    $display("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d",
-                             rid, sid, addr);
-                    $display("phase = %s", cur_phase);
-                    $display("case  = %s", cur_case_name);
-                    $display("op = %0d, act = %0d", cur_op, cur_act);
-                    $display("======================================================================================================================");
+                    print_fail_msg_task(
+                        $sformatf("Timeout: no output within %0d cycles.", MAX_WAIT),
+                        $sformatf("PATTERN NO. = %0d, OP SET NO. = %0d, Data NO. = %0d", rid, sid, addr),
+                        $sformatf("phase = %s", cur_phase),
+                        $sformatf("TEST  = %s", cur_case_name),
+                        $sformatf("op = %0d, act = %0d", cur_op, cur_act)
+                    );
                     if (`DEBUG_EN == 1) begin
                         print_failure_debug_task(rid, sid, addr, golden_data, out_data, "TIMEOUT waiting next output");
                     end
@@ -1793,18 +2170,17 @@ begin
 
     if (out_data !== golden_data) begin
         YOU_FAIL_TASK();
-        $display("============================================================");
-        $display("Output mismatch.");
-        $display("PATTERN NO. = %0d", rid);
-        $display("OP SET NO.  = %0d", sid);
-        $display("Data NO.    = %0d", addr);
-        $display("phase       = %s", cur_phase);
-        $display("case        = %s", cur_case_name);
-        $display("op          = %0d", cur_op);
-        $display("act         = %0d", cur_act);
-        $display("DUT    out_data = %h", out_data);
-        $display("Golden out_data = %h", golden_data);
-        $display("============================================================");
+        print_fail_msg_task(
+            "Output mismatch.",
+            $sformatf("PATTERN NO. = %0d", rid),
+            $sformatf("OP SET NO.  = %0d", sid),
+            $sformatf("Data NO.    = %0d", addr),
+            $sformatf("PHASE       = %s", cur_phase),
+            $sformatf("TEST        = %s", cur_case_name),
+            $sformatf("OP          = %s", op_name_func(cur_op)),
+            $sformatf("ACT         = %s", act_name_func(cur_act)),
+            $sformatf("Your output = %h, Golden out_data = %h", out_data, golden_data)
+        );
         if (`DEBUG_EN == 1) begin
             print_failure_debug_task(rid, sid, addr, golden_data, out_data, "OUTPUT MISMATCH");
         end
