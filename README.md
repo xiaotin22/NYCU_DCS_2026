@@ -92,8 +92,7 @@ This repo is for **114 Spring NYCU Digital Circuit and System** (張添烜教授
 `GE.sv` 是 3x3 線性方程組求解器。輸入三條 packed equation，電路會判斷方程組屬於 unique solution、infinite solutions 或 no solution，並在 unique solution 時輸出 `x1/x2/x3`。
 
 設計上使用 `S_LOAD -> S_OUT` 的簡單 FSM，核心計算包含消去、determinant、modular inverse / shift-based division 等邏輯。Pattern 預設為 1000 筆測資，clock time 固定為 20.0 ns 不可更改。
-
-註：OT 為實體上機考，不可使用 AI。1DE 目標是在三小時內完成並拿滿分；2DE 則以 performance 排名計分。
+註：OT 為實體上機考，不可使用 AI。1DE 目標是在三小時內完成並拿滿分；2DE 則以 performance 排名計分(60~80分)。
 
 **Performance**  
 計算方式：`latency * area * area`
