@@ -1,0 +1,92 @@
+Magic 271485
+Revision Verdi_P-2019.06
+
+; Window Layout <x> <y> <width> <height> <signalwidth> <valuewidth>
+viewPort 0 23 1920 1009 184 65
+
+; File list:
+; openDirFile [-d delimiter] [-s time_offset] [-rf auto_bus_rule_file] path_name file_name
+openDirFile -d / "" "/RAID2/COURSE/2026_Spring/es26dcs/es26dcsTA07/CA_jay/01_RTL/CA.fsdb"
+
+; file time scale:
+; fileTimeScale ### s|ms|us|ns|ps
+
+; signal spacing:
+signalSpacing 5
+
+; windowTimeUnit is used for zoom, cursor & marker
+; waveform viewport range
+zoom 0.000000 108360783.503185
+cursor 0.000000
+marker 0.000000
+
+; user define markers
+; userMarker time_pos marker_name color linestyle
+; visible top row signal index
+top 0
+; marker line index
+markerPos 24
+
+; event list
+; addEvent event_name event_expression
+; curEvent event_name
+
+
+
+COMPLEX_EVENT_BEGIN
+
+
+COMPLEX_EVENT_END
+
+
+
+; toolbar current search type
+; curSTATUS search_type
+curSTATUS ByChange
+
+
+addGroup "Input Signals"
+activeDirFile "" "/RAID2/COURSE/2026_Spring/es26dcs/es26dcsTA07/CA_jay/01_RTL/CA.fsdb"
+addSignal -h 15 /TESTBED/u_dut/clk
+addSignal -h 15 -holdScope rst_n
+addSignal -h 15 -holdScope mem_set
+addSignal -h 15 -holdScope in_valid
+addSignal -h 15 -holdScope op[1:0]
+addSignal -h 15 -holdScope act[1:0]
+addSignal -h 15 -holdScope param[255:0]
+addGroup "Output Signals"
+addSignal -h 15 /TESTBED/u_dut/out_valid
+addSignal -h 15 -holdScope out_data[31:0]
+addGroup "RAM Read Signals"
+addSignal -h 15 /TESTBED/u_dut/rd_en
+addSignal -h 15 -holdScope rd_addr[7:0]
+addSignal -h 15 -holdScope rd_burst[2:0]
+addSignal -h 15 -holdScope rd_data[255:0]
+addSignal -h 15 -holdScope rd_valid
+addSignal -h 15 -holdScope rd_ready
+addGroup "RAM Write Signals"
+addSignal -h 15 /TESTBED/u_dut/wr_en
+addSignal -h 15 -holdScope wr_addr[7:0]
+addSignal -h 15 -holdScope wr_burst[2:0]
+addSignal -h 15 -holdScope wr_data[255:0]
+addSignal -h 15 -holdScope wr_valid
+addSignal -h 15 -holdScope wr_ready
+addGroup "Your Signals"
+
+; getSignalForm Scope Hierarchy Status
+; active file of getSignalForm
+activeDirFile "" "/RAID2/COURSE/2026_Spring/es26dcs/es26dcsTA07/CA_jay/01_RTL/CA.fsdb"
+
+GETSIGNALFORM_SCOPE_HIERARCHY_BEGIN
+getSignalForm close
+
+"/TESTBED"
+
+SCOPE_LIST_BEGIN
+"/TESTBED"
+"/TESTBED/u_dut"
+SCOPE_LIST_END
+
+GETSIGNALFORM_SCOPE_HIERARCHY_END
+
+

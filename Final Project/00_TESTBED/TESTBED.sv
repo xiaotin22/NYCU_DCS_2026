@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 
-`include "PATTERN.sv"
+`include "PATTERN_dcs151.sv"
 `include "RAM.sv"
 `ifdef RTL
 	`include "CA.sv"

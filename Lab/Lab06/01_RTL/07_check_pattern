@@ -1,0 +1,146 @@
+#!/bin/bash
+
+# ==========================================
+# Script Name: ./07_check_pattern
+# Description: Verify testbench pattern completeness using golden/wrong designs.
+# ==========================================
+
+# --- Color Definitions ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+BG_GREEN='\033[0;30;42m'
+NC='\033[0m' # No Color
+
+# --- Configuration ---
+# 5 check specs with 3, 3, 5, 5, 8 cases respectively
+SPECS=(3 3 5 5 8)
+LOG_FILE="vcs.log"
+
+# --- Helper Functions ---
+log_info() {
+  echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+log_pass() {
+  echo -e "${GREEN}[PASS]${NC} $1"
+}
+
+log_fail() {
+  echo -e "${RED}[FAIL]${NC} $1"
+}
+
+# --- Initialization ---
+echo -e "${YELLOW}***************************************************************${NC}"
+echo -e "${YELLOW}*                     Pattern Verification                    *${NC}"
+echo -e "${YELLOW}***************************************************************${NC}"
+
+# --- Main Logic ---
+main() {
+  target=$1
+  local all_passed=true
+
+  # Argument Validation
+  if [ -n "$target" ]; then
+    valid_arg=false
+    if [ "$target" == "CORRECT" ]; then
+      valid_arg=true
+    else
+      for idx in "${!SPECS[@]}"; do
+        if [ "$target" == "CHECK_$idx" ]; then
+          valid_arg=true
+          break
+        fi
+      done
+    fi
+
+    if [ "$valid_arg" = false ]; then
+      log_fail "Invalid argument: $target. Usage: $0 [CHECK_0..CHECK_$((${#SPECS[@]}-1)) | CORRECT]"
+      exit 1
+    fi
+  fi
+
+  # 1. SPEC Checks (Negative Testing)
+  for i in "${!SPECS[@]}"; do
+    # Skip if a specific target is provided and it doesn't match the current spec
+    if [ -n "$target" ] && [ "$target" != "CHECK_$i" ]; then
+      continue
+    fi
+
+    num_cases=${SPECS[$i]}
+    log_info "Starting CHECK_$i ($num_cases cases)..."
+    local spec_passed=true
+
+    for ((j=0; j<num_cases; j++)); do
+      # Run simulation
+      ./01_run_vcs_rtl CHECK_${i}_${j} > /dev/null 2>&1
+
+      if [ ! -f "$LOG_FILE" ]; then
+        log_fail "Simulation failed to generate $LOG_FILE for CHECK_${i}_${j}"
+        all_passed=false
+        spec_passed=false
+        continue
+      fi
+
+      # Logic Verification:
+      # - Exactly one "FAIL"
+      # - Exactly one "CHECK $i"
+      # - No other "CHECK X" where X != i (Total "CHECK [0-4]" count should be 1)
+
+      fail_cnt=$(grep -ci "FAIL" "$LOG_FILE")
+      current_check_cnt=$(grep -c "CHECK $i" "$LOG_FILE")
+      total_check_cnt=$(grep -c "CHECK [0-4]" "$LOG_FILE")
+
+      if [ "$fail_cnt" -eq 1 ] && [ "$current_check_cnt" -eq 1 ] && [ "$total_check_cnt" -eq 1 ]; then
+        log_pass "CHECK_${i}_${j} passed."
+      else
+        log_fail "CHECK_${i}_${j} failed logic check."
+        echo "  - FAIL count: $fail_cnt (Expect 1)"
+        echo "  - CHECK $i count: $current_check_cnt (Expect 1)"
+        echo "  - Total CHECK [0-4] count: $total_check_cnt (Expect 1)"
+        all_passed=false
+        spec_passed=false
+      fi
+    done
+    
+    if [ "$spec_passed" = true ]; then
+      echo -e "${BG_GREEN}--- All cases for CHECK_$i passed ---${NC}"
+    else
+      echo -e "${RED}--- Some cases for CHECK_$i failed ---${NC}"
+    fi
+  done
+
+  # 2. Correct Design Check (Positive Testing)
+  # Run if no target specified OR target is explicitly CORRECT
+  if [ -z "$target" ] || [ "$target" == "CORRECT" ]; then
+    log_info "Starting CORRECT DESIGN check..."
+    ./01_run_vcs_rtl CORRECT > /dev/null 2>&1
+
+    if grep -i -q "Congratulations" "$LOG_FILE"; then
+      log_pass "CORRECT DESIGN check passed."
+    else
+      log_fail "CORRECT DESIGN check failed."
+      all_passed=false
+    fi
+  fi
+
+  # --- Final Result ---
+  echo ""
+  if [ "$all_passed" = true ]; then
+    echo -e "${BG_GREEN}***************************************************************${NC}"
+    echo -e "${BG_GREEN}*          FINAL RESULT: ALL PATTERN TESTS PASSED !!!         *${NC}"
+    echo -e "${BG_GREEN}***************************************************************${NC}"
+    ./09_clean_up > /dev/null 2>&1
+    exit 0
+  else
+    echo -e "${RED}***************************************************************${NC}"
+    echo -e "${RED}*           FINAL RESULT: SOME PATTERN TESTS FAILED           *${NC}"
+    echo -e "${RED}***************************************************************${NC}"
+    ./09_clean_up > /dev/null 2>&1
+    exit 1
+  fi
+}
+
+# Execute main function
+main "$@"

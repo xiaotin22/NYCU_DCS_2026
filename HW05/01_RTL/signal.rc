@@ -1,0 +1,120 @@
+Magic 271485
+Revision Verdi_P-2019.06
+
+; Window Layout <x> <y> <width> <height> <signalwidth> <valuewidth>
+viewPort 0 27 1707 426 251 65
+
+; File list:
+; openDirFile [-d delimiter] [-s time_offset] [-rf auto_bus_rule_file] path_name file_name
+openDirFile -d / -i 0 "" "/RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/HW05/01_RTL/CPU.fsdb"
+
+; file time scale:
+; fileTimeScale ### s|ms|us|ns|ps
+
+; signal spacing:
+signalSpacing 5
+
+; windowTimeUnit is used for zoom, cursor & marker
+; waveform viewport range
+zoom 0.000000 26913975.000000
+cursor 50052500.000000
+marker 0.000000
+
+; visible top row signal index
+top 0
+; marker line index
+markerPos 14
+
+; event list
+; addEvent event_name event_expression
+; curEvent event_name
+
+
+
+COMPLEX_EVENT_BEGIN
+
+
+COMPLEX_EVENT_END
+
+
+
+; toolbar current search type
+; curSTATUS search_type
+curSTATUS ByChange
+
+
+aliasmapname CPU.fifo_count_after_issue
+nalias FIFO_READY_LIMIT		3'b001		NULL
+
+aliasmapname TESTBED.I_design.input_opcode
+nalias OP_ADDI		6'b001000		NULL
+nalias OP_ORI		6'b001101		NULL
+nalias OP_RTYPE		6'b000000		NULL
+
+aliasmapname TESTBED.I_design.input_funct
+nalias FUNC_SRA		6'b000010		NULL
+nalias FUNC_ADD		6'b100000		NULL
+nalias FUNC_MULT		6'b011000		NULL
+nalias FUNC_DIV		6'b110001		NULL
+nalias FUNC_OR		6'b011001		NULL
+nalias FUNC_SLA		6'b000000		NULL
+
+aliasmapname CPU.i
+nalias PIPE_LAST		32'b00000000000000000000000000000101		NULL
+
+aliasmapname TESTBED.I_design.state_cs
+nalias S_IDLE		2'b00		NULL
+nalias S_EXEC		2'b01		NULL
+nalias S_OUT		2'b10		NULL
+
+aliasmapname TESTBED.I_design.opcode_in
+nalias OP_ADDI		6'b001000		NULL
+nalias OP_ORI		6'b001101		NULL
+nalias OP_RTYPE		6'b000000		NULL
+
+aliasmapname TESTBED.I_design.funct_in
+nalias FUNC_ADD		6'b100000		NULL
+nalias FUNC_SRA		6'b000010		NULL
+nalias FUNC_MULT		6'b011000		NULL
+nalias FUNC_DIV		6'b110001		NULL
+nalias FUNC_OR		6'b011001		NULL
+nalias FUNC_SLA		6'b000000		NULL
+
+addGroup "G1"
+activeDirFile "" "/RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/HW05/01_RTL/CPU.fsdb"
+addSignal -h 15 /TESTBED/rst_n
+addSignal -h 15 -UNSIGNED -HEX -holdScope instruction[31:0]
+addSignal -h 15 -holdScope clk
+addSignal -h 15 -holdScope in_valid
+addSignal -h 15 -holdScope in_ready
+addGroup "G2"
+addSignal -h 15 /TESTBED/out_valid
+addSignal -h 15 -holdScope bad_ins[1:0]
+addSignal -h 15 -2COMP -UDEC -holdScope out_0[15:0]
+addSignal -h 15 -2COMP -UDEC -holdScope out_1[15:0]
+addSignal -h 15 -2COMP -UDEC -holdScope out_2[15:0]
+addSignal -h 15 -2COMP -UDEC -holdScope out_3[15:0]
+addSignal -h 15 -2COMP -UDEC -holdScope out_4[15:0]
+addSignal -h 15 -2COMP -UDEC -holdScope out_5[15:0]
+addGroup "G3"
+
+; getSignalForm Scope Hierarchy Status
+; active file of getSignalForm
+activeDirFile "" "/RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/HW05/01_RTL/CPU.fsdb"
+
+GETSIGNALFORM_SCOPE_HIERARCHY_BEGIN
+getSignalForm close
+
+"/TESTBED"
+"/TESTBED/I_PATTERN"
+"/TESTBED/I_design"
+
+SCOPE_LIST_BEGIN
+"/TESTBED"
+"/TESTBED/I_design"
+"/TESTBED/I_PATTERN"
+SCOPE_LIST_END
+
+GETSIGNALFORM_SCOPE_HIERARCHY_END
+
+

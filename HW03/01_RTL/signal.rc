@@ -1,0 +1,118 @@
+Magic 271485
+Revision Verdi_P-2019.06
+
+; Window Layout <x> <y> <width> <height> <signalwidth> <valuewidth>
+viewPort 0 27 1920 432 190 50
+
+; File list:
+; openDirFile [-d delimiter] [-s time_offset] [-rf auto_bus_rule_file] path_name file_name
+openDirFile -d / -i 0 "" "/RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/HW03/01_RTL/ECTRL.fsdb"
+
+; file time scale:
+; fileTimeScale ### s|ms|us|ns|ps
+
+; signal spacing:
+signalSpacing 5
+
+; windowTimeUnit is used for zoom, cursor & marker
+; waveform viewport range
+zoom 0.000000 1000000.000000
+cursor 0.000000
+marker 0.000000
+
+; visible top row signal index
+top 0
+; marker line index
+markerPos 33
+
+; event list
+; addEvent event_name event_expression
+; curEvent event_name
+
+
+
+COMPLEX_EVENT_BEGIN
+
+
+COMPLEX_EVENT_END
+
+
+
+; toolbar current search type
+; curSTATUS search_type
+curSTATUS ByRising
+
+
+aliasmapname TESTBED.I_ECTRL.E0.state_cs
+nalias OPENING		3'b010		NULL
+nalias OPEN		3'b011		NULL
+nalias IDLE		3'b000		NULL
+nalias CLOSING		3'b100		NULL
+nalias MOVING		3'b001		NULL
+
+aliasmapname elevator_core.dir_ns
+nalias NONE		2'b00		NULL
+
+aliasmapname elevator_core.dir_cs
+nalias NONE		2'b00		NULL
+nalias UP		2'b01		NULL
+nalias DOWN		2'b10		NULL
+
+aliasmapname elevator_core.evad_dir
+nalias UP		2'b01		NULL
+nalias DOWN		2'b10		NULL
+
+addGroup "Clk & Reset"
+activeDirFile "" "/RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/HW03/01_RTL/ECTRL.fsdb"
+addSignal -h 15 /TESTBED/clk
+addSignal -h 15 -holdScope rst_n
+addGroup "Concatenated Input"
+addSignal -c ID_CYAN5 -ls solid -lw 1 -h 15 -UNSIGNED -BIN /TESTBED/up_req[7:0]
+addSignal -c ID_CYAN5 -ls solid -lw 1 -h 15 -UNSIGNED -BIN -holdScope down_req[7:0]
+addSignal -c ID_BLUE7 -ls solid -lw 1 -h 15 -UNSIGNED -HEX -holdScope car_req[23:0]
+addSignal -c ID_GREEN4 -ls solid -lw 1 -h 15 -UNSIGNED -BIN -holdScope btn_open[2:0]
+addSignal -c ID_GREEN4 -ls solid -lw 1 -h 15 -UNSIGNED -BIN -holdScope btn_close[2:0]
+addSignal -c ID_YELLOW7 -ls solid -lw 1 -h 15 -UNSIGNED -HEX -holdScope pax_cnt[11:0]
+addGroup "Concatenated Output"
+addSignal -c ID_ORANGE5 -ls solid -lw 1 -h 15 -UNSIGNED -OCT /TESTBED/cur_floor[8:0]
+addSignal -c ID_PURPLE7 -ls solid -lw 1 -h 15 -UNSIGNED -OCT -holdScope lift_status[8:0]
+addSignal -c ID_GRAY6 -ls solid -lw 1 -h 15 -UNSIGNED -BIN -holdScope serve_dir[5:0]
+addSignal -h 15 -UNSIGNED -BIN -holdScope is_full[2:0]
+addGroup "Signals for E0"
+addSignal -c ID_BLUE7 -ls solid -lw 1 -h 15 -UNSIGNED -BIN /TESTBED/car_req_0[7:0]
+addSignal -c ID_YELLOW7 -ls solid -lw 1 -h 15 -UNSIGNED -UDEC -holdScope pax_cnt_0[3:0]
+addSignal -c ID_ORANGE5 -ls solid -lw 1 -h 15 -UNSIGNED -UDEC -holdScope cur_floor_0[2:0]
+addSignal -c ID_PURPLE7 -ls solid -lw 1 -h 15 -UNSIGNED -holdScope lift_status_0[2:0]
+addSignal -c ID_GRAY6 -ls solid -lw 1 -h 15 -UNSIGNED -holdScope serve_dir_0[1:0]
+addGroup "Signals for E1"
+addSignal -c ID_BLUE7 -ls solid -lw 1 -h 15 -UNSIGNED -BIN /TESTBED/car_req_1[7:0]
+addSignal -c ID_YELLOW7 -ls solid -lw 1 -h 15 -UNSIGNED -UDEC -holdScope pax_cnt_1[3:0]
+addSignal -c ID_ORANGE5 -ls solid -lw 1 -h 15 -UNSIGNED -UDEC -holdScope cur_floor_1[2:0]
+addSignal -c ID_PURPLE7 -ls solid -lw 1 -h 15 -UNSIGNED -holdScope lift_status_1[2:0]
+addSignal -c ID_GRAY6 -ls solid -lw 1 -h 15 -UNSIGNED -holdScope serve_dir_1[1:0]
+addGroup "Signals for E2"
+addSignal -c ID_BLUE7 -ls solid -lw 1 -h 15 -UNSIGNED -BIN /TESTBED/car_req_2[7:0]
+addSignal -c ID_YELLOW7 -ls solid -lw 1 -h 15 -UNSIGNED -UDEC -holdScope pax_cnt_2[3:0]
+addSignal -c ID_ORANGE5 -ls solid -lw 1 -h 15 -UNSIGNED -UDEC -holdScope cur_floor_2[2:0]
+addSignal -c ID_PURPLE7 -ls solid -lw 1 -h 15 -UNSIGNED -holdScope lift_status_2[2:0]
+addSignal -c ID_GRAY6 -ls solid -lw 1 -h 15 -UNSIGNED -holdScope serve_dir_2[1:0]
+addGroup "Others"
+
+; getSignalForm Scope Hierarchy Status
+; active file of getSignalForm
+activeDirFile "" "/RAID2/COURSE/2026_Spring/es26dcs/es26dcs151/HW03/01_RTL/ECTRL.fsdb"
+
+GETSIGNALFORM_SCOPE_HIERARCHY_BEGIN
+getSignalForm close
+
+"/TESTBED"
+
+SCOPE_LIST_BEGIN
+"/$object_root"
+"/TESTBED"
+"/TESTBED/I_PATTERN"
+SCOPE_LIST_END
+
+GETSIGNALFORM_SCOPE_HIERARCHY_END
+
+
